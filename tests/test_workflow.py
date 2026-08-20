@@ -138,6 +138,63 @@ class WorkflowTests(unittest.TestCase):
             self.assertIn("--max-turns 40", result.stdout)
             self.assertIn("native subagent model: sonnet", result.stdout)
 
+    def test_runner_dry_run_succeeds_without_a_resolvable_claude_executable(self) -> None:
+        missing = "claude-absent-for-workflow-tests"
+        self.assertIsNone(shutil.which(missing))
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)
+            self.assertEqual(self.run_init(target).returncode, 0)
+            self.activate(target)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(RUN),
+                    "--repo",
+                    str(target),
+                    "--claude-command",
+                    missing,
+                    "--dry-run",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={**os.environ, "PATH": ""},
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Would run one Claude turn", result.stdout)
+            self.assertIn(f"{missing} -p --model opus", result.stdout)
+            self.assertIn("<coordination prompt>", result.stdout)
+            self.assertNotIn("command not found", result.stderr)
+            self.assertFalse((target / ".coordination/.claude-turn.lock").exists())
+            self.assertFalse((target / ".coordination/runtime/claude-progress.json").exists())
+
+    def test_runner_real_handoff_requires_a_resolvable_claude_executable(self) -> None:
+        missing = "claude-absent-for-workflow-tests"
+        self.assertIsNone(shutil.which(missing))
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)
+            self.assertEqual(self.run_init(target).returncode, 0)
+            self.activate(target)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(RUN),
+                    "--repo",
+                    str(target),
+                    "--claude-command",
+                    missing,
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={**os.environ, "PATH": ""},
+            )
+            self.assertEqual(result.returncode, 127, result.stderr)
+            self.assertIn(f"Claude Code command not found: {missing}", result.stderr)
+            self.assertEqual(result.stdout, "")
+            self.assertFalse((target / ".coordination/.claude-turn.lock").exists())
+            self.assertFalse((target / ".coordination/runtime/claude-progress.json").exists())
+
     def test_runner_prompt_embeds_only_the_active_coordination_packet(self) -> None:
         task = (
             "# Current task\n\n- Task ID: `EVENTS-001`\n- State: `ready`\n"

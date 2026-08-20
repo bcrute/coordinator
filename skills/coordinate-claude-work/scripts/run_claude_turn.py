@@ -361,14 +361,14 @@ def run(args: argparse.Namespace) -> int:
             return 2
 
     executable = shutil.which(args.claude_command)
-    if executable is None:
+    if executable is None and not args.dry_run:
         print(f"error: Claude Code command not found: {args.claude_command}", file=sys.stderr)
         return 127
 
     prompt = handoff_prompt(task_id, review_round, task)
 
     command = [
-        executable,
+        executable or args.claude_command,
         "-p",
         "--model",
         args.model,
