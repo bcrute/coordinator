@@ -5,7 +5,7 @@ watching and controlling it. Clone this repository once, then point it at one
 or more separate local project repositories to start coordinating
 Codex/ChatGPT and Claude Code turns on those projects.
 
-**Status: experimental personal / resume project.** It is not an official
+**Status: experimental personal project.** It is not an official
 product of, and has no affiliation with, OpenAI or Anthropic. It wraps their
 separately installed and separately authenticated CLIs; you are responsible
 for your own Codex and Claude Code accounts, credentials, and usage.
@@ -172,6 +172,22 @@ remote for the first time, work through
   `.gitignore` rather than deleted from disk. They are not part of this
   workflow's product surface.
 - Windows is not supported.
+
+## Security posture
+
+The dashboard has **no authentication, no sessions, no TLS, and no
+authorization**: every route is anonymous, and anyone who can reach the bound
+port gets the browser terminal's full interactive `codex -C <repo>` session as
+your OS user. It binds `127.0.0.1` for exactly that reason and is intended only
+for your own machine.
+
+**This is not network-ready, and adding a login page alone would not make it
+so.** Any network deployment is gated by the plan in
+[`docs/SECURITY_ROADMAP.md`](docs/SECURITY_ROADMAP.md), which records the
+current posture, a native OIDC design with Authentik, server-side sessions,
+default-deny authorization on every route, reverse-proxy and hardening
+requirements, and the ordered exit criteria that must all be met first. None of
+that work is implemented today.
 
 ## Self-hosting
 
