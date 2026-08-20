@@ -1,0 +1,4 @@
+interface:
+  display_name: "Coordinate Claude Work"
+  short_description: "Plan in Codex, implement in Claude, review each handoff"
+  default_prompt: "Use $coordinate-claude-work to assign this project task to Claude and review its implementation handoff."

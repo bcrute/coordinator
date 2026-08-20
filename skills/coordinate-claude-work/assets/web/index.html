@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Coordination workflow</title>
+    <link rel="stylesheet" href="/vendor/xterm.css" />
+    <link rel="stylesheet" href="/app.css" />
+    <script src="/vendor/xterm.js" defer></script>
+    <script src="/vendor/addon-fit.js" defer></script>
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#dashboard">Skip to dashboard</a>
+
+    <header class="topbar">
+      <div class="topbar-identity">
+        <h1>Coordination workflow</h1>
+        <p class="repo" id="repo-path">Loading repository…</p>
+      </div>
+      <div class="topbar-repo">
+        <label class="repo-picker-label" for="repository-select">Repository</label>
+        <select id="repository-select" class="repo-picker-select" disabled></select>
+        <p
+          class="repo-picker-feedback"
+          id="repository-select-feedback"
+          role="status"
+          aria-live="polite"
+        >
+          Loading repository catalog…
+        </p>
+        <p class="repo-picker-root" id="repository-catalog-root">Catalog root: not recorded</p>
+      </div>
+      <div class="topbar-status">
+        <p class="connection" id="connection" data-connection="connecting" role="status" aria-live="polite">
+          <span class="connection-dot" aria-hidden="true"></span>
+          <span class="connection-label" id="connection-label">Connecting</span>
+          <span class="connection-detail" id="connection-detail">Requesting the first snapshot.</span>
+        </p>
+        <p class="topbar-links">
+          <a href="/api/state">Raw state JSON</a>
+        </p>
+      </div>
+    </header>
+
+    <nav class="views-nav" aria-label="Dashboard views">
+      <ul>
+        <li><a href="#monitor" id="nav-monitor" data-route="monitor">Monitor</a></li>
+        <li><a href="#terminal" id="nav-terminal" data-route="terminal">Terminal</a></li>
+        <li><a href="#work" id="nav-work" data-route="work">Work</a></li>
+        <li><a href="#agents" id="nav-agents" data-route="agents">Agents</a></li>
+        <li><a href="#logs" id="nav-logs" data-route="logs">Logs</a></li>
+      </ul>
+    </nav>
+
+    <main id="dashboard" class="dashboard">
+      <section id="view-monitor" class="view" aria-labelledby="view-monitor-heading">
+        <h2 class="view-heading" id="view-monitor-heading">Monitor</h2>
+
+        <section class="panel panel-wide" aria-labelledby="workflow-heading">
+          <header class="panel-head">
+            <h3 id="workflow-heading">Current workflow</h3>
+            <p class="badge" id="workflow-phase">unknown</p>
+          </header>
+          <div class="panel-body">
+            <p class="objective" id="workflow-label">not recorded</p>
+            <p class="note" id="workflow-detail">not recorded</p>
+            <div id="workflow-completion" hidden>
+              <p class="note" id="workflow-conclusion">not recorded</p>
+              <details id="workflow-completion-details">
+                <summary>Full completion report</summary>
+                <div class="lists">
+                  <section aria-labelledby="workflow-result-heading">
+                    <h4 id="workflow-result-heading">Result</h4>
+                    <ul class="stack" id="workflow-result"></ul>
+                  </section>
+                  <section aria-labelledby="workflow-evidence-heading">
+                    <h4 id="workflow-evidence-heading">Evidence</h4>
+                    <ul class="stack" id="workflow-evidence"></ul>
+                  </section>
+                  <section aria-labelledby="workflow-limitations-heading">
+                    <h4 id="workflow-limitations-heading">Limitations</h4>
+                    <ul class="stack" id="workflow-limitations"></ul>
+                  </section>
+                </div>
+              </details>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel panel-wide panel-metrics" aria-labelledby="metrics-heading">
+          <header class="panel-head">
+            <h3 id="metrics-heading">Live metrics</h3>
+            <p class="badge" id="runtime-state">unknown</p>
+          </header>
+          <div class="panel-body">
+            <ul class="tiles">
+              <li class="tile"><p class="tile-label">Activity</p><p class="tile-value" id="metric-activity">00:00:00</p></li>
+              <li class="tile"><p class="tile-label">Turn</p><p class="tile-value" id="metric-turn">00:00:00</p></li>
+              <li class="tile"><p class="tile-label">Overall</p><p class="tile-value" id="metric-overall">00:00:00</p></li>
+              <li class="tile"><p class="tile-label">Generated</p><p class="tile-value" id="token-output">0</p></li>
+              <li class="tile"><p class="tile-label">New input</p><p class="tile-value" id="token-input">0</p></li>
+              <li class="tile"><p class="tile-label">Cache read</p><p class="tile-value" id="token-cache-read">0</p></li>
+              <li class="tile"><p class="tile-label">Cache write</p><p class="tile-value" id="token-cache-write">0</p></li>
+            </ul>
+            <dl class="facts">
+              <div class="fact"><dt>Lead model</dt><dd id="runtime-primary-model">not recorded</dd></div>
+              <div class="fact"><dt>Subagent model</dt><dd id="runtime-subagent-model">not recorded</dd></div>
+              <div class="fact"><dt>Orchestration</dt><dd id="runtime-orchestration">not recorded</dd></div>
+              <div class="fact"><dt>Metrics task</dt><dd id="runtime-task">not recorded</dd></div>
+            </dl>
+            <p class="note" id="runtime-sync">not recorded</p>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-terminal" class="view" aria-labelledby="view-terminal-heading" hidden>
+        <h2 class="view-heading" id="view-terminal-heading">Terminal</h2>
+
+        <section class="panel panel-wide" aria-labelledby="codex-session-heading">
+          <header class="panel-head">
+            <h3 id="codex-session-heading">Codex session</h3>
+            <p class="badge" id="codex-session-state">unknown</p>
+          </header>
+          <div class="panel-body">
+            <p class="note" id="codex-session-detail">not recorded</p>
+            <div class="controls">
+              <button type="button" class="control-button" id="codex-session-start" data-kind="start" disabled>
+                Start session
+              </button>
+              <button type="button" class="control-button" id="codex-session-stop" data-kind="stop" disabled>
+                Stop session
+              </button>
+              <button type="button" class="control-button" id="codex-terminal-clear" data-kind="clear" disabled>
+                Clear terminal
+              </button>
+            </div>
+            <p class="note" id="codex-session-feedback" role="status" aria-live="polite">
+              Controls start and stop the Codex terminal session for this repository.
+            </p>
+            <div
+              id="codex-terminal"
+              class="terminal-viewport"
+              tabindex="0"
+              role="application"
+              aria-label="Codex session terminal"
+            ></div>
+            <dl class="facts">
+              <div class="fact"><dt>Process</dt><dd id="codex-session-pid">none</dd></div>
+              <div class="fact"><dt>Terminal size</dt><dd id="codex-session-size">not recorded</dd></div>
+              <div class="fact"><dt>Command</dt><dd id="codex-session-command">not recorded</dd></div>
+            </dl>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-work" class="view" aria-labelledby="view-work-heading" hidden>
+        <h2 class="view-heading" id="view-work-heading">Work</h2>
+
+        <section class="panel panel-wide" aria-labelledby="goal-heading">
+          <header class="panel-head">
+            <h3 id="goal-heading">Overall goal</h3>
+            <p class="badge" id="goal-state">unknown</p>
+          </header>
+          <div class="panel-body">
+            <p class="objective" id="goal-objective">not recorded</p>
+            <div class="meter-row">
+              <div
+                class="meter"
+                id="goal-meter"
+                role="progressbar"
+                aria-labelledby="goal-meter-label"
+                aria-valuemin="0"
+                aria-valuemax="1"
+                aria-valuenow="0"
+                aria-valuetext="not recorded"
+              >
+                <span class="meter-fill" id="goal-meter-fill"></span>
+              </div>
+              <p class="meter-label" id="goal-meter-label">
+                Subgoals accepted <span class="value" id="goal-progress">not recorded</span>
+              </p>
+            </div>
+            <dl class="facts">
+              <div class="fact"><dt>Goal ID</dt><dd id="goal-id">none</dd></div>
+              <div class="fact"><dt>Starting ref</dt><dd id="goal-starting-ref">not recorded</dd></div>
+              <div class="fact"><dt>Target branch</dt><dd id="goal-target-branch">not recorded</dd></div>
+              <div class="fact"><dt>Coordination files</dt><dd id="goal-coordination">not recorded</dd></div>
+            </dl>
+            <div class="lists">
+              <section aria-labelledby="goal-completion-heading">
+                <h4 id="goal-completion-heading">Completion criteria</h4>
+                <ul class="stack" id="goal-completion"></ul>
+              </section>
+              <section aria-labelledby="goal-constraints-heading">
+                <h4 id="goal-constraints-heading">Durable constraints</h4>
+                <ul class="stack" id="goal-constraints"></ul>
+              </section>
+              <section aria-labelledby="goal-decisions-heading">
+                <h4 id="goal-decisions-heading">Owner decisions</h4>
+                <ul class="stack" id="goal-decisions"></ul>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="roadmap-heading">
+          <header class="panel-head">
+            <h3 id="roadmap-heading">Roadmap</h3>
+            <p class="badge" id="roadmap-summary">0 turns</p>
+          </header>
+          <div class="panel-body">
+            <ol class="roadmap" id="roadmap"></ol>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="task-heading">
+          <header class="panel-head">
+            <h3 id="task-heading">Current task</h3>
+            <p class="badge" id="task-state">unknown</p>
+          </header>
+          <div class="panel-body">
+            <p class="objective" id="task-objective">not recorded</p>
+            <dl class="facts">
+              <div class="fact"><dt>Task ID</dt><dd id="task-id">none</dd></div>
+              <div class="fact"><dt>Review round</dt><dd id="task-review-round">0</dd></div>
+              <div class="fact"><dt>Starting ref</dt><dd id="task-starting-ref">not recorded</dd></div>
+            </dl>
+            <div class="lists">
+              <section aria-labelledby="task-acceptance-heading">
+                <h4 id="task-acceptance-heading">Acceptance criteria</h4>
+                <ul class="stack" id="task-acceptance"></ul>
+              </section>
+              <section aria-labelledby="task-in-scope-heading">
+                <h4 id="task-in-scope-heading">In scope</h4>
+                <ul class="stack" id="task-in-scope"></ul>
+              </section>
+              <section aria-labelledby="task-out-of-scope-heading">
+                <h4 id="task-out-of-scope-heading">Out of scope</h4>
+                <ul class="stack" id="task-out-of-scope"></ul>
+              </section>
+              <section aria-labelledby="task-evidence-heading">
+                <h4 id="task-evidence-heading">Required evidence</h4>
+                <ul class="stack" id="task-evidence"></ul>
+              </section>
+              <section aria-labelledby="task-external-heading">
+                <h4 id="task-external-heading">Allowed external actions</h4>
+                <ul class="stack" id="task-external"></ul>
+              </section>
+              <section aria-labelledby="task-corrections-heading">
+                <h4 id="task-corrections-heading">Review corrections</h4>
+                <ul class="stack" id="task-corrections"></ul>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="review-heading">
+          <header class="panel-head">
+            <h3 id="review-heading">Review</h3>
+            <p class="badge" id="review-verdict">not_reviewed</p>
+          </header>
+          <div class="panel-body">
+            <dl class="facts">
+              <div class="fact"><dt>Task ID</dt><dd id="review-task">none</dd></div>
+              <div class="fact"><dt>Review round</dt><dd id="review-round">0</dd></div>
+              <div class="fact"><dt>Examined ref</dt><dd id="review-examined-ref">not recorded</dd></div>
+            </dl>
+            <div class="lists">
+              <section aria-labelledby="review-findings-heading">
+                <h4 id="review-findings-heading">Findings</h4>
+                <ul class="stack" id="review-findings"></ul>
+              </section>
+              <section aria-labelledby="review-next-heading">
+                <h4 id="review-next-heading">Next action</h4>
+                <ul class="stack" id="review-next"></ul>
+              </section>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-agents" class="view" aria-labelledby="view-agents-heading" hidden>
+        <h2 class="view-heading" id="view-agents-heading">Agents</h2>
+
+        <section class="panel" aria-labelledby="coder-heading">
+          <header class="panel-head">
+            <h3 id="coder-heading">Coder</h3>
+            <p class="badge" id="coder-state">unknown</p>
+          </header>
+          <div class="panel-body">
+            <p class="objective" id="coder-activity">not recorded</p>
+            <dl class="facts">
+              <div class="fact"><dt>Task ID</dt><dd id="coder-task">none</dd></div>
+              <div class="fact"><dt>Review round</dt><dd id="coder-review-round">0</dd></div>
+              <div class="fact"><dt>Starting ref</dt><dd id="coder-starting-ref">not recorded</dd></div>
+              <div class="fact"><dt>Current ref</dt><dd id="coder-current-ref">not recorded</dd></div>
+              <div class="fact"><dt>Blocker</dt><dd id="coder-blocker">none</dd></div>
+            </dl>
+            <p class="note" id="coder-sync">not recorded</p>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="subagents-heading">
+          <header class="panel-head">
+            <h3 id="subagents-heading">Claude subagents</h3>
+            <p class="badge" id="subagents-summary">0 recorded</p>
+          </header>
+          <div class="panel-body">
+            <ul class="records" id="subagents"></ul>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="watcher-controls-heading">
+          <header class="panel-head">
+            <h3 id="watcher-controls-heading">Watcher controls</h3>
+            <p class="badge" id="managed-watcher-state">idle</p>
+          </header>
+          <div class="panel-body">
+            <p class="objective" id="managed-watcher-detail">not recorded</p>
+            <div class="controls">
+              <button type="button" class="control-button" id="watcher-start" data-kind="start" disabled>
+                Start watcher
+              </button>
+              <button type="button" class="control-button" id="watcher-stop" data-kind="stop" disabled>
+                Stop watcher
+              </button>
+            </div>
+            <p class="note" id="watcher-feedback" role="status" aria-live="polite">
+              Controls start and stop one automatic watcher for this repository.
+            </p>
+            <dl class="facts">
+              <div class="fact"><dt>Process</dt><dd id="managed-watcher-pid">none</dd></div>
+              <div class="fact"><dt>Started</dt><dd id="managed-watcher-started">not started</dd></div>
+              <div class="fact"><dt>Last exit</dt><dd id="managed-watcher-exit">not recorded</dd></div>
+              <div class="fact"><dt>Watcher lock</dt><dd id="managed-watcher-lock">free</dd></div>
+              <div class="fact"><dt>Command</dt><dd id="managed-watcher-command">not recorded</dd></div>
+            </dl>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="watchers-heading">
+          <header class="panel-head">
+            <h3 id="watchers-heading">Watchers</h3>
+            <p class="badge" id="watchers-summary">0 recorded</p>
+          </header>
+          <div class="panel-body">
+            <ul class="records" id="watchers"></ul>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-logs" class="view" aria-labelledby="view-logs-heading" hidden>
+        <h2 class="view-heading" id="view-logs-heading">Logs</h2>
+
+        <section class="panel panel-wide" aria-labelledby="relay-log-heading">
+          <header class="panel-head">
+            <h3 id="relay-log-heading">Relay log</h3>
+            <p class="badge" id="relay-log-summary">no lines</p>
+          </header>
+          <div class="panel-body">
+            <div
+              class="log-scroll"
+              id="relay-log-scroll"
+              tabindex="0"
+              role="region"
+              aria-labelledby="relay-log-heading"
+            >
+              <ol class="log" id="relay-log"></ol>
+            </div>
+            <dl class="facts">
+              <div class="fact"><dt>Log file</dt><dd id="relay-log-path">not recorded</dd></div>
+            </dl>
+            <p class="note" id="relay-log-note">Waiting for the first snapshot.</p>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Snapshot generated <span id="generated-at">not recorded</span></p>
+      <p id="refresh-age">Refreshing every second.</p>
+    </footer>
+
+    <noscript>
+      <p class="noscript">
+        This dashboard renders the state API with browser JavaScript. With
+        JavaScript disabled, read the snapshot directly at <a href="/api/state">/api/state</a>.
+      </p>
+    </noscript>
+  </body>
+</html>

@@ -1,0 +1,33 @@
+# Example settings file for skills/coordinate-claude-work/scripts/web_app.py.
+#
+# Copy this file (for example to workflow.toml, which stays untracked) and
+# adjust the values, then run:
+#
+#   python3 skills/coordinate-claude-work/scripts/web_app.py --config workflow.toml
+#
+# Every key here is optional; anything you omit falls back to the program's
+# built-in default. Command-line flags such as --port always override the
+# matching value from this file.
+#
+# Relative "repo" and "repositories_root" paths below are resolved against
+# the directory that contains *this configuration file*, not whatever
+# directory you happen to launch the command from.
+
+# The project root to serve. "." means "the same directory as this file".
+repo = "."
+
+# The directory whose Git direct children can be switched to from the app.
+# ".." means "the parent of this file's directory".
+repositories_root = ".."
+
+# Bind address. The loopback default keeps the unauthenticated app off the LAN.
+host = "127.0.0.1"
+
+# TCP port; 0 picks a free port.
+port = 8765
+
+# Number of relay-log lines returned by /api/state.
+relay_log_lines = 200
+
+# Suppress per-request logging.
+quiet = false

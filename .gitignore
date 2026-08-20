@@ -1,0 +1,57 @@
+# --- Local coordination state ---
+# Active project coordination state is machine/session-specific and is not
+# part of the published workflow. The versioned templates that ship inside
+# the skill itself (skills/coordinate-claude-work/assets/project-template/)
+# are NOT covered by this rule and remain tracked.
+/.coordination/
+
+# Local, machine-specific settings file (copy workflow.example.toml to this).
+/workflow.toml
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# --- Editor / OS noise ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- Local logs ---
+*.log
+
+# --- Local environment files (accidental-secret hygiene) ---
+# The app does not read these, but they are a common place to accidentally
+# drop credentials. A future checked-in .env.example remains allowed.
+.env
+.env.*
+!.env.example
+
+# --- Proprietary local material ---
+/citadel-main.zip
+
+# --- Unrelated local readiness-demo fixture ---
+/readiness_demo/
+/examples/
+/tests/test_cli.py
+/tests/test_examples.py
+/tests/test_markdown.py
+/tests/test_readiness_checklist.py
+/tests/test_work_item.py

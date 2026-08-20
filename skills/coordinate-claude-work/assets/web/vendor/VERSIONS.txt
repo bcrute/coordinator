@@ -1,0 +1,3 @@
+Vendored terminal runtime assets:
+- @xterm/xterm@6.0.0 (upstream npm package: @xterm/xterm)
+- @xterm/addon-fit@0.11.0 (upstream npm package: @xterm/addon-fit)

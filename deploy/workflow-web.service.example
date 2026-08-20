@@ -1,0 +1,36 @@
+# Example systemd *user* service for the coordination dashboard.
+#
+# This is a starting point, not a hardened or universally applicable
+# deployment. It does not add authentication, TLS, or LAN exposure; the
+# server remains loopback-only, matching your workflow.toml's `host` value.
+#
+# Setup (see docs/SELF_HOSTING.md for the full walkthrough):
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/workflow-web.service.example ~/.config/systemd/user/workflow-web.service
+#   # Edit the placeholders below, then:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now workflow-web
+#
+# Replace every /path/to/... placeholder with the absolute path to your own
+# clone, settings file, and Codex/Claude CLI install location before
+# enabling this unit.
+
+[Unit]
+Description=Codex-plans, Claude-codes coordination dashboard
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/your/clone/of/workflow
+# systemd user services do not necessarily inherit your interactive shell's
+# PATH. Run `command -v codex` and `command -v claude` in your normal shell
+# and add the directory/directories containing those executables here,
+# alongside standard system locations. Do not put API keys or tokens here.
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/path/to/dir/containing/codex/and/claude
+ExecStart=/usr/bin/python3 /path/to/your/clone/of/workflow/skills/coordinate-claude-work/scripts/web_app.py --config /path/to/your/clone/of/workflow/workflow.toml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
