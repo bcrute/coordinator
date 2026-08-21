@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills" / "coordinate-claude-work"
 
 sys.path.insert(0, str(SKILL / "scripts"))
-from web_app import RELAY_LOG_LINES, load_config, parse_args, serve  # noqa: E402
+from web_app import RELAY_LOG_LINES, load_config, main, parse_args  # noqa: E402
 
 
 def write(path: Path, text: str) -> Path:
@@ -37,8 +37,7 @@ class DefaultsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             (repo / ".git").mkdir()
-            args = parse_args(["--repo", str(repo), "--host", "0.0.0.0"])
-            self.assertEqual(serve(args), 2)
+            self.assertEqual(main(["--repo", str(repo), "--host", "0.0.0.0"]), 2)
 
 
 class ConfigValuesTests(unittest.TestCase):

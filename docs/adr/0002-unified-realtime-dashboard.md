@@ -36,7 +36,7 @@ revocation existed only as backend concepts or manual procedures.
   implementation; there is no dependency-free server path.
 - Reverse proxies must pass WebSocket upgrades and avoid buffering the event
   stream.
-- The HTTP terminal endpoints remain temporarily available for compatibility,
-  but the shipped browser uses only the WebSocket for interactive terminal I/O.
+- The browser and server use only the WebSocket for interactive terminal I/O; the
+  temporary HTTP polling/input compatibility endpoints were removed in Phase 1.
 - A technical local browser session provides CSRF protection and audit continuity;
   it does not authenticate the local user.

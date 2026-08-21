@@ -26,8 +26,9 @@ TEAM = SKILL / "scripts" / "start_claude_team.py"
 sys.path.insert(0, str(SKILL / "scripts"))
 from coordination_dashboard import render as render_dashboard
 from run_claude_turn import apply_stream_event, handoff_prompt
-from web_app import WatcherManager, build_state, create_server
+from web_app import WatcherManager, build_state
 from web_app import parse_args as parse_web_app_args
+from tests.asgi_server import authorized_headers, create_server
 
 
 class WorkflowTests(unittest.TestCase):
@@ -1210,7 +1211,7 @@ class WatcherControlTests(unittest.TestCase):
     def post_json(
         self, url: str, headers: dict[str, str] | None = None
     ) -> tuple[int, dict[str, object]]:
-        status, _, body = self.request(url, "POST", headers)
+        status, _, body = self.request(url, "POST", authorized_headers(url, headers))
         return status, json.loads(body) if body else {}
 
     def get_json(self, url: str) -> tuple[int, dict[str, object]]:
@@ -1427,12 +1428,12 @@ class WatcherControlTests(unittest.TestCase):
 
         status, headers, body = self.request(f"{base}/api/watcher/start", "GET")
         self.assertEqual(status, 405)
-        self.assertEqual(headers.get("Allow"), "POST")
+        self.assertEqual(headers.get("Allow") or headers.get("allow"), "POST")
         self.assertIn("POST", body)
 
         status, headers, _ = self.request(f"{base}/api/watcher/stop", "GET")
         self.assertEqual(status, 405)
-        self.assertEqual(headers.get("Allow"), "POST")
+        self.assertEqual(headers.get("Allow") or headers.get("allow"), "POST")
 
     def test_state_endpoint_reports_managed_watcher_alongside_file_watchers(self) -> None:
         target = self.project()

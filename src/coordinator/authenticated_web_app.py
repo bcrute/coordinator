@@ -842,6 +842,8 @@ def create_authenticated_app(
     watcher_command_for_repo: Callable[[Path], list[str] | None] | None = None,
     codex_command_for_repo: Callable[[Path], list[str]] | None = None,
     oidc_client: Any | None = None,
+    stop_timeout: float = web_app.STOP_TIMEOUT_SECONDS,
+    start_grace: float = web_app.START_GRACE_SECONDS,
 ) -> Starlette:
     """Build the default-deny authenticated ASGI application."""
 
@@ -861,6 +863,8 @@ def create_authenticated_app(
         root_dir,
         watcher_command_for_repo=watcher_factory,
         codex_command_for_repo=codex_factory,
+        stop_timeout=stop_timeout,
+        start_grace=start_grace,
     )
     asset_routes = web_app.static_assets(assets)
     store = SQLiteSecurityStore(
@@ -1377,39 +1381,6 @@ def create_authenticated_app(
             status_code=status,
         )
 
-    async def codex_output(request: Request):
-        names = list(request.query_params.keys())
-        if names and names != ["cursor"]:
-            return JSONResponse(
-                {
-                    "ok": False,
-                    "outcome": "validation",
-                    "message": "only cursor is accepted",
-                },
-                status_code=400,
-            )
-        cursor: int | None = None
-        if names:
-            raw = request.query_params["cursor"]
-            if not raw.isdigit():
-                return JSONResponse(
-                    {"ok": False, "outcome": "validation", "message": "invalid cursor"},
-                    status_code=400,
-                )
-            cursor = int(raw)
-
-        def read_output() -> dict[str, object]:
-            with context.lease() as active:
-                return {
-                    "ok": True,
-                    "action": "codex_output",
-                    "outcome": "read",
-                    "output": active.codex_session.read(cursor),
-                    "codex_session": active.codex_session.snapshot(),
-                }
-
-        return JSONResponse(await run_in_threadpool(read_output))
-
     async def watcher_control(request: Request):
         action = request.path_params["action"]
         body = await _bounded_body(request, web_app.CONTROL_BODY_BYTES)
@@ -1506,86 +1477,6 @@ def create_authenticated_app(
             subject=subject,
             source=_client_source(request),
         )
-        return JSONResponse(payload, status_code=status)
-
-    async def codex_input(request: Request):
-        value = await _json_body(request, web_app.CODEX_INPUT_BODY_BYTES)
-        if isinstance(value, JSONResponse):
-            return value
-        if (
-            not isinstance(value, dict)
-            or set(value) != {"data"}
-            or not isinstance(value.get("data"), str)
-        ):
-            return JSONResponse(
-                {
-                    "ok": False,
-                    "outcome": "validation",
-                    "message": "expected data string",
-                },
-                status_code=400,
-            )
-
-        def operate() -> tuple[int, dict[str, object]]:
-            with context.lease() as active:
-                try:
-                    active.codex_session.write(value["data"])
-                    outcome, message = "accepted", "wrote input to the codex session"
-                except ValueError as error:
-                    outcome, message = "validation", str(error)
-                except RuntimeError as error:
-                    outcome, message = "conflict", str(error)
-                status = {"accepted": 200, "validation": 400, "conflict": 409}[outcome]
-                return status, {
-                    "ok": status == 200,
-                    "action": "codex_input",
-                    "outcome": outcome,
-                    "message": message,
-                    "codex_session": active.codex_session.snapshot(),
-                }
-
-        status, payload = await run_in_threadpool(operate)
-        return JSONResponse(payload, status_code=status)
-
-    async def codex_resize(request: Request):
-        value = await _json_body(request, web_app.CODEX_INPUT_BODY_BYTES)
-        if isinstance(value, JSONResponse):
-            return value
-        valid = (
-            isinstance(value, dict)
-            and set(value) == {"rows", "cols"}
-            and all(
-                isinstance(value.get(key), int) and not isinstance(value.get(key), bool)
-                for key in ("rows", "cols")
-            )
-        )
-        if not valid:
-            return JSONResponse(
-                {
-                    "ok": False,
-                    "outcome": "validation",
-                    "message": "expected integer rows and cols",
-                },
-                status_code=400,
-            )
-
-        def operate() -> tuple[int, dict[str, object]]:
-            with context.lease() as active:
-                try:
-                    active.codex_session.resize(value["rows"], value["cols"])
-                    outcome, message = "accepted", "resized the codex session"
-                except ValueError as error:
-                    outcome, message = "validation", str(error)
-                status = {"accepted": 200, "validation": 400}[outcome]
-                return status, {
-                    "ok": status == 200,
-                    "action": "codex_resize",
-                    "outcome": outcome,
-                    "message": message,
-                    "codex_session": active.codex_session.snapshot(),
-                }
-
-        status, payload = await run_in_threadpool(operate)
         return JSONResponse(payload, status_code=status)
 
     async def repository_select(request: Request):
@@ -1743,12 +1634,16 @@ def create_authenticated_app(
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
             for task in done:
-                task.result()
-        except WebSocketDisconnect:
+                try:
+                    task.result()
+                except (WebSocketDisconnect, asyncio.CancelledError):
+                    pass
+        except (WebSocketDisconnect, asyncio.CancelledError):
             pass
         finally:
             sender.cancel()
             receiver.cancel()
+            await asyncio.gather(sender, receiver, return_exceptions=True)
 
     async def asset(request: Request):
         path = "/" + request.path_params.get("path", "")
@@ -1757,6 +1652,13 @@ def create_authenticated_app(
             return PlainTextResponse("not found\n", status_code=404)
         return FileResponse(
             candidate, media_type=web_app.CONTENT_TYPES.get(candidate.suffix)
+        )
+
+    async def post_only(request: Request):
+        return PlainTextResponse(
+            "method not allowed; use POST\n",
+            status_code=405,
+            headers={"Allow": "POST"},
         )
 
     @asynccontextmanager
@@ -1786,12 +1688,12 @@ def create_authenticated_app(
             repository_initialize,
             methods=["POST"],
         ),
-        Route("/api/codex/output", codex_output, methods=["GET"]),
         Route("/api/watcher/{action:str}", watcher_control, methods=["POST"]),
-        Route("/api/codex/input", codex_input, methods=["POST"]),
-        Route("/api/codex/resize", codex_resize, methods=["POST"]),
         Route("/api/codex/{action:str}", codex_control, methods=["POST"]),
         Route("/api/repository/select", repository_select, methods=["POST"]),
+        Route("/api/watcher/{action:str}", post_only, methods=["GET", "HEAD"]),
+        Route("/api/codex/{action:str}", post_only, methods=["GET", "HEAD"]),
+        Route("/api/repository/select", post_only, methods=["GET", "HEAD"]),
         WebSocketRoute("/ws/terminal", terminal_socket),
         Route("/{path:path}", asset, methods=["GET", "HEAD"]),
     ]

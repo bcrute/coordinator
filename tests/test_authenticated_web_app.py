@@ -336,8 +336,6 @@ class AuthenticatedAppTests(unittest.TestCase):
             "/api/watcher/stop",
             "/api/codex/start",
             "/api/codex/stop",
-            "/api/codex/input",
-            "/api/codex/resize",
             "/api/repository/select",
         )
         with self.client(self.owner_claims()) as client:
@@ -348,12 +346,11 @@ class AuthenticatedAppTests(unittest.TestCase):
 
             csrf = client.get("/api/state").json()["security"]["csrf_token"]
             response = client.post(
-                "/api/codex/input",
-                json={"data": "hello"},
+                "/api/codex/stop",
                 headers={"X-CSRF-Token": csrf, "Origin": "http://127.0.0.1"},
             )
             self.assertEqual(response.status_code, 409)
-            self.assertEqual(response.json()["action"], "codex_input")
+            self.assertEqual(response.json()["action"], "codex_stop")
 
     def test_untrusted_host_is_rejected_before_application_content(self) -> None:
         with self.client(self.owner_claims()) as client:

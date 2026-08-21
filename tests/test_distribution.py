@@ -430,7 +430,6 @@ class PublicCheckoutUnitDiscoveryTests(unittest.TestCase):
             "test_web_repository_picker.py",
             "test_web_repository_switching.py",
             "test_codex_session.py",
-            "test_codex_session_http.py",
             "test_authenticated_web_app.py",
             "test_web_e2e.py",
             "test_distribution.py",

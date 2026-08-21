@@ -29,12 +29,12 @@ from web_app import (  # noqa: E402
     REPOSITORY_SELECT_BODY_BYTES,
     REPOSITORY_SELECT_PATH,
     RepositoryContext,
-    create_server,
     default_codex_command,
     discover_repositories,
     is_git_repository,
     parse_args,
 )
+from tests.asgi_server import authorized_headers, create_server
 
 
 class FakeManager:
@@ -139,7 +139,7 @@ class RepositorySwitchingTests(unittest.TestCase):
 
     def post_json(self, url: str, payload, headers=None) -> tuple[int, dict[str, object]]:
         merged = {"Content-Type": "application/json"}
-        merged.update(headers or {})
+        merged.update(authorized_headers(url, headers))
         body = json.dumps(payload).encode("utf-8") if not isinstance(payload, bytes) else payload
         status, _, text = self.request(url, "POST", merged, body)
         return status, json.loads(text) if text else {}
@@ -249,7 +249,7 @@ class RepositorySwitchingTests(unittest.TestCase):
 
         status, headers, _ = self.request(f"{base}{REPOSITORY_SELECT_PATH}", "GET")
         self.assertEqual(status, 405)
-        self.assertEqual(headers.get("Allow"), "POST")
+        self.assertEqual(headers.get("Allow") or headers.get("allow"), "POST")
 
     def test_select_refuses_cross_origin(self) -> None:
         root = self.root()

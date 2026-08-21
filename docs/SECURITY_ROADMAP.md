@@ -270,8 +270,8 @@ needs an explicit allow decision on **every** request.
 - **Stable subject.** Decisions are keyed on the OIDC `sub` claim (stable and
   provider-issued) and/or an Authentik group or entitlement claim. Never key on
   email, username, or display name — those are mutable and can be re-assigned.
-- **Coverage.** Enforcement applies to `/api/state`, `/api/codex/output`,
-  `/api/codex/start|stop|input|resize`, `/api/watcher/start|stop`,
+- **Coverage.** Enforcement applies to `/api/state`, `/api/codex/start|stop`,
+  `/ws/terminal`, `/api/watcher/start|stop`,
   `/api/repository/select`, every static asset that reveals application content,
   and every future control route — **not merely the HTML shell**. Protecting only
   the page while the JSON and PTY endpoints stay anonymous is the specific
@@ -502,8 +502,8 @@ installation, rotation, backup, restore, and operational evidence remain.
 
 Exposure is permitted only when **every** line is true:
 
-- [ ] The platform decision is recorded, and the app is no longer served by
-      `http.server` in the exposed deployment.
+- [x] The platform decision is recorded, and the app is no longer served by
+      `http.server`; both local and OIDC modes use Starlette/Uvicorn.
 - [ ] Default-deny enforcement covers every route, verified by a route-enumeration
       test — not just the HTML shell.
 - [ ] OIDC Authorization Code + PKCE `S256` against Authentik, with signature,

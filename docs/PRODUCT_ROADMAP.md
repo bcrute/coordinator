@@ -58,6 +58,14 @@ Exit evidence:
 
 **Status: in progress.**
 
+Progress:
+
+- The installable `coordinator` package, console command, wheel resources, and
+  compatibility launchers are complete.
+- Starlette/Uvicorn is now the only request implementation; the legacy stdlib server
+  and terminal HTTP polling/input routes are removed.
+- Further module extraction and public-contract cleanup remain before the phase gate.
+
 Deliverables:
 
 1. Add a conventional `pyproject.toml`, `src/coordinator/` package, version metadata,
