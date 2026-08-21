@@ -64,6 +64,8 @@ Progress:
   compatibility launchers are complete.
 - Starlette/Uvicorn is now the only request implementation; the legacy stdlib server
   and terminal HTTP polling/input routes are removed.
+- Security settings, server-side sessions, authorization policy, and security
+  middleware now have an independent application module with compatibility exports.
 - Further module extraction and public-contract cleanup remain before the phase gate.
 
 Deliverables:
