@@ -434,6 +434,7 @@ class PublicCheckoutUnitDiscoveryTests(unittest.TestCase):
             "test_web_e2e.py",
             "test_distribution.py",
             "test_coordinator_cli.py",
+            "test_operational_store.py",
         }
     )
 

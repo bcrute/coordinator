@@ -101,6 +101,16 @@ Exit gate:
 
 **Status: in progress.**
 
+Progress:
+
+- The owner-only operational index now has explicit schema migrations, deterministic
+  repository/run/turn/objective/agent/event identifiers, immutable transition events,
+  restart interruption recovery, explicit resume, preferences, retention, verified
+  online backup/restore, and file-snapshot rebuild support.
+- Run history, detail, event, policy, and resume endpoints are integrated into the
+  authenticated application; observable limits warn and stop managed processes
+  without estimating telemetry the provider did not expose.
+
 Deliverables:
 
 1. Introduce stable repository, goal, run, turn, objective, agent, artifact, and event

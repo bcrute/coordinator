@@ -552,6 +552,43 @@ class LocalAppTests(unittest.TestCase):
                 any(event["event"] == "repository_initialize" for event in activity)
             )
 
+    def test_run_history_policy_events_and_explicit_resume(self) -> None:
+        with TestClient(self.app, base_url="http://127.0.0.1") as client:
+            state = client.get("/api/state").json()
+            csrf = state["security"]["csrf_token"]
+            run_id = state["run"]["run_id"]
+            self.assertTrue(run_id.startswith("run_"))
+            self.assertTrue(state["run"]["turn_id"].startswith("turn_"))
+
+            history = client.get("/api/runs")
+            self.assertEqual(history.status_code, 200)
+            self.assertEqual(history.json()["runs"][0]["run_id"], run_id)
+            detail = client.get(f"/api/runs/{run_id}")
+            self.assertEqual(detail.status_code, 200)
+            events = client.get(f"/api/runs/{run_id}/events")
+            self.assertEqual(events.status_code, 200)
+            self.assertEqual(events.json()["events"][0]["type"], "run_discovered")
+
+            response = client.post(
+                f"/api/runs/{run_id}/policy",
+                json={"generated_tokens": 1000, "warning_ratio": 0.75},
+                headers=self.headers(csrf),
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["policy"]["generated_tokens"], 1000)
+
+            self.app.state.operational_store.pause(run_id, "test pause")
+            paused = client.get("/api/state").json()
+            self.assertEqual(paused["guardrails"]["status"], "paused")
+            self.assertTrue(paused["run"]["resume_required"])
+            response = client.post(
+                f"/api/runs/{run_id}/resume",
+                content=b"",
+                headers=self.headers(csrf),
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["outcome"], "resumed")
+
     def test_terminal_websocket_uses_session_csrf_handshake(self) -> None:
         with TestClient(self.app, base_url="http://127.0.0.1") as client:
             csrf = client.get("/api/state").json()["security"]["csrf_token"]

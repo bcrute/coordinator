@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from . import web_app
+from .operational_store import GuardrailPolicy, OperationalStore, evaluate_guardrails
 from authlib.integrations.base_client.errors import OAuthError
 from authlib.integrations.starlette_client import OAuth
 from starlette.applications import Starlette
@@ -114,6 +115,8 @@ def create_authenticated_app(
         settings.session_idle_seconds,
         settings.session_absolute_seconds,
     )
+    operational = OperationalStore(settings.state_dir)
+    operational.recover_interrupted()
 
     if isinstance(settings, OIDCSettings) and oidc_client is None:
         oauth = OAuth()
@@ -290,6 +293,47 @@ def create_authenticated_app(
             payload["repository_catalog"] = web_app.catalog_payload(
                 entries, active.repo, context.repositories_root
             )
+            run = operational.sync_snapshot(active.repo, payload)
+            try:
+                policy = GuardrailPolicy(**run["policy"])
+            except (TypeError, ValueError):
+                policy = GuardrailPolicy()
+            guardrails = evaluate_guardrails(
+                payload,
+                policy,
+                last_change_at=float(run["last_change_at"]),
+            )
+            if run["resume_required"]:
+                guardrails["status"] = "paused"
+                guardrails["reason"] = run["pause_reason"]
+            elif guardrails["status"] == "stop":
+                reasons = [
+                    str(finding["metric"])
+                    for finding in guardrails["findings"]
+                    if finding["severity"] == "stop"
+                ]
+                reason = "guardrail limit reached: " + ", ".join(reasons)
+                active.codex_session.stop()
+                active.watcher.stop()
+                operational.pause(str(run["run_id"]), reason)
+                guardrails["status"] = "paused"
+                guardrails["reason"] = reason
+                run["status"] = "paused"
+                run["pause_reason"] = reason
+                run["resume_required"] = True
+            payload["run"] = {
+                key: run[key]
+                for key in (
+                    "repository_id",
+                    "run_id",
+                    "turn_id",
+                    "status",
+                    "pause_reason",
+                    "resume_required",
+                    "last_change_at",
+                )
+            }
+            payload["guardrails"] = guardrails
         if isinstance(settings, OIDCSettings):
             user = dict(session["user"])
             payload["security"] = {
@@ -369,6 +413,79 @@ def create_authenticated_app(
         session_id = request.scope.get("coordinator.session_id")
         values = await run_in_threadpool(store.list_sessions, session_id)
         return JSONResponse({"ok": True, "sessions": values})
+
+    async def run_history(request: Request):
+        return JSONResponse({"ok": True, "runs": await run_in_threadpool(operational.list_runs)})
+
+    async def run_detail(request: Request):
+        run = await run_in_threadpool(operational.get_run, request.path_params["run_id"])
+        if run is None:
+            return JSONResponse({"ok": False, "outcome": "not_found"}, status_code=404)
+        return JSONResponse({"ok": True, "run": run})
+
+    async def run_events(request: Request):
+        run_id = request.path_params["run_id"]
+        if await run_in_threadpool(operational.get_run, run_id) is None:
+            return JSONResponse({"ok": False, "outcome": "not_found"}, status_code=404)
+        raw_after = request.query_params.get("after", "0")
+        if not raw_after.isdigit():
+            return JSONResponse(
+                {"ok": False, "outcome": "validation", "message": "invalid cursor"},
+                status_code=400,
+            )
+        events = await run_in_threadpool(
+            operational.list_events, run_id, int(raw_after)
+        )
+        return JSONResponse({"ok": True, "events": events})
+
+    async def run_resume(request: Request):
+        body = await _bounded_body(request, web_app.CONTROL_BODY_BYTES)
+        if isinstance(body, JSONResponse):
+            return body
+        if body:
+            return JSONResponse(
+                {"ok": False, "outcome": "validation", "message": "body must be empty"},
+                status_code=400,
+            )
+        run_id = request.path_params["run_id"]
+        resumed = await run_in_threadpool(operational.resume, run_id)
+        return JSONResponse(
+            {"ok": resumed, "outcome": "resumed" if resumed else "not_found"},
+            status_code=200 if resumed else 404,
+        )
+
+    async def run_policy(request: Request):
+        value = await _json_body(request, SETUP_BODY_BYTES)
+        if isinstance(value, JSONResponse):
+            return value
+        if not isinstance(value, dict):
+            return JSONResponse(
+                {"ok": False, "outcome": "validation", "message": "expected policy object"},
+                status_code=400,
+            )
+        allowed = set(GuardrailPolicy().as_dict())
+        if set(value) - allowed:
+            return JSONResponse(
+                {"ok": False, "outcome": "validation", "message": "unknown policy key"},
+                status_code=400,
+            )
+        try:
+            policy = GuardrailPolicy(**value)
+        except (TypeError, ValueError) as error:
+            return JSONResponse(
+                {"ok": False, "outcome": "validation", "message": str(error)},
+                status_code=400,
+            )
+        run_id = request.path_params["run_id"]
+        updated = await run_in_threadpool(operational.set_policy, run_id, policy)
+        return JSONResponse(
+            {
+                "ok": updated,
+                "outcome": "updated" if updated else "not_found",
+                "policy": policy.as_dict(),
+            },
+            status_code=200 if updated else 404,
+        )
 
     async def session_revoke(request: Request):
         value = await _json_body(request, web_app.CONTROL_BODY_BYTES)
@@ -917,6 +1034,11 @@ def create_authenticated_app(
         Route("/api/events", state_events, methods=["GET"]),
         Route("/api/activity", audit_events, methods=["GET"]),
         Route("/api/sessions", sessions, methods=["GET"]),
+        Route("/api/runs", run_history, methods=["GET"]),
+        Route("/api/runs/{run_id:str}", run_detail, methods=["GET"]),
+        Route("/api/runs/{run_id:str}/events", run_events, methods=["GET"]),
+        Route("/api/runs/{run_id:str}/resume", run_resume, methods=["POST"]),
+        Route("/api/runs/{run_id:str}/policy", run_policy, methods=["POST"]),
         Route("/api/sessions/revoke", session_revoke, methods=["POST"]),
         Route(
             "/api/sessions/revoke-others",
@@ -952,6 +1074,7 @@ def create_authenticated_app(
     app = Starlette(routes=routes, middleware=middleware, lifespan=lifespan)
     app.state.context = context
     app.state.security_store = store
+    app.state.operational_store = operational
     app.state.settings = settings
     return app
 
