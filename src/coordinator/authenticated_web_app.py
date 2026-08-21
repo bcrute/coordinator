@@ -953,6 +953,30 @@ def create_authenticated_app(
             state_private = (
                 state_details.st_uid == os.geteuid() and state_mode & 0o077 == 0
             )
+            try:
+                codex_command = codex_factory(repo)
+                codex_executable = codex_command[0] if codex_command else ""
+            except (IndexError, OSError, TypeError, ValueError) as error:
+                codex_executable = ""
+                codex_provider_detail = f"invalid provider command: {type(error).__name__}"
+            else:
+                resolved_codex = (
+                    str(Path(codex_executable).resolve())
+                    if codex_executable and Path(codex_executable).is_file()
+                    else shutil.which(codex_executable)
+                    if codex_executable
+                    else None
+                )
+                codex_provider_detail = resolved_codex or (
+                    f"not found: {codex_executable}" if codex_executable else "not configured"
+                )
+            codex_provider_ok = bool(
+                codex_executable
+                and (
+                    Path(codex_executable).is_file()
+                    or shutil.which(codex_executable) is not None
+                )
+            )
             database = operational.diagnostics()
             try:
                 with sqlite3.connect(store.path) as connection:
@@ -1004,10 +1028,10 @@ def create_authenticated_app(
                 },
                 {
                     "name": "Codex CLI",
-                    "ok": shutil.which("codex") is not None,
-                    "detail": shutil.which("codex") or "not found on PATH",
+                    "ok": codex_provider_ok,
+                    "detail": codex_provider_detail,
                     "category": "providers",
-                    "required": True,
+                    "required": settings.terminal_enabled,
                 },
                 {
                     "name": "Claude CLI",
