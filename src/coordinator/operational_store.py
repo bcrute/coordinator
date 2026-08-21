@@ -838,6 +838,25 @@ class OperationalStore:
             )
         return {"runs": runs, "events": events, "paused_runs": paused}
 
+    def diagnostics(self) -> dict[str, object]:
+        """Return bounded, read-only health details for the operational index."""
+
+        with self._connect() as connection:
+            integrity = str(connection.execute("PRAGMA quick_check").fetchone()[0])
+            page_count = int(connection.execute("PRAGMA page_count").fetchone()[0])
+            page_size = int(connection.execute("PRAGMA page_size").fetchone()[0])
+            event = connection.execute(
+                "SELECT event_id, created_at FROM events ORDER BY event_id DESC LIMIT 1"
+            ).fetchone()
+        return {
+            "ok": integrity == "ok",
+            "integrity": integrity,
+            "schema_version": self.schema_version,
+            "database_bytes": page_count * page_size,
+            "latest_event_id": int(event["event_id"]) if event else 0,
+            "latest_event_at": float(event["created_at"]) if event else None,
+        }
+
     def set_preference(self, key: str, value: object) -> None:
         if not key or len(key) > 100:
             raise ValueError("preference key must contain 1-100 characters")

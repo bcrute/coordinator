@@ -1038,7 +1038,11 @@ function initCodexTerminal() {
       if (codexTerminalWritable && codexSocket && codexSocket.readyState === WebSocket.OPEN) {
         for (var index = 0; index < data.length; index += CODEX_INPUT_CHUNK_CHARS) {
           codexSocket.send(
-            JSON.stringify({ type: "input", data: data.slice(index, index + CODEX_INPUT_CHUNK_CHARS) })
+            JSON.stringify({
+              type: "input",
+              protocol: "terminal.v1",
+              data: data.slice(index, index + CODEX_INPUT_CHUNK_CHARS),
+            })
           );
         }
       }
@@ -1154,7 +1158,12 @@ function sendCodexResize(rows, cols) {
   codexLastSentRows = rows;
   codexLastSentCols = cols;
   if (codexTerminalWritable && codexSocket && codexSocket.readyState === WebSocket.OPEN) {
-    codexSocket.send(JSON.stringify({ type: "resize", rows: rows, cols: cols }));
+    codexSocket.send(JSON.stringify({
+      type: "resize",
+      protocol: "terminal.v1",
+      rows: rows,
+      cols: cols,
+    }));
   }
 }
 
@@ -1943,8 +1952,8 @@ function loadDiagnostics() {
     node.replaceChildren.apply(node, checks.map(function (check) {
       return recordRow(
         text(check.name, "check"),
-        check.ok === true ? "ok" : "attention",
-        text(check.detail)
+        check.ok === true ? "ok" : check.required === false ? "optional" : "attention",
+        text(check.category, "system") + " · " + text(check.detail)
       );
     }));
   }).catch(function (error) {

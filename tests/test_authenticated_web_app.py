@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import re
 import stat
 import sys
 import tempfile
@@ -522,12 +523,26 @@ class LocalAppTests(unittest.TestCase):
 
             diagnostics = client.get("/api/diagnostics").json()
             self.assertEqual(diagnostics["mode"], "local")
+            self.assertEqual(diagnostics["summary"]["required_failures"], 0)
+            self.assertTrue(diagnostics["ok"])
             self.assertTrue(
                 any(
                     check["name"] == "coordination files"
                     for check in diagnostics["checks"]
                 )
             )
+            names = {check["name"] for check in diagnostics["checks"]}
+            self.assertTrue(
+                {
+                    "free disk space",
+                    "operational index",
+                    "security index",
+                    "watcher lock",
+                    "event index",
+                    "terminal provider",
+                }.issubset(names)
+            )
+            self.assertEqual(client.get("/api/v1/diagnostics").status_code, 200)
 
             sessions = client.get("/api/sessions").json()["sessions"]
             self.assertEqual(len(sessions), 1)
@@ -564,6 +579,40 @@ class LocalAppTests(unittest.TestCase):
             self.assertEqual(client.get("/api/v1/runs").status_code, 200)
             document = client.get("/api/v1/openapi.json").json()
             self.assertEqual(document["openapi"], "3.1.0")
+            documented = {
+                (path, method.upper())
+                for path, item in document["paths"].items()
+                for method in item
+                if method in {"get", "post", "put", "patch", "delete"}
+            }
+            routed = set()
+            for route in self.app.routes:
+                if not route.path.startswith("/api/v1/") or route.path.endswith(
+                    "openapi.json"
+                ):
+                    continue
+                path = re.sub(r"{([^}:]+):[^}]+}", r"{\1}", route.path)
+                routed.update(
+                    (path, method)
+                    for method in route.methods
+                    if method in {"GET", "POST", "PUT", "PATCH", "DELETE"}
+                )
+            self.assertEqual(documented, routed)
+            schemas = document["components"]["schemas"]
+            for path, method in documented:
+                operation = document["paths"][path][method.lower()]
+                self.assertIn("responses", operation)
+                for response in operation["responses"].values():
+                    for media in response.get("content", {}).values():
+                        reference = media.get("schema", {}).get("$ref")
+                        if reference:
+                            self.assertIn(reference.rsplit("/", 1)[-1], schemas)
+            error = client.get("/api/v1/runs?limit=invalid")
+            self.assertEqual(error.status_code, 400)
+            self.assertEqual(
+                set(error.json()), {"ok", "error"}, "v1 failures use one envelope"
+            )
+            self.assertEqual(error.json()["error"]["code"], "validation")
             metrics = client.get("/metrics")
             self.assertEqual(metrics.status_code, 200)
             self.assertIn("coordinator_runs", metrics.text)
@@ -755,6 +804,8 @@ class LocalAppTests(unittest.TestCase):
                     while response["type"] == "session":
                         response = observer.receive_json()
                     self.assertEqual(response["type"], "error")
+                    self.assertEqual(response["protocol"], "terminal.v1")
+                    self.assertIsInstance(response["sequence"], int)
                     self.assertIn("read-only", response["message"])
 
 

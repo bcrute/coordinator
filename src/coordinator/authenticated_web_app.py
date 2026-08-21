@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from . import web_app
+from .api_contract import openapi_document
 from .operational_store import GuardrailPolicy, OperationalStore, evaluate_guardrails
 from authlib.integrations.base_client.errors import OAuthError
 from authlib.integrations.starlette_client import OAuth
@@ -212,23 +213,7 @@ def create_authenticated_app(
         return PlainTextResponse(body, media_type="text/plain; version=0.0.4")
 
     async def openapi(request: Request):
-        paths = {
-            "/api/v1/state": {"get": {"summary": "Current workspace state"}},
-            "/api/v1/events": {"get": {"summary": "Resumable SSE state and transition stream"}},
-            "/api/v1/runs": {"get": {"summary": "Durable run history"}},
-            "/api/v1/runs/{run_id}": {"get": {"summary": "Durable run detail"}},
-            "/api/v1/preferences": {
-                "get": {"summary": "Non-secret preferences"},
-                "post": {"summary": "Update non-secret preferences"},
-            },
-        }
-        return JSONResponse(
-            {
-                "openapi": "3.1.0",
-                "info": {"title": "Coordinator API", "version": "1.0.0"},
-                "paths": paths,
-            }
-        )
+        return JSONResponse(openapi_document())
 
     async def login(request: Request):
         if not isinstance(settings, OIDCSettings) or oidc_client is None:
@@ -833,11 +818,36 @@ def create_authenticated_app(
         with context.lease() as active:
             repo = active.repo
             coordination = repo / ".coordination"
+            watcher = active.watcher.snapshot()
+            codex_session = active.codex_session.snapshot()
+            disk = shutil.disk_usage(store.state_dir)
+            minimum_free_bytes = 256 * 1024 * 1024
+            state_details = store.state_dir.stat()
+            state_mode = stat.S_IMODE(state_details.st_mode)
+            state_private = (
+                state_details.st_uid == os.geteuid() and state_mode & 0o077 == 0
+            )
+            database = operational.diagnostics()
+            try:
+                with sqlite3.connect(store.path) as connection:
+                    security_integrity = str(
+                        connection.execute("PRAGMA quick_check").fetchone()[0]
+                    )
+            except sqlite3.Error as error:
+                security_integrity = type(error).__name__
+            latest_event_at = database["latest_event_at"]
+            event_age = (
+                max(0, round(time.time() - float(latest_event_at)))
+                if isinstance(latest_event_at, (int, float))
+                else None
+            )
             checks = [
                 {
                     "name": "repository",
                     "ok": repo.is_dir(),
                     "detail": str(repo),
+                    "category": "workspace",
+                    "required": True,
                 },
                 {
                     "name": "repository writable",
@@ -845,6 +855,8 @@ def create_authenticated_app(
                     "detail": "writable"
                     if os.access(repo, os.W_OK)
                     else "not writable",
+                    "category": "workspace",
+                    "required": True,
                 },
                 {
                     "name": "Git metadata",
@@ -852,6 +864,8 @@ def create_authenticated_app(
                     "detail": "detected"
                     if web_app.is_git_repository(repo)
                     else "not detected",
+                    "category": "workspace",
+                    "required": True,
                 },
                 {
                     "name": "coordination files",
@@ -859,33 +873,100 @@ def create_authenticated_app(
                     "detail": "initialized"
                     if coordination.is_dir()
                     else "setup needed",
+                    "category": "workspace",
+                    "required": True,
                 },
                 {
                     "name": "Codex CLI",
                     "ok": shutil.which("codex") is not None,
                     "detail": shutil.which("codex") or "not found on PATH",
+                    "category": "providers",
+                    "required": True,
                 },
                 {
                     "name": "Claude CLI",
                     "ok": shutil.which("claude") is not None,
-                    "detail": shutil.which("claude") or "not found on PATH",
+                    "detail": shutil.which("claude") or "optional; not found on PATH",
+                    "category": "providers",
+                    "required": False,
                 },
                 {
-                    "name": "security state",
-                    "ok": os.access(store.state_dir, os.R_OK | os.W_OK),
-                    "detail": str(store.state_dir),
+                    "name": "private state directory",
+                    "ok": state_private
+                    and os.access(store.state_dir, os.R_OK | os.W_OK),
+                    "detail": f"{store.state_dir} · mode {state_mode:04o}",
+                    "category": "storage",
+                    "required": True,
                 },
                 {
                     "name": "operational index",
-                    "ok": operational.schema_version > 0,
-                    "detail": f"schema {operational.schema_version} at {operational.path}",
+                    "ok": bool(database["ok"]),
+                    "detail": (
+                        f"schema {database['schema_version']} · "
+                        f"quick_check {database['integrity']} · "
+                        f"{database['database_bytes']} bytes"
+                    ),
+                    "category": "storage",
+                    "required": True,
+                },
+                {
+                    "name": "security index",
+                    "ok": security_integrity == "ok",
+                    "detail": f"quick_check {security_integrity} at {store.path}",
+                    "category": "storage",
+                    "required": True,
+                },
+                {
+                    "name": "free disk space",
+                    "ok": disk.free >= minimum_free_bytes,
+                    "detail": f"{disk.free} bytes available",
+                    "category": "storage",
+                    "required": True,
+                },
+                {
+                    "name": "watcher lock",
+                    "ok": not bool(watcher.get("lock_present"))
+                    or bool(watcher.get("running")),
+                    "detail": (
+                        "managed watcher owns the active lock"
+                        if watcher.get("lock_present") and watcher.get("running")
+                        else "no lock contention detected"
+                        if not watcher.get("lock_present")
+                        else "lock exists without a managed watcher"
+                    ),
+                    "category": "runtime",
+                    "required": True,
+                },
+                {
+                    "name": "event index",
+                    "ok": bool(database["ok"]),
+                    "detail": (
+                        f"latest event {database['latest_event_id']} · {event_age}s ago"
+                        if event_age is not None
+                        else "no durable transitions recorded yet"
+                    ),
+                    "category": "runtime",
+                    "required": True,
+                },
+                {
+                    "name": "terminal provider",
+                    "ok": codex_session.get("state") != "error",
+                    "detail": str(codex_session.get("detail") or codex_session.get("state")),
+                    "category": "runtime",
+                    "required": True,
                 },
             ]
+        required = [check for check in checks if check["required"]]
         return {
-            "ok": all(bool(check["ok"]) for check in checks),
+            "ok": all(bool(check["ok"]) for check in required),
             "mode": settings.auth_mode,
             "external_url": settings.external_url,
             "issuer": settings.issuer if isinstance(settings, OIDCSettings) else None,
+            "summary": {
+                "passing": sum(bool(check["ok"]) for check in checks),
+                "attention": sum(not bool(check["ok"]) for check in checks),
+                "required_failures": sum(not bool(check["ok"]) for check in required),
+            },
             "checks": checks,
         }
 
@@ -1216,6 +1297,24 @@ def create_authenticated_app(
         requested_cursor = hello.get("cursor")
         if not isinstance(requested_cursor, int) or isinstance(requested_cursor, bool):
             requested_cursor = None
+        initial_cursor = manager.snapshot().get("buffer_next_cursor", 0)
+        sequence = [
+            requested_cursor
+            if requested_cursor is not None
+            else initial_cursor
+            if isinstance(initial_cursor, int)
+            else 0
+        ]
+
+        async def send_terminal_frame(kind: str, **values: object) -> None:
+            await websocket.send_json(
+                {
+                    "protocol": "terminal.v1",
+                    "sequence": sequence[0],
+                    "type": kind,
+                    **values,
+                }
+            )
 
         async def send_output() -> None:
             cursor: int | None = requested_cursor
@@ -1225,7 +1324,7 @@ def create_authenticated_app(
                     return
                 with context.lease() as active:
                     if str(active.repo) != repository:
-                        await websocket.send_json({"type": "repository_changed"})
+                        await send_terminal_frame("repository_changed")
                         return
                 output = await run_in_threadpool(
                     manager.wait_for_output, cursor, TERMINAL_WAIT_SECONDS
@@ -1233,42 +1332,32 @@ def create_authenticated_app(
                 cursor_value = output.get("next_cursor")
                 if isinstance(cursor_value, int):
                     cursor = cursor_value
+                    sequence[0] = cursor_value
                 if output.get("text") or output.get("reset"):
-                    await websocket.send_json(
-                        {
-                            "protocol": "terminal.v1",
-                            "sequence": output.get("next_cursor", 0),
-                            "type": "output",
-                            "output": output,
-                        }
-                    )
+                    await send_terminal_frame("output", output=output)
                 session = manager.snapshot()
                 session["attachment"] = {
                     "mode": "read_write" if writable else "read_only",
                     "owned_by_this_connection": writable,
                 }
-                await websocket.send_json(
-                    {
-                        "protocol": "terminal.v1",
-                        "sequence": session.get("buffer_next_cursor", 0),
-                        "type": "session",
-                        "session": session,
-                    }
-                )
+                session_cursor = session.get("buffer_next_cursor")
+                if isinstance(session_cursor, int):
+                    sequence[0] = session_cursor
+                await send_terminal_frame("session", session=session)
 
         async def receive_input() -> None:
             while True:
                 raw = await websocket.receive_text()
                 if len(raw.encode("utf-8")) > TERMINAL_MAX_MESSAGE_BYTES:
-                    await websocket.send_json(
-                        {"type": "error", "message": "terminal message is too large"}
+                    await send_terminal_frame(
+                        "error", message="terminal message is too large"
                     )
                     continue
                 try:
                     message = json.loads(raw)
                 except json.JSONDecodeError:
-                    await websocket.send_json(
-                        {"type": "error", "message": "terminal message is not JSON"}
+                    await send_terminal_frame(
+                        "error", message="terminal message is not JSON"
                     )
                     continue
                 if not isinstance(message, dict):
@@ -1280,11 +1369,9 @@ def create_authenticated_app(
                         await websocket.close(code=1008, reason="session expired")
                         return
                     if kind in {"input", "resize"} and not writable:
-                        await websocket.send_json(
-                            {
-                                "type": "error",
-                                "message": "terminal is read-only; another browser connection owns input",
-                            }
+                        await send_terminal_frame(
+                            "error",
+                            message="terminal is read-only; another browser connection owns input",
                         )
                         continue
                     if kind == "input" and isinstance(message.get("data"), str):
@@ -1298,13 +1385,13 @@ def create_authenticated_app(
                             manager.resize, message["rows"], message["cols"]
                         )
                     elif kind == "ping":
-                        await websocket.send_json({"type": "pong"})
+                        await send_terminal_frame("pong")
                     else:
-                        await websocket.send_json(
-                            {"type": "error", "message": "invalid terminal message"}
+                        await send_terminal_frame(
+                            "error", message="invalid terminal message"
                         )
                 except (RuntimeError, ValueError) as error:
-                    await websocket.send_json({"type": "error", "message": str(error)})
+                    await send_terminal_frame("error", message=str(error))
 
         sender = asyncio.create_task(send_output())
         receiver = asyncio.create_task(receive_input())
@@ -1347,6 +1434,50 @@ def create_authenticated_app(
             headers={"Allow": "POST"},
         )
 
+    def versioned(endpoint: Callable[[Request], Any]):
+        """Normalize failures from compatibility handlers for the v1 contract."""
+
+        async def api_v1_endpoint(request: Request):
+            response = await endpoint(request)
+            if not isinstance(response, JSONResponse) or response.status_code < 400:
+                return response
+            try:
+                payload = json.loads(bytes(response.body))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                payload = {}
+            if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+                return response
+            outcome = (
+                str(payload.get("outcome"))
+                if isinstance(payload, dict) and payload.get("outcome")
+                else "request_failed"
+            )
+            message = (
+                str(payload.get("message"))
+                if isinstance(payload, dict) and payload.get("message")
+                else {
+                    400: "request validation failed",
+                    401: "authentication required",
+                    403: "request is not authorized",
+                    404: "resource not found",
+                    409: "request conflicts with current state",
+                    413: "request body is too large",
+                }.get(response.status_code, "request failed")
+            )
+            details = {
+                key: value
+                for key, value in payload.items()
+                if key not in {"ok", "outcome", "message", "error"}
+            } if isinstance(payload, dict) else {}
+            error: dict[str, object] = {"code": outcome, "message": message}
+            if details:
+                error["details"] = details
+            return JSONResponse(
+                {"ok": False, "error": error}, status_code=response.status_code
+            )
+
+        return api_v1_endpoint
+
     @asynccontextmanager
     async def lifespan(app: Starlette):
         yield
@@ -1361,41 +1492,63 @@ def create_authenticated_app(
         Route("/auth/callback", callback, methods=["GET"]),
         Route("/auth/logout", logout, methods=["POST"]),
         Route("/api/state", state, methods=["GET"]),
-        Route("/api/v1/state", state, methods=["GET"]),
+        Route("/api/v1/state", versioned(state), methods=["GET"]),
         Route("/api/events", state_events, methods=["GET"]),
-        Route("/api/v1/events", state_events, methods=["GET"]),
+        Route("/api/v1/events", versioned(state_events), methods=["GET"]),
         Route("/api/activity", audit_events, methods=["GET"]),
+        Route("/api/v1/activity", versioned(audit_events), methods=["GET"]),
         Route("/api/sessions", sessions, methods=["GET"]),
+        Route("/api/v1/sessions", versioned(sessions), methods=["GET"]),
         Route("/api/runs", run_history, methods=["GET"]),
-        Route("/api/v1/runs", run_history, methods=["GET"]),
+        Route("/api/v1/runs", versioned(run_history), methods=["GET"]),
         Route("/api/runs/{run_id:str}", run_detail, methods=["GET"]),
-        Route("/api/v1/runs/{run_id:str}", run_detail, methods=["GET"]),
+        Route("/api/v1/runs/{run_id:str}", versioned(run_detail), methods=["GET"]),
         Route("/api/runs/{run_id:str}/events", run_events, methods=["GET"]),
-        Route("/api/v1/runs/{run_id:str}/events", run_events, methods=["GET"]),
+        Route("/api/v1/runs/{run_id:str}/events", versioned(run_events), methods=["GET"]),
         Route("/api/runs/{run_id:str}/resume", run_resume, methods=["POST"]),
+        Route("/api/v1/runs/{run_id:str}/resume", versioned(run_resume), methods=["POST"]),
         Route("/api/runs/{run_id:str}/policy", run_policy, methods=["POST"]),
+        Route("/api/v1/runs/{run_id:str}/policy", versioned(run_policy), methods=["POST"]),
         Route("/api/runs/{run_id:str}/{action:str}", run_archive, methods=["POST"]),
+        Route("/api/v1/runs/{run_id:str}/{action:str}", versioned(run_archive), methods=["POST"]),
         Route("/api/repository/diff", repository_diff, methods=["GET"]),
+        Route("/api/v1/repository/diff", versioned(repository_diff), methods=["GET"]),
         Route("/api/preferences", preferences_get, methods=["GET"]),
         Route("/api/preferences", preferences_update, methods=["POST"]),
-        Route("/api/v1/preferences", preferences_get, methods=["GET"]),
-        Route("/api/v1/preferences", preferences_update, methods=["POST"]),
+        Route("/api/v1/preferences", versioned(preferences_get), methods=["GET"]),
+        Route("/api/v1/preferences", versioned(preferences_update), methods=["POST"]),
         Route("/api/sessions/revoke", session_revoke, methods=["POST"]),
+        Route("/api/v1/sessions/revoke", versioned(session_revoke), methods=["POST"]),
         Route(
             "/api/sessions/revoke-others",
             session_revoke_others,
             methods=["POST"],
         ),
+        Route(
+            "/api/v1/sessions/revoke-others",
+            versioned(session_revoke_others),
+            methods=["POST"],
+        ),
         Route("/api/diagnostics", diagnostics, methods=["GET"]),
+        Route("/api/v1/diagnostics", versioned(diagnostics), methods=["GET"]),
         Route("/api/repository/create", repository_create, methods=["POST"]),
+        Route("/api/v1/repository/create", versioned(repository_create), methods=["POST"]),
         Route(
             "/api/repository/initialize",
             repository_initialize,
             methods=["POST"],
         ),
+        Route(
+            "/api/v1/repository/initialize",
+            versioned(repository_initialize),
+            methods=["POST"],
+        ),
         Route("/api/watcher/{action:str}", watcher_control, methods=["POST"]),
+        Route("/api/v1/watcher/{action:str}", versioned(watcher_control), methods=["POST"]),
         Route("/api/codex/{action:str}", codex_control, methods=["POST"]),
+        Route("/api/v1/codex/{action:str}", versioned(codex_control), methods=["POST"]),
         Route("/api/repository/select", repository_select, methods=["POST"]),
+        Route("/api/v1/repository/select", versioned(repository_select), methods=["POST"]),
         Route("/api/watcher/{action:str}", post_only, methods=["GET", "HEAD"]),
         Route("/api/codex/{action:str}", post_only, methods=["GET", "HEAD"]),
         Route("/api/repository/select", post_only, methods=["GET", "HEAD"]),

@@ -218,6 +218,13 @@ Progress:
   parsing by the number of connected browsers.
 - Cheap liveness, dependency-aware readiness, Prometheus text metrics, structured
   request logs, and response correlation IDs are available.
+- The complete HTTP control surface now has `/api/v1` routes. Its source-controlled
+  OpenAPI 3.1 document defines request/response schemas, and compatibility-handler
+  failures are normalized into one versioned error envelope. A route-enumeration
+  contract test prevents the document and application from silently diverging.
+- Diagnostics distinguish required dependencies from optional providers and inspect
+  repository/state access, owner-only modes, disk headroom, both SQLite indexes,
+  watcher-lock contention, event-index freshness, CLI discovery, and terminal health.
 
 Deliverables:
 
