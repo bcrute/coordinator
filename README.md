@@ -158,8 +158,9 @@ from `--config`, which in turn wins over the built-in default. See
 
 The topbar shows every percentage-based allowance reported by **Codex** and
 **Claude**, along with the account plan. This includes session and weekly windows
-plus named model-specific limits such as Spark or Fable when the provider returns
-them. Each provider has columns for the limit and reset time, percentage left,
+plus named model-specific limits such as Fable when the provider returns them.
+Spark's separate research-preview allowance is intentionally omitted. Each
+provider has columns for the limit and reset time, percentage left,
 and projected percentage used at reset. The projection linearly extrapolates the
 average pace in the current window: red at 100% or more, yellow at 80–99%, and
 green below 80%. A missing reset or window duration displays `—`. Use the

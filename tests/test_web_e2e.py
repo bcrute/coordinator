@@ -99,23 +99,6 @@ class DashboardBrowserTests(unittest.TestCase):
                                         "duration_minutes": 10080,
                                         "resets_at": reset_after(weekly, timedelta(days=1)),
                                     },
-                                    {
-                                        "id": "spark:primary",
-                                        "label": "Spark · Session (5h)",
-                                        "remaining_percent": 100,
-                                        "used_percent": 0,
-                                        "duration_minutes": 300,
-                                        "resets_at": reset_after(session, timedelta(hours=1)),
-                                    },
-                                    {
-                                        "id": "spark:secondary",
-                                        "label": "Spark · Weekly (7d)",
-                                        "scope": "Spark",
-                                        "remaining_percent": 90,
-                                        "used_percent": 10,
-                                        "duration_minutes": 10080,
-                                        "resets_at": reset_after(weekly, timedelta(days=4)),
-                                    },
                                 ],
                             },
                             {
@@ -175,9 +158,9 @@ class DashboardBrowserTests(unittest.TestCase):
                     page.locator("#usage-claude-value").filter(has_text="55%").wait_for(
                         timeout=10_000
                     )
-                    page.locator("#usage-codex-value").filter(
-                        has_text="Spark · Session (5h)"
-                    ).wait_for(timeout=10_000)
+                    self.assertNotIn(
+                        "Spark", page.locator("#usage-codex").inner_text()
+                    )
                     page.locator("#usage-claude-value").filter(has_text="Weekly").wait_for(
                         timeout=10_000
                     )
@@ -186,8 +169,6 @@ class DashboardBrowserTests(unittest.TestCase):
                     ).filter(has_text="100%").wait_for(timeout=10_000)
                     projection_expectations = (
                         ("#usage-codex-value .usage-chip", 0, "210%", "bad"),
-                        ("#usage-codex-value .usage-chip", 1, "0%", "ok"),
-                        ("#usage-codex-value .usage-chip", 2, "17%", "ok"),
                         ("#usage-claude-value .usage-chip", 0, "50%", "ok"),
                         ("#usage-claude-value .usage-chip", 1, "90%", "warn"),
                         ("#usage-claude-value .usage-chip", 2, "—", "neutral"),

@@ -106,14 +106,13 @@ class CollectorTests(unittest.TestCase):
             [
                 ("Session (5h)", 73.0),
                 ("Weekly (7d)", 59.0),
-                ("GPT-5.3-Codex-Spark · Session (5h)", 98.0),
-                ("GPT-5.3-Codex-Spark · Weekly (7d)", 97.0),
             ],
         )
         self.assertEqual(
             [window["duration_minutes"] for window in payload["windows"]],
-            [300, 10080, 300, 10080],
+            [300, 10080],
         )
+        self.assertNotIn("Spark", json.dumps(payload["windows"]))
 
     @mock.patch("coordinator.provider_usage._read_claude_usage")
     @mock.patch("coordinator.provider_usage.subprocess.run")

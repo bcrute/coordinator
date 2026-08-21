@@ -91,6 +91,8 @@ def _codex_windows(result: Mapping[str, object]) -> list[dict[str, object]]:
         stable_id = limit_id if isinstance(limit_id, str) else f"limit-{snapshot_index}"
         limit_name = snapshot.get("limitName")
         scope = limit_name.strip() if isinstance(limit_name, str) else ""
+        if "spark" in f"{stable_id} {scope}".casefold():
+            continue
         for key in ("primary", "secondary"):
             raw_window = snapshot.get(key)
             if not isinstance(raw_window, Mapping):
