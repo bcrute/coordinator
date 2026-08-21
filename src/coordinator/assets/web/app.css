@@ -111,23 +111,28 @@ a {
 }
 
 .provider-usage {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-}
-
-.usage-provider,
-.usage-window-list {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.3rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(12rem, 1fr)) auto;
+  align-items: stretch;
+  gap: 0;
 }
 
 .usage-provider {
-  padding-left: 0.35rem;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0 0.75rem;
   border-left: 1px solid var(--edge-solid);
+}
+
+.usage-provider:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.usage-provider:last-child {
+  padding-right: 0;
 }
 
 .usage-provider-label {
@@ -144,15 +149,28 @@ a {
   text-transform: capitalize;
 }
 
+.usage-window-list {
+  display: grid;
+  gap: 0.12rem;
+}
+
 .usage-chip {
-  display: inline-flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: baseline;
-  gap: 0.35rem;
-  padding: 0.2rem 0.45rem;
-  border: 1px solid var(--edge-solid);
-  border-radius: 999px;
+  gap: 0.65rem;
+  min-width: 0;
+  padding: 0.08rem 0;
+  border: 0;
+  border-radius: 0;
   color: var(--muted);
   font-size: 0.72rem;
+}
+
+.usage-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .usage-chip strong {
@@ -162,7 +180,7 @@ a {
 }
 
 .usage-chip[data-tone="warn"] {
-  border-color: color-mix(in srgb, var(--warn) 65%, var(--edge-solid));
+  color: var(--warn);
 }
 
 .usage-chip[data-tone="warn"] strong {
@@ -170,7 +188,7 @@ a {
 }
 
 .usage-chip[data-tone="bad"] {
-  border-color: color-mix(in srgb, var(--bad) 70%, var(--edge-solid));
+  color: var(--bad);
 }
 
 .usage-chip[data-tone="bad"] strong {
@@ -178,6 +196,7 @@ a {
 }
 
 .usage-refresh {
+  align-self: start;
   width: 1.65rem;
   height: 1.65rem;
   padding: 0;
@@ -1110,10 +1129,19 @@ kbd { padding: 0.08rem 0.35rem; border: 1px solid var(--edge-solid); border-radi
   .provider-usage {
     order: 3;
     width: 100%;
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
   }
 
-  .usage-provider {
-    flex-basis: 100%;
+  .usage-provider,
+  .usage-provider:first-child,
+  .usage-provider:last-child {
+    padding: 0;
+    border-left: 0;
+  }
+
+  .usage-refresh {
+    justify-self: start;
   }
 
   .repo-picker-select {

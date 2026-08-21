@@ -105,6 +105,7 @@ class ProviderUsageHeaderTests(unittest.TestCase):
     def setUp(self):
         self.js = read(WEB_DIR / "app.js")
         self.html = read(WEB_DIR / "index.html")
+        self.css = read(WEB_DIR / "app.css")
 
     def test_header_has_compact_codex_and_claude_usage_values(self):
         for provider in ("codex", "claude"):
@@ -112,6 +113,14 @@ class ProviderUsageHeaderTests(unittest.TestCase):
             self.assertIn('id="usage-%s-value"' % provider, self.html)
             self.assertIn('id="usage-%s-plan"' % provider, self.html)
         self.assertIn('id="usage-refresh"', self.html)
+
+    def test_usage_is_grouped_into_provider_columns(self):
+        self.assertIn(
+            "grid-template-columns: repeat(2, minmax(12rem, 1fr)) auto",
+            self.css,
+        )
+        self.assertIn(".usage-provider:first-child", self.css)
+        self.assertIn("grid-template-columns: minmax(0, 1fr) auto", self.css)
 
     def test_usage_reads_cache_and_manual_refresh_uses_post(self):
         self.assertIn('var PROVIDER_USAGE_URL = "/api/provider-usage"', self.js)
