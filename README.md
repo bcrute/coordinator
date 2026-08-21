@@ -5,8 +5,8 @@ watching and controlling it. Clone this repository once, then point it at one
 or more separate local project repositories to start coordinating
 Codex/ChatGPT and Claude Code turns on those projects.
 
-**Status: experimental personal project.** It is not an official
-product of, and has no affiliation with, OpenAI or Anthropic. It wraps their
+**Status: self-hosted beta.** It is not an official product of, and has no
+affiliation with, OpenAI or Anthropic. It wraps their
 separately installed and separately authenticated CLIs; you are responsible
 for your own Codex and Claude Code accounts, credentials, and usage.
 
@@ -235,7 +235,9 @@ Chromium workflow through the local server. The tests launch no external identit
 provider or agent CLI.
 
 Before publishing a release or substantial security-sensitive update, work through
-[`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md).
+[`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md). Dated verification from the
+current `0.3.0` feature checkpoint is recorded in
+[`docs/RELEASE_EVIDENCE.md`](docs/RELEASE_EVIDENCE.md).
 
 ## Limitations, honestly
 
@@ -256,12 +258,6 @@ Before publishing a release or substantial security-sensitive update, work throu
   print mode and support native subagents, not native agent teams; use
   `start_claude_team.py` directly for collaborative team work (see
   `skills/coordinate-claude-work/SKILL.md`).
-- This development worktree also contains proprietary and unrelated local
-  fixtures — `citadel-main.zip` (proprietary, excluded) and
-  `readiness_demo/`/`examples/` plus their tests (an unrelated local demo,
-  excluded) — that are intentionally kept out of the public file set by
-  `.gitignore` rather than deleted from disk. They are not part of this
-  workflow's product surface.
 - Windows is not supported.
 
 ## Security posture
@@ -288,9 +284,9 @@ updating, troubleshooting, and an optional systemd user-service setup), see
 ## License
 
 Released under the MIT License, Copyright (c) 2026 Benjamin Crute. See
-[`LICENSE`](LICENSE) for the full text. This remains an experimental personal
-project; the license covers the code in this repository and grants no rights
-in the third-party material described below.
+[`LICENSE`](LICENSE) for the full text. The license covers the first-party code
+in this repository and grants no rights in the third-party material described
+below.
 
 ## Third-party code
 

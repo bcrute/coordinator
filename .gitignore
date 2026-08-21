@@ -43,15 +43,3 @@ Thumbs.db
 .env
 .env.*
 !.env.example
-
-# --- Proprietary local material ---
-/citadel-main.zip
-
-# --- Unrelated local readiness-demo fixture ---
-/readiness_demo/
-/examples/
-/tests/test_cli.py
-/tests/test_examples.py
-/tests/test_markdown.py
-/tests/test_readiness_checklist.py
-/tests/test_work_item.py

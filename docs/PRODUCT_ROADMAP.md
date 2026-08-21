@@ -263,7 +263,7 @@ Exit gate:
 
 ## Phase 5 - Network and release readiness
 
-**Status: in progress.**
+**Status: application implementation complete; deployment acceptance pending.**
 
 Progress:
 
@@ -286,6 +286,16 @@ Progress:
 - Dedicated-service and Caddy examples keep the upstream on a proxy-only socket,
   preserve SSE/WebSocket behavior, remove unused identity headers, bound service
   resources, and document the terminal's command-execution consequence.
+- Python 3.11 through 3.14 are covered by the locked CI matrix. A clean committed-tree
+  export installs, runs the public suite, builds both distributions, and reports the
+  intended version; the dependency and public-tree scans are recorded in
+  `docs/RELEASE_EVIDENCE.md`.
+
+Remaining acceptance work requires the target host and identity provider: live
+Authentik negative-token/claim tests, proof that the TLS proxy is the only upstream
+path, installation under the dedicated service identity, and rehearsed secret,
+revocation, backup, restore, rollback, and incident-stop procedures. Those are not
+software changes and are deliberately not marked complete by local automated tests.
 
 Deliverables:
 

@@ -19,6 +19,7 @@ CI_PATH = ROOT / ".github" / "workflows" / "ci.yml"
 RELEASE_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "release.yml"
 README_PATH = ROOT / "README.md"
 CHECKLIST_PATH = ROOT / "docs" / "RELEASE_CHECKLIST.md"
+EVIDENCE_PATH = ROOT / "docs" / "RELEASE_EVIDENCE.md"
 SELF_HOSTING_PATH = ROOT / "docs" / "SELF_HOSTING.md"
 EXAMPLE_CONFIG = ROOT / "workflow.example.toml"
 EXAMPLE_SERVICE = ROOT / "deploy" / "workflow-web.service.example"
@@ -66,16 +67,20 @@ NO_LEAK_FILES = [
     SKILL / "SKILL.md",
     CI_PATH,
     CHECKLIST_PATH,
+    EVIDENCE_PATH,
     RELEASE_WORKFLOW_PATH,
 ]
 
 
 def _gitignored_test_modules() -> set[str]:
-    """Test basenames the accepted ignore rules keep out of the public checkout."""
-    gitignore_text = (ROOT / ".gitignore").read_text(encoding="utf-8")
+    """Test basenames the repository or workstation excludes from publication."""
+    sources = [ROOT / ".gitignore", ROOT / ".git" / "info" / "exclude"]
+    ignore_text = "\n".join(
+        path.read_text(encoding="utf-8") for path in sources if path.is_file()
+    )
     return {
         line.strip().lstrip("/").split("/", 1)[1]
-        for line in gitignore_text.splitlines()
+        for line in ignore_text.splitlines()
         if line.strip().startswith("/tests/") and line.strip().endswith(".py")
     }
 
@@ -202,8 +207,8 @@ class PackageMetadataTests(unittest.TestCase):
             "prune .coordination",
             "prune tests",
             "prune examples",
-            "prune readiness_demo",
-            "exclude citadel-main.zip",
+            "prune *_demo",
+            "global-exclude *.zip",
             "exclude workflow.toml",
         ):
             with self.subTest(entry=entry):
@@ -286,8 +291,8 @@ class ReadmeLinkTests(unittest.TestCase):
         self.assertIn("Benjamin Crute", section)
         self.assertIn("(LICENSE)", section)
 
-    def test_still_framed_as_experimental_personal_project(self) -> None:
-        self.assertIn("experimental personal", self.text.lower())
+    def test_status_is_self_hosted_beta(self) -> None:
+        self.assertIn("self-hosted beta", self.text.lower())
 
 
 class ExampleConfigTests(unittest.TestCase):
@@ -472,13 +477,12 @@ class ReleaseChecklistTests(unittest.TestCase):
 
 
 class PublicCheckoutUnitDiscoveryTests(unittest.TestCase):
-    """Confirm the currently-tracked (non-ignored) test files match the
+    """Confirm the intended public test files match the
     intended public checkout's workflow/web/session/distribution scope.
 
-    This inspects .gitignore's explicit per-file test exclusions rather than
-    running `git`, so it stays valid both in this dev tree and in a clean
-    copy built from the accepted ignore rules (where the excluded files are
-    simply absent).
+    This inspects repository and workstation exclusion files rather than running Git,
+    so it remains valid in this development tree and in a clean public copy where
+    workstation-local files are absent.
     """
 
     EXPECTED_PUBLIC_TEST_MODULES = frozenset(
@@ -507,12 +511,12 @@ class PublicCheckoutUnitDiscoveryTests(unittest.TestCase):
             "test_readiness_checklist.py",
             "test_work_item.py",
         ]
-        gitignore_text = (ROOT / ".gitignore").read_text(encoding="utf-8")
+        excluded = _gitignored_test_modules()
         tests_dir = ROOT / "tests"
         for name in excluded_basenames:
             with self.subTest(name=name):
                 present_on_disk = (tests_dir / name).is_file()
-                ignored = f"/tests/{name}" in gitignore_text
+                ignored = name in excluded
                 # Either this dev tree still has the file locally (and it is
                 # ignored so it won't reach the public checkout), or a clean
                 # copy simply never had the file to begin with.
@@ -523,7 +527,7 @@ class PublicCheckoutUnitDiscoveryTests(unittest.TestCase):
 
     def test_public_test_set_equals_expected_after_gitignore_exclusions(self) -> None:
         """Derive the public test module set as (all test_*.py on disk) minus
-        (the exact per-file .gitignore exclusions), and assert it equals the
+        (the exact local exclusions), and assert it equals the
         expected public modules exactly, so an accidental extra public test
         file fails this contract rather than passing silently.
         """

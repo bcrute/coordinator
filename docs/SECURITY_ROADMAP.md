@@ -2,14 +2,15 @@
 
 ## Purpose and honest current posture
 
-### Implementation status (2026-08-20)
+### Implementation status (2026-08-21)
 
-The repository now contains an initial authenticated ASGI runtime selected with
+The repository contains an authenticated ASGI runtime selected with
 `auth_mode = "oidc"`. It uses Starlette/Uvicorn, Authlib Authorization Code +
 PKCE, strict issuer/subject-or-group decisions, an asymmetric ID-token algorithm
 allowlist, opaque SQLite-backed sessions, per-session CSRF tokens, security headers,
-and redacted audit events. The original anonymous runtime remains available only as
-the enforced loopback `local` mode.
+signed back-channel logout, abuse controls, and redacted audit events. The anonymous
+runtime remains available only as the enforced loopback `local` mode. Automated
+application evidence is recorded in `docs/RELEASE_EVIDENCE.md`.
 
 This is implementation progress, **not a declaration of network readiness**. A live
 Authentik integration, TLS proxy isolation, dedicated service identity, secret
@@ -86,7 +87,6 @@ exposure.
 ### Controls not yet demonstrated for a network deployment
 
 - TLS termination or transport confidentiality.
-- Rate limiting, lockout, or abuse controls on control endpoints.
 - A live Authentik integration and negative-token validation evidence against
   the real provider.
 - Proxy isolation proving that only the reverse proxy can reach the upstream.
@@ -438,9 +438,9 @@ authenticated route tests exercise the shared PTY/control surface on ASGI.
 
 ### Phase 3 — OIDC login against Authentik
 
-**Status: in progress.** The Authlib flow and several negative cases are tested
-with a fake provider; live Authentik integration and the full negative-token
-matrix remain exit criteria.
+**Status: application implementation complete; live-provider evidence pending.**
+The Authlib flow and negative cases are tested with controlled provider responses;
+live Authentik integration remains an exit criterion.
 
 - **Exit:** Authorization Code + PKCE `S256` login succeeds end to end;
   automated tests prove refusal for each of: bad signature, wrong `iss`, wrong
@@ -486,8 +486,9 @@ mapping remains outstanding.**
 
 ### Phase 7 — Hardening and operations
 
-**Status: in progress.** A hardened example unit and CI dependency audit exist;
-installation, rotation, backup, restore, and operational evidence remain.
+**Status: application implementation complete; host rehearsal pending.** A hardened
+example unit, abuse controls, locked dependency audit, database verification, and
+backup/restore commands exist; installation, rotation, and operational evidence remain.
 
 - **Exit:** The service runs as a dedicated account under the hardening
   directives; secrets come from the chosen store and a rotation has been
@@ -509,27 +510,27 @@ Exposure is permitted only when **every** line is true:
 
 - [x] The platform decision is recorded, and the app is no longer served by
       `http.server`; both local and OIDC modes use Starlette/Uvicorn.
-- [ ] Default-deny enforcement covers every route, verified by a route-enumeration
+- [x] Default-deny enforcement covers every route, verified by a route-enumeration
       test — not just the HTML shell.
 - [ ] OIDC Authorization Code + PKCE `S256` against Authentik, with signature,
       `iss`, `aud`, `exp`, and `nonce` validation, each negatively tested.
-- [ ] No implicit flow; no tokens in browser storage; strict single registered
+- [x] No implicit flow; no tokens in browser storage; strict single registered
       redirect URI.
-- [ ] Server-side opaque sessions with rotation on login, absolute and idle
+- [x] Server-side opaque sessions with rotation on login, absolute and idle
       expiry, and working `POST` logout.
-- [ ] Cookies are `HttpOnly`, `Secure`, `SameSite`, host-scoped.
-- [ ] CSRF defense on every state-changing endpoint, tested per endpoint.
-- [ ] Authorization is keyed on `sub` and/or an Authentik group, default deny.
+- [x] Cookies are `HttpOnly`, `Secure`, `SameSite`, host-scoped.
+- [x] CSRF defense on every state-changing endpoint, tested per endpoint.
+- [x] Authorization is keyed on `sub` and/or an Authentik group, default deny.
 - [ ] TLS at the proxy; the upstream is provably unreachable from anywhere else.
 - [ ] Forwarded headers trusted only from the proxy; inbound identity headers
       stripped at the edge.
-- [ ] Security headers and `no-store` on authenticated responses.
+- [x] Security headers and `no-store` on authenticated responses.
 - [ ] Dedicated OS identity with hardening directives applied.
 - [ ] Secrets injected from the chosen store, never in the repository; rotation
       rehearsed.
-- [ ] Redacted audit events for login, denial, session lifecycle, watcher, Codex
+- [x] Redacted audit events for login, denial, session lifecycle, watcher, Codex
       session, and repository switch.
-- [ ] Dependency scanning in CI, with a stated patch expectation.
+- [x] Dependency scanning in CI, with a stated patch expectation.
 - [ ] Backup and restore rehearsed; immediate revocation procedure documented.
 - [ ] Residual risk — an authenticated user still gets command execution as the
       service account — is written down and accepted.

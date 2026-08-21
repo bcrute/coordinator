@@ -22,9 +22,9 @@ performs those actions automatically.
 
 ## 2. Ignored and private material
 
-- [ ] Review `.gitignore` and confirm every local-only, proprietary, or
-      unrelated fixture (for example `citadel-main.zip`, `readiness_demo/`,
-      `examples/`, `.coordination/`, `workflow.toml`) is excluded.
+- [ ] Review `.gitignore`, `.git/info/exclude`, and the build manifest; confirm
+      local coordination state, machine settings, archives, and unrelated fixtures
+      cannot enter the intended public tree or distribution.
 - [ ] Run `git status` in this repository (not yet done as part of this
       checklist item) and read every untracked path before staging anything,
       to confirm nothing unexpected would be added.
