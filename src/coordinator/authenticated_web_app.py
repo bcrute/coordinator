@@ -86,6 +86,35 @@ from .security import (
 
 BACKCHANNEL_LOGOUT_EVENT = "http://schemas.openid.net/event/backchannel-logout"
 BACKCHANNEL_LOGOUT_MAX_AGE_SECONDS = 300
+TERMINAL_OUTPUT_CHUNK_CHARS = 64 * 1024
+
+
+def _terminal_output_chunks(
+    output: Mapping[str, object],
+    limit: int = TERMINAL_OUTPUT_CHUNK_CHARS,
+) -> list[dict[str, object]]:
+    """Split one cursor-addressed PTY read into bounded WebSocket frames."""
+
+    if limit <= 0:
+        raise ValueError("terminal output chunk limit must be positive")
+    text = output.get("text")
+    next_cursor = output.get("next_cursor")
+    if not isinstance(text, str) or not isinstance(next_cursor, int):
+        raise ValueError("terminal output must contain text and an integer cursor")
+    reset = output.get("reset") is True
+    if not text:
+        return [dict(output)] if reset else []
+
+    start_cursor = next_cursor - len(text)
+    chunks: list[dict[str, object]] = []
+    for start in range(0, len(text), limit):
+        end = min(start + limit, len(text))
+        chunk = dict(output)
+        chunk["text"] = text[start:end]
+        chunk["next_cursor"] = start_cursor + end
+        chunk["reset"] = reset and start == 0
+        chunks.append(chunk)
+    return chunks
 
 
 def create_authenticated_app(
@@ -1553,9 +1582,16 @@ def create_authenticated_app(
                 cursor_value = output.get("next_cursor")
                 if isinstance(cursor_value, int):
                     cursor = cursor_value
-                    sequence[0] = cursor_value
                 if output.get("text") or output.get("reset"):
-                    await send_terminal_frame("output", output=output)
+                    for chunk in _terminal_output_chunks(output):
+                        chunk_cursor = chunk.get("next_cursor")
+                        if isinstance(chunk_cursor, int):
+                            sequence[0] = chunk_cursor
+                        await send_terminal_frame("output", output=chunk)
+                        # A continuously repainting TUI can otherwise monopolize
+                        # the event loop when its socket buffer accepts writes
+                        # immediately. Give health/control traffic a fair turn.
+                        await asyncio.sleep(0)
                 session = manager.snapshot()
                 session["attachment"] = {
                     "mode": "read_write" if writable else "read_only",

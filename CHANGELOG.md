@@ -24,6 +24,8 @@ interface with migration notes.
 
 - Clearing the browser terminal now discards its retained server replay buffer, so
   cleared output does not return after a page refresh while the Codex process continues.
+- Large terminal replays are emitted as bounded, cursor-contiguous WebSocket frames
+  with explicit event-loop yields, keeping health and control requests responsive.
 
 ## [0.3.0] - 2026-08-21
 

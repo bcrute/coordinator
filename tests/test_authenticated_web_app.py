@@ -35,6 +35,10 @@ from authenticated_web_app import (
     _validated_forwarded_allow_ips,
     create_authenticated_app,
 )
+from coordinator.authenticated_web_app import (
+    TERMINAL_OUTPUT_CHUNK_CHARS,
+    _terminal_output_chunks,
+)
 
 
 class FakeOIDCClient:
@@ -91,6 +95,54 @@ class FakeOIDCClient:
         if self.jwks is None:
             raise RuntimeError("no JWKS configured")
         return self.jwks
+
+
+class TerminalOutputChunkTests(unittest.TestCase):
+    def test_large_reset_replay_is_bounded_and_cursor_contiguous(self) -> None:
+        text = "x" * (TERMINAL_OUTPUT_CHUNK_CHARS * 2 + 17)
+        output = {
+            "text": text,
+            "base_cursor": 400,
+            "next_cursor": 400 + len(text),
+            "reset": True,
+        }
+
+        chunks = _terminal_output_chunks(output)
+
+        self.assertEqual(len(chunks), 3)
+        self.assertEqual("".join(str(chunk["text"]) for chunk in chunks), text)
+        self.assertTrue(chunks[0]["reset"])
+        self.assertTrue(all(chunk["reset"] is False for chunk in chunks[1:]))
+        self.assertTrue(
+            all(len(str(chunk["text"])) <= TERMINAL_OUTPUT_CHUNK_CHARS for chunk in chunks)
+        )
+        self.assertEqual(
+            [chunk["next_cursor"] for chunk in chunks],
+            [
+                400 + TERMINAL_OUTPUT_CHUNK_CHARS,
+                400 + TERMINAL_OUTPUT_CHUNK_CHARS * 2,
+                400 + len(text),
+            ],
+        )
+
+    def test_empty_reset_is_preserved_and_empty_delta_is_suppressed(self) -> None:
+        reset = {
+            "text": "",
+            "base_cursor": 12,
+            "next_cursor": 12,
+            "reset": True,
+        }
+        delta = {**reset, "reset": False}
+
+        self.assertEqual(_terminal_output_chunks(reset), [reset])
+        self.assertEqual(_terminal_output_chunks(delta), [])
+
+    def test_invalid_chunk_limit_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must be positive"):
+            _terminal_output_chunks(
+                {"text": "output", "next_cursor": 6, "reset": False},
+                limit=0,
+            )
 
 
 class AuthenticatedAppTests(unittest.TestCase):
