@@ -278,7 +278,10 @@ def openapi_document() -> dict[str, Any]:
         "RepositoryInitialize": {
             "type": "object",
             "required": ["project_name"],
-            "properties": {"project_name": {"type": "string", "minLength": 1}},
+            "properties": {
+                "project_name": {"type": "string", "minLength": 1},
+                "ci_action": {"enum": ["auto", "add", "skip"]},
+            },
             "additionalProperties": False,
         },
         "RepositorySelect": {

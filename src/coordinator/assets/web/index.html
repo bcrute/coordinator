@@ -573,6 +573,14 @@
             <input id="repository-project-name" name="project_name" maxlength="120" required />
             <button type="submit" class="control-button">Initialize active repository</button>
             <p class="note" id="repository-initialize-feedback" role="status">Adds the bundled coordination files without replacing existing project content.</p>
+            <div class="ci-confirmation" id="repository-ci-confirmation" hidden>
+              <p class="note" id="repository-ci-message">Existing GitHub Actions workflows were found.</p>
+              <ul class="records compact-records" id="repository-ci-workflows"></ul>
+              <div class="controls">
+                <button type="button" class="control-button" id="repository-ci-add">Add Coordinator CI alongside</button>
+                <button type="button" class="control-button" id="repository-ci-skip">Keep existing CI</button>
+              </div>
+            </div>
           </form>
         </section>
       </section>

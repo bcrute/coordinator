@@ -8,6 +8,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from .github_ci import configure_github_ci
+
 
 START = "<!-- coordinate-claude-work:start -->"
 END = "<!-- coordinate-claude-work:end -->"
@@ -59,6 +61,8 @@ def install(args: argparse.Namespace) -> int:
     source_coordination = template / ".coordination"
     for source in sorted(source_coordination.rglob("*")):
         relative = source.relative_to(source_coordination)
+        if "__pycache__" in relative.parts or source.suffix in {".pyc", ".pyo"}:
+            continue
         destination = target / ".coordination" / relative
         if source.is_dir():
             destination.mkdir(parents=True, exist_ok=True)
@@ -79,6 +83,25 @@ def install(args: argparse.Namespace) -> int:
             print(f"  {path.relative_to(target)}")
     else:
         print("Coordination workflow is already current; no files changed.")
+
+    try:
+        ci_status = configure_github_ci(target, args.github_ci)
+    except (OSError, ValueError) as error:
+        print(f"error: GitHub CI setup failed: {error}", file=sys.stderr)
+        return 2
+    print(ci_status.message)
+    if ci_status.requires_confirmation:
+        print(
+            "Re-run with --github-ci add to add it, or --github-ci skip to keep "
+            "existing CI."
+        )
+    if ci_status.github_repository is None:
+        print(
+            "GitHub remote: not detected; the workflow will activate after this "
+            "repository is pushed to GitHub."
+        )
+    else:
+        print(f"GitHub repository: {ci_status.github_repository}")
     print("Next: complete .coordination/PROJECT.md and assign planner/current-task.md")
     return 0
 
@@ -87,6 +110,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("target", type=Path, help="project directory")
     parser.add_argument("--project-name", required=True, help="human-readable name")
+    parser.add_argument(
+        "--github-ci",
+        choices=("auto", "add", "skip"),
+        default="auto",
+        help="add Coordinator CI, skip it, or prompt when other workflows exist",
+    )
     return parser.parse_args(argv)
 
 

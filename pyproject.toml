@@ -61,4 +61,5 @@ coordinator = [
   "assets/project-template/.coordination/planner/*.md",
   "assets/project-template/.coordination/reviews/*.md",
   "assets/project-template/.coordination/runtime/.gitignore",
+  "assets/project-template/.coordination/scripts/*.py",
 ]

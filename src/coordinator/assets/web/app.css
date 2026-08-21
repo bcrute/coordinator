@@ -1081,6 +1081,23 @@ kbd { padding: 0.08rem 0.35rem; border: 1px solid var(--edge-solid); border-radi
   outline: 2px solid transparent;
 }
 
+.ci-confirmation {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.75rem;
+  border: 1px solid var(--warn);
+  border-radius: 6px;
+  background: #15140d;
+}
+
+.ci-confirmation[hidden] {
+  display: none;
+}
+
+.compact-records {
+  margin: 0;
+}
+
 .record-action {
   margin-top: 0.55rem;
 }

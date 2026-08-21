@@ -16,6 +16,8 @@ interface with migration notes.
   lifecycle, ownership, validation, replay, failure, and secret-handling contracts.
 - A live Terminal-page activity panel for agents, reported models, and background
   terminals, scoped to the exact process tree of each managed terminal session.
+- Safe GitHub Actions setup during project initialization, including existing-workflow
+  discovery, explicit coexist/skip choices, and a packaged coordination validator.
 
 ### Changed
 

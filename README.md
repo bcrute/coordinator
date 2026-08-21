@@ -92,8 +92,18 @@ Run these from the directory where you cloned this repository:
 ## Onboarding your first repository
 
 Use the **Setup** view to create a direct-child Git repository or initialize
-the selected repository with the coordination template. If you want Codex to
-shape the files from a project discussion first:
+the selected repository with the coordination template. Initialization also
+adds a narrowly scoped GitHub Actions workflow that validates the coordination
+files. If the repository already has Actions workflows, Coordinator lists them
+and waits for you to add its workflow alongside them or keep the existing CI
+unchanged. It never replaces an existing workflow. The workflow becomes active
+when the repository is pushed to GitHub; no GitHub API credential is required.
+
+The equivalent command is `coordinator init <repo> --project-name <name>`.
+Use `--github-ci add` or `--github-ci skip` for non-interactive setup when the
+repository already has CI.
+
+If you want Codex to shape the files from a project discussion first:
 
 1. Open the **Terminal** view and click **Start** to launch a real,
    interactive `codex -C <repo>` session in the browser.

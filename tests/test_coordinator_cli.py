@@ -67,12 +67,46 @@ class CoordinatorCLITests(unittest.TestCase):
             self.assertEqual(first, 0, error)
             self.assertIn("Installed or updated", output)
             self.assertTrue((target / ".coordination" / "README.md").is_file())
+            self.assertTrue(
+                (target / ".coordination" / "scripts" / "validate.py").is_file()
+            )
+            self.assertTrue(
+                (target / ".github" / "workflows" / "coordinator.yml").is_file()
+            )
 
             second, output, error = self.invoke(
                 ["init", str(target), "--project-name", "CLI package test"]
             )
             self.assertEqual(second, 0, error)
             self.assertIn("already current", output)
+            self.assertIn("already configured", output)
+
+    def test_init_requires_confirmation_before_adding_alongside_existing_ci(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)
+            existing = target / ".github" / "workflows" / "tests.yml"
+            existing.parent.mkdir(parents=True)
+            existing.write_text("name: Existing\n", encoding="utf-8")
+            result, output, error = self.invoke(
+                ["init", str(target), "--project-name", "Existing CI"]
+            )
+            self.assertEqual(result, 0, error)
+            self.assertIn("choose whether to add", output)
+            self.assertFalse((existing.parent / "coordinator.yml").exists())
+
+            result, output, error = self.invoke(
+                [
+                    "init",
+                    str(target),
+                    "--project-name",
+                    "Existing CI",
+                    "--github-ci",
+                    "add",
+                ]
+            )
+            self.assertEqual(result, 0, error)
+            self.assertIn("Added .github/workflows/coordinator.yml", output)
+            self.assertTrue((existing.parent / "coordinator.yml").is_file())
 
     def test_data_command_backs_up_and_verifies_operational_index(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

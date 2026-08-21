@@ -30,6 +30,7 @@ from typing import Any
 from . import web_app
 from .api_contract import openapi_document
 from .executor_adapters import ExecutorAdapter, from_namespace, resolve_executable
+from .github_ci import configure_github_ci
 from .operational_store import GuardrailPolicy, OperationalStore, evaluate_guardrails
 from .provider_usage import DEFAULT_REFRESH_SECONDS, ProviderUsageService
 from authlib.integrations.base_client.errors import OAuthError
@@ -1257,14 +1258,22 @@ def create_authenticated_app(
             status_code=status,
         )
 
-    def initialize_repository(project_name: str) -> tuple[str, str]:
+    def initialize_repository(
+        project_name: str, ci_action: str
+    ) -> tuple[str, str, dict[str, object]]:
         cleaned = project_name.strip()
         if (
             not cleaned
             or len(cleaned) > 120
             or any(ord(char) < 0x20 for char in cleaned)
         ):
-            return "validation", "Project name must contain 1-120 printable characters."
+            return (
+                "validation",
+                "Project name must contain 1-120 printable characters.",
+                {},
+            )
+        if ci_action not in {"auto", "add", "skip"}:
+            return "validation", "GitHub CI action must be auto, add, or skip.", {}
         with context.lease() as active:
             result = subprocess.run(
                 [
@@ -1274,15 +1283,26 @@ def create_authenticated_app(
                     str(active.repo),
                     "--project-name",
                     cleaned,
+                    "--github-ci",
+                    "skip",
                 ],
                 check=False,
                 capture_output=True,
                 text=True,
                 timeout=30,
             )
-        if result.returncode != 0:
-            return "error", "Coordination initialization failed."
-        return "initialized", "Coordination files are ready."
+            if result.returncode != 0:
+                return "error", "Coordination initialization failed.", {}
+            try:
+                ci_status = configure_github_ci(
+                    active.repo, ci_action, interactive=False
+                )
+            except ValueError as error:
+                return "conflict", str(error), {}
+            except OSError:
+                return "error", "GitHub CI setup failed.", {}
+        message = "Coordination files are ready. " + ci_status.message
+        return "initialized", message, ci_status.as_dict()
 
     async def repository_initialize(request: Request):
         value = await _json_body(request, SETUP_BODY_BYTES)
@@ -1290,8 +1310,9 @@ def create_authenticated_app(
             return value
         if (
             not isinstance(value, dict)
-            or set(value) != {"project_name"}
+            or not {"project_name"} <= set(value) <= {"project_name", "ci_action"}
             or not isinstance(value.get("project_name"), str)
+            or not isinstance(value.get("ci_action", "auto"), str)
         ):
             return JSONResponse(
                 {
@@ -1301,10 +1322,17 @@ def create_authenticated_app(
                 },
                 status_code=400,
             )
-        outcome, message = await run_in_threadpool(
-            initialize_repository, value["project_name"]
+        outcome, message, ci = await run_in_threadpool(
+            initialize_repository,
+            value["project_name"],
+            value.get("ci_action", "auto"),
         )
-        status = {"initialized": 200, "validation": 400, "error": 500}[outcome]
+        status = {
+            "initialized": 200,
+            "validation": 400,
+            "conflict": 409,
+            "error": 500,
+        }[outcome]
         issuer, subject = _audit_user(request)
         await run_in_threadpool(
             store.audit,
@@ -1316,7 +1344,12 @@ def create_authenticated_app(
             detail=value["project_name"],
         )
         return JSONResponse(
-            {"ok": status == 200, "outcome": outcome, "message": message},
+            {
+                "ok": status == 200,
+                "outcome": outcome,
+                "message": message,
+                "ci": ci,
+            },
             status_code=status,
         )
 

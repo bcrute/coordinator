@@ -718,6 +718,10 @@ class LocalAppTests(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 200, response.text)
             self.assertTrue((created / ".coordination").is_dir())
+            self.assertEqual(response.json()["ci"]["outcome"], "installed")
+            self.assertTrue(
+                (created / ".github" / "workflows" / "coordinator.yml").is_file()
+            )
 
             diagnostics = client.get("/api/diagnostics").json()
             self.assertEqual(diagnostics["mode"], "local")
@@ -764,6 +768,53 @@ class LocalAppTests(unittest.TestCase):
             self.assertTrue(
                 any(event["event"] == "repository_initialize" for event in activity)
             )
+
+    def test_repository_initialize_reports_existing_ci_and_reuses_same_endpoint(self) -> None:
+        existing = self.repo / ".github" / "workflows" / "tests.yml"
+        existing.parent.mkdir(parents=True)
+        existing.write_text("name: Existing tests\n", encoding="utf-8")
+        with TestClient(self.app, base_url="http://127.0.0.1") as client:
+            csrf = client.get("/api/state").json()["security"]["csrf_token"]
+            response = client.post(
+                "/api/repository/initialize",
+                json={"project_name": "Existing CI"},
+                headers=self.headers(csrf),
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            discovery = response.json()["ci"]
+            self.assertTrue(discovery["requires_confirmation"])
+            self.assertEqual(discovery["workflows"], [".github/workflows/tests.yml"])
+            self.assertFalse((existing.parent / "coordinator.yml").exists())
+
+            response = client.post(
+                "/api/repository/initialize",
+                json={"project_name": "Existing CI", "ci_action": "skip"},
+                headers=self.headers(csrf),
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["ci"]["outcome"], "skipped")
+            self.assertFalse((existing.parent / "coordinator.yml").exists())
+
+            response = client.post(
+                "/api/repository/initialize",
+                json={"project_name": "Existing CI", "ci_action": "add"},
+                headers=self.headers(csrf),
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["ci"]["outcome"], "installed")
+            self.assertTrue((existing.parent / "coordinator.yml").is_file())
+            self.assertEqual(existing.read_text(encoding="utf-8"), "name: Existing tests\n")
+
+    def test_repository_initialize_rejects_unknown_ci_action(self) -> None:
+        with TestClient(self.app, base_url="http://127.0.0.1") as client:
+            csrf = client.get("/api/state").json()["security"]["csrf_token"]
+            response = client.post(
+                "/api/repository/initialize",
+                json={"project_name": "Project", "ci_action": "replace"},
+                headers=self.headers(csrf),
+            )
+            self.assertEqual(response.status_code, 400, response.text)
+            self.assertEqual(response.json()["outcome"], "validation")
 
     def test_versioned_contract_readiness_metrics_and_correlation(self) -> None:
         with TestClient(self.app, base_url="http://127.0.0.1") as client:

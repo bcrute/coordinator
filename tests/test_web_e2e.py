@@ -323,14 +323,45 @@ class DashboardBrowserTests(unittest.TestCase):
                         has_text="Created and selected"
                     ).wait_for(timeout=10_000)
                     self.assertTrue((base / "browser-created" / ".git").is_dir())
+                    existing_ci = (
+                        base
+                        / "browser-created"
+                        / ".github"
+                        / "workflows"
+                        / "tests.yml"
+                    )
+                    existing_ci.parent.mkdir(parents=True)
+                    existing_ci.write_text("name: Existing tests\n", encoding="utf-8")
 
                     page.locator("#repository-project-name").fill("Browser project")
-                    page.locator("#repository-initialize-form button").click()
+                    page.locator(
+                        '#repository-initialize-form button[type="submit"]'
+                    ).click()
                     page.locator("#repository-initialize-feedback").filter(
                         has_text="Coordination files are ready"
                     ).wait_for(timeout=10_000)
                     self.assertTrue(
                         (base / "browser-created" / ".coordination").is_dir()
+                    )
+                    page.locator("#repository-ci-confirmation").wait_for(
+                        state="visible", timeout=10_000
+                    )
+                    page.locator("#repository-ci-workflows").filter(
+                        has_text=".github/workflows/tests.yml"
+                    ).wait_for(timeout=10_000)
+                    self.assertFalse(
+                        (existing_ci.parent / "coordinator.yml").exists()
+                    )
+                    page.locator("#repository-ci-add").click()
+                    page.locator("#repository-initialize-feedback").filter(
+                        has_text="Added .github/workflows/coordinator.yml"
+                    ).wait_for(timeout=10_000)
+                    self.assertTrue(
+                        (existing_ci.parent / "coordinator.yml").is_file()
+                    )
+                    self.assertEqual(
+                        existing_ci.read_text(encoding="utf-8"),
+                        "name: Existing tests\n",
                     )
 
                     page.locator("#nav-monitor").click()

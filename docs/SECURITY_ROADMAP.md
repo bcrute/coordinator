@@ -56,7 +56,7 @@ exposure.
 | Interactive Codex PTY | `/ws/terminal`, `/api/codex/*`, `codex_session.py` | Arbitrary interactive command execution as the server's OS user, using the owner's authenticated Codex CLI session. Highest-value asset by a wide margin. |
 | Automatic watcher control | `/api/watcher/start`, `/api/watcher/stop` | Starts/stops a process that spends provider quota and writes to a real project repository. |
 | Repository selection | `/api/repository/select` | Chooses which local Git repository the tool operates on, and therefore what the PTY and watcher can reach. |
-| Repository setup | `/api/repository/create`, `/api/repository/initialize` | Creates a direct-child Git repository or installs coordination files into the selected repository. |
+| Repository setup | `/api/repository/create`, `/api/repository/initialize` | Creates a direct-child Git repository or installs coordination files and an owner-confirmed, non-overwriting GitHub Actions workflow into the selected repository. |
 | Coordination state and relay log | `/api/state`, `/api/events` | Discloses task packets, reports, reviews, and recent agent output — project content, prompts, and file paths. |
 | Security administration | `/api/activity`, `/api/sessions/*`, `/api/diagnostics` | Discloses redacted security/runtime data and can revoke browser sessions. |
 | Repository catalog | `/api/state` | Discloses the names and paths of sibling repositories under `repositories_root`. |

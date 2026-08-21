@@ -2367,6 +2367,45 @@ function loadDiagnostics() {
   });
 }
 
+function renderRepositoryCI(value) {
+  var ci = record(value);
+  var confirmation = el("repository-ci-confirmation");
+  var workflows = el("repository-ci-workflows");
+  if (!confirmation || !workflows) return;
+  var requiresConfirmation = ci.requires_confirmation === true;
+  confirmation.hidden = !requiresConfirmation;
+  workflows.replaceChildren.apply(workflows, list(ci.workflows).map(function (workflow) {
+    var item = document.createElement("li");
+    item.textContent = text(workflow, "GitHub Actions workflow");
+    return item;
+  }));
+  var repository = text(ci.github_repository, "");
+  var message = text(ci.message, "Choose how Coordinator should handle CI.");
+  if (repository !== "") message += " GitHub repository: " + repository + ".";
+  setText("repository-ci-message", message);
+}
+
+function initializeActiveRepository(ciAction) {
+  var projectName = el("repository-project-name").value;
+  var body = { project_name: projectName };
+  if (ciAction) body.ci_action = ciAction;
+  setText(
+    "repository-initialize-feedback",
+    ciAction === "add" ? "Adding Coordinator CI…" :
+      ciAction === "skip" ? "Keeping existing CI…" : "Initializing coordination…"
+  );
+  return apiPost("/api/repository/initialize", body).then(function (result) {
+    if (result.status !== 200) {
+      throw new Error(text(result.payload.message, "initialization failed"));
+    }
+    setText("repository-initialize-feedback", text(result.payload.message, "Coordination initialized."));
+    renderRepositoryCI(result.payload.ci);
+    restartStateFeed();
+  }).catch(function (error) {
+    setText("repository-initialize-feedback", "Could not initialize: " + describe(error));
+  });
+}
+
 function wireAdministration() {
   var activityRefresh = el("activity-refresh");
   var sessionsRefresh = el("sessions-refresh");
@@ -2402,15 +2441,15 @@ function wireAdministration() {
   var initializeForm = el("repository-initialize-form");
   if (initializeForm) initializeForm.addEventListener("submit", function (event) {
     event.preventDefault();
-    var projectName = el("repository-project-name").value;
-    setText("repository-initialize-feedback", "Initializing coordination…");
-    apiPost("/api/repository/initialize", { project_name: projectName }).then(function (result) {
-      if (result.status !== 200) throw new Error(text(result.payload.message, "initialization failed"));
-      setText("repository-initialize-feedback", text(result.payload.message, "Coordination initialized."));
-      restartStateFeed();
-    }).catch(function (error) {
-      setText("repository-initialize-feedback", "Could not initialize: " + describe(error));
-    });
+    initializeActiveRepository();
+  });
+  var ciAdd = el("repository-ci-add");
+  if (ciAdd) ciAdd.addEventListener("click", function () {
+    initializeActiveRepository("add");
+  });
+  var ciSkip = el("repository-ci-skip");
+  if (ciSkip) ciSkip.addEventListener("click", function () {
+    initializeActiveRepository("skip");
   });
 }
 
