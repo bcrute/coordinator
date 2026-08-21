@@ -831,7 +831,11 @@ class LocalAppTests(unittest.TestCase):
             runtime.web_app,
             "build_state",
             wraps=runtime.web_app.build_state,
-        ) as build_state:
+        ) as build_state, mock.patch.object(
+            runtime.time,
+            "monotonic",
+            return_value=1_000.0,
+        ):
             with TestClient(self.app, base_url="http://127.0.0.1") as client:
                 for _ in range(8):
                     self.assertEqual(client.get("/api/v1/state").status_code, 200)
