@@ -120,6 +120,39 @@ class InputSerializationTests(unittest.TestCase):
         self.assertNotIn("codexInputInFlight", self.js)
 
 
+class ClipboardTests(unittest.TestCase):
+    """Selected terminal output can be copied without breaking shell interrupts."""
+
+    def setUp(self):
+        self.js = read(WEB_DIR / "app.js")
+        self.html = read(WEB_DIR / "index.html")
+
+    def test_copy_selection_control_is_available(self):
+        self.assertIn('id="codex-terminal-copy"', self.html)
+        self.assertIn("copyNode.addEventListener(\"click\", copyCodexSelection)", self.js)
+
+    def test_copy_shortcuts_use_selected_terminal_text(self):
+        handler = re.search(
+            r"function handleCodexCopyShortcut\([\s\S]*?\n}\n", self.js
+        )
+        self.assertIsNotNone(handler)
+        body = handler.group(0)
+        self.assertIn("codexTerminal.hasSelection()", body)
+        self.assertIn("event.ctrlKey && event.shiftKey", body)
+        self.assertIn("event.metaKey", body)
+        self.assertIn("selectedControlC", body)
+        self.assertIn("return true", body)
+        self.assertIn("return false", body)
+
+    def test_clipboard_api_has_a_legacy_fallback(self):
+        self.assertIn("navigator.clipboard.writeText(selection)", self.js)
+        self.assertIn('document.execCommand("copy")', self.js)
+        self.assertIn(
+            "codexTerminal.attachCustomKeyEventHandler(handleCodexCopyShortcut)",
+            self.js,
+        )
+
+
 class ResizeTests(unittest.TestCase):
     """Resize requests must be debounced and deduplicated."""
 

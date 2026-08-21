@@ -59,7 +59,10 @@ class DashboardBrowserTests(unittest.TestCase):
                 self._wait_for_server(url, process)
                 with sync_playwright() as playwright:
                     browser = playwright.chromium.launch(headless=True)
-                    page = browser.new_page()
+                    context = browser.new_context(
+                        permissions=["clipboard-read", "clipboard-write"]
+                    )
+                    page = context.new_page()
                     errors: list[str] = []
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     page.on(
@@ -186,6 +189,21 @@ class DashboardBrowserTests(unittest.TestCase):
                     page.locator("#codex-session-feedback").filter(
                         has_text="input ownership"
                     ).wait_for(timeout=10_000)
+                    page.evaluate(
+                        """() => new Promise((resolve) => {
+                          codexTerminal.write('clipboard-marker', resolve);
+                        })"""
+                    )
+                    page.evaluate("codexTerminal.selectAll(); codexTerminal.focus()")
+                    page.locator("#codex-terminal-copy").wait_for(state="visible")
+                    self.assertTrue(page.locator("#codex-terminal-copy").is_enabled())
+                    page.keyboard.press("Control+Shift+C")
+                    page.locator("#codex-session-feedback").filter(
+                        has_text="Copied"
+                    ).wait_for(timeout=10_000)
+                    self.assertIn(
+                        "clipboard-marker", page.evaluate("navigator.clipboard.readText()")
+                    )
 
                     page.locator("#nav-setup").click()
                     page.locator("#repository-create-name").fill("browser-created")

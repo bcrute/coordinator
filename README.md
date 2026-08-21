@@ -96,6 +96,9 @@ shape the files from a project discussion first:
 
 1. Open the **Terminal** view and click **Start** to launch a real,
    interactive `codex -C <repo>` session in the browser.
+   Select output and press **Ctrl+C** or **Ctrl+Shift+C** to copy it; with no
+   selection, **Ctrl+C** remains the terminal interrupt. **Copy selection** is
+   available as an explicit control as well.
 2. Discuss the project and its overall goal with Codex in that terminal.
 3. Ask Codex to begin coordinated work. Codex creates the `.coordination/`
    files from that discussion (it runs the same initializer described in

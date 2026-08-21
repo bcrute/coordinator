@@ -66,6 +66,7 @@ var codexPendingControl = "";
 var codexSocket = null;
 var codexSocketTimer = null;
 var codexOnDataDisposable = null;
+var codexOnSelectionDisposable = null;
 var codexTerminalWritable = false;
 var codexTerminalCursor = null;
 
@@ -1002,6 +1003,64 @@ function codexReport(message, mood) {
   setTone("codex-session-feedback", mood || "");
 }
 
+function fallbackCopyText(value) {
+  var input = document.createElement("textarea");
+  input.value = value;
+  input.setAttribute("readonly", "");
+  input.style.position = "fixed";
+  input.style.left = "-9999px";
+  document.body.appendChild(input);
+  input.select();
+  var copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch (error) {
+    copied = false;
+  }
+  input.remove();
+  if (codexTerminalReady && codexTerminal) codexTerminal.focus();
+  return copied;
+}
+
+function copyCodexSelection() {
+  var selection = codexTerminalReady && codexTerminal ? codexTerminal.getSelection() : "";
+  if (!selection) {
+    codexReport("Select terminal text before copying.", "warn");
+    return;
+  }
+  function reportCopy(copied) {
+    codexReport(
+      copied
+        ? "Copied " + selection.length + " characters from the terminal."
+        : "Clipboard access was blocked by the browser.",
+      copied ? "ok" : "bad"
+    );
+  }
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    navigator.clipboard.writeText(selection).then(
+      function () { reportCopy(true); },
+      function () { reportCopy(fallbackCopyText(selection)); }
+    );
+    return;
+  }
+  reportCopy(fallbackCopyText(selection));
+}
+
+function handleCodexCopyShortcut(event) {
+  if (event.type !== "keydown" || !codexTerminalReady || !codexTerminal) return true;
+  var key = String(event.key || "").toLowerCase();
+  var hasSelection = codexTerminal.hasSelection();
+  var explicitCopy = event.ctrlKey && event.shiftKey && key === "c";
+  var platformCopy = event.metaKey && !event.altKey && key === "c";
+  var insertCopy = event.ctrlKey && !event.altKey && key === "insert";
+  var selectedControlC = event.ctrlKey && !event.altKey && key === "c" && hasSelection;
+  if (!explicitCopy && !platformCopy && !insertCopy && !selectedControlC) return true;
+  event.preventDefault();
+  event.stopPropagation();
+  copyCodexSelection();
+  return false;
+}
+
 function initCodexTerminal() {
   var viewport = el("codex-terminal");
   if (!viewport) {
@@ -1031,6 +1090,7 @@ function initCodexTerminal() {
     codexFitAddon = fitAddon;
     codexTerminal.loadAddon(fitAddon);
     codexTerminal.open(viewport);
+    codexTerminal.attachCustomKeyEventHandler(handleCodexCopyShortcut);
     /*
      * Terminal view is hidden by default (display: none), so its viewport
      * has zero size at open() time. Fitting a zero-size viewport would
@@ -1051,6 +1111,7 @@ function initCodexTerminal() {
         }
       }
     });
+    codexOnSelectionDisposable = codexTerminal.onSelectionChange(paintCodexControls);
     wireCodexResizeWatcher(viewport);
     if (currentRoute === "terminal") {
       scheduleCodexFitAndResize();
@@ -1219,6 +1280,13 @@ function teardownCodexTerminal() {
     codexOnDataDisposable.dispose();
     codexOnDataDisposable = null;
   }
+  if (
+    codexOnSelectionDisposable &&
+    typeof codexOnSelectionDisposable.dispose === "function"
+  ) {
+    codexOnSelectionDisposable.dispose();
+    codexOnSelectionDisposable = null;
+  }
 }
 
 function codexProcessText(session) {
@@ -1238,6 +1306,7 @@ function paintCodexControls() {
   var startNode = el("codex-session-start");
   var stopNode = el("codex-session-stop");
   var clearNode = el("codex-terminal-clear");
+  var copyNode = el("codex-terminal-copy");
   if (startNode) {
     startNode.disabled = !terminalEnabled || busy || codexSession.can_start !== true;
   }
@@ -1246,6 +1315,10 @@ function paintCodexControls() {
   }
   if (clearNode) {
     clearNode.disabled = !terminalEnabled || !codexTerminalReady;
+  }
+  if (copyNode) {
+    copyNode.disabled =
+      !terminalEnabled || !codexTerminalReady || !codexTerminal.hasSelection();
   }
   paintRepositorySelector();
 }
@@ -1358,6 +1431,7 @@ function wireCodexControls() {
   var startNode = el("codex-session-start");
   var stopNode = el("codex-session-stop");
   var clearNode = el("codex-terminal-clear");
+  var copyNode = el("codex-terminal-copy");
   if (startNode) {
     startNode.addEventListener("click", function () {
       codexControl("start");
@@ -1370,6 +1444,9 @@ function wireCodexControls() {
   }
   if (clearNode) {
     clearNode.addEventListener("click", codexClear);
+  }
+  if (copyNode) {
+    copyNode.addEventListener("click", copyCodexSelection);
   }
   paintCodexControls();
 }
