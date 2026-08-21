@@ -94,6 +94,35 @@ class DashboardBrowserTests(unittest.TestCase):
                         (base / "browser-created" / ".coordination").is_dir()
                     )
 
+                    page.locator("#nav-monitor").click()
+                    page.locator("#workspace-repositories").filter(
+                        has_text="browser-created"
+                    ).wait_for(timeout=10_000)
+
+                    page.locator("#nav-runs").click()
+                    page.locator("#run-records").filter(
+                        has_text="browser-created"
+                    ).wait_for(timeout=10_000)
+                    page.locator("#run-records .record-select").first.click()
+                    page.locator("#run-timeline").filter(
+                        has_text="run_discovered"
+                    ).wait_for(timeout=10_000)
+
+                    page.locator("#nav-settings").click()
+                    page.locator('#preferences-form select[name="theme"]').select_option("dark")
+                    page.locator("#preferences-form button").click()
+                    page.locator("#preferences-feedback").filter(
+                        has_text="Preferences saved"
+                    ).wait_for(timeout=10_000)
+                    self.assertEqual(
+                        page.locator("html").get_attribute("data-theme"), "dark"
+                    )
+                    page.locator('#guardrails-form input[name="generated_tokens"]').fill("1000")
+                    page.locator("#guardrails-form button").click()
+                    page.locator("#guardrails-feedback").filter(
+                        has_text="Guardrails saved"
+                    ).wait_for(timeout=10_000)
+
                     page.locator("#nav-activity").click()
                     page.locator("#activity-events").filter(
                         has_text="repository_initialize"
@@ -106,6 +135,22 @@ class DashboardBrowserTests(unittest.TestCase):
                     page.locator("#diagnostics-feedback").filter(
                         has_text="Mode local"
                     ).wait_for(timeout=10_000)
+                    accessibility = page.evaluate(
+                        """() => ({
+                          duplicateIds: [...document.querySelectorAll('[id]')]
+                            .map((node) => node.id)
+                            .filter((id, index, values) => values.indexOf(id) !== index),
+                          unlabeledControls: [...document.querySelectorAll('input, select, textarea')]
+                            .filter((node) => node.labels.length === 0 && !node.getAttribute('aria-label'))
+                            .map((node) => node.id || node.name),
+                          unnamedButtons: [...document.querySelectorAll('button')]
+                            .filter((node) => !node.textContent.trim() && !node.getAttribute('aria-label'))
+                            .length,
+                        })"""
+                    )
+                    self.assertEqual(accessibility["duplicateIds"], [])
+                    self.assertEqual(accessibility["unlabeledControls"], [])
+                    self.assertEqual(accessibility["unnamedButtons"], 0)
                     self.assertEqual(errors, [])
                     browser.close()
             finally:

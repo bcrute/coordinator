@@ -36,6 +36,18 @@ var pendingControl = "";
 var renderedLog = null;
 var csrfToken = "";
 var securityMode = "local";
+var latestState = null;
+var activeRunId = "";
+var guardrailFormRunId = "";
+var runHistory = [];
+var runsLoaded = false;
+var runsLoading = false;
+var selectedRun = null;
+var selectedRunEvents = [];
+var preferences = { browser_notifications: false, theme: "system", log_lines: 200 };
+var preferencesLoaded = false;
+var lastNotificationKey = "";
+var shortcutPrefix = false;
 
 var repositoryCatalog = { root: "", active: "", entries: [] };
 var repositorySwitching = false;
@@ -64,6 +76,8 @@ var ROUTES = [
   "agents",
   "logs",
   "activity",
+  "runs",
+  "settings",
   "setup",
   "sessions",
   "diagnostics",
@@ -1314,6 +1328,7 @@ function wireCodexControls() {
 }
 
 function render(state) {
+  latestState = state;
   var security = record(state.security);
   csrfToken = text(security.csrf_token, "");
   securityMode = text(security.mode, "local");
@@ -1343,7 +1358,226 @@ function render(state) {
   renderWatchers(state);
   renderManaged(state);
   renderLog(state);
+  renderOwnerAction(state);
+  renderWorkspace(state);
+  renderGuardrails(state);
   reportActiveRepositoryReadiness(state);
+  if (!runsLoaded && !runsLoading) {
+    loadRuns();
+  }
+}
+
+/* Workspace and durable runs --------------------------------------------- */
+
+function renderOwnerAction(state) {
+  var workflow = record(state.workflow);
+  var run = record(state.run);
+  var phase = text(workflow.phase, "inactive");
+  var title = "No action required";
+  var detail = text(workflow.detail, "The workflow is being observed.");
+  var mood = "ok";
+  var destination = "#work";
+  if (run.resume_required === true || phase === "blocked") {
+    title = run.resume_required === true ? "Run paused — review and resume" : "Resolve the current blocker";
+    detail = text(run.pause_reason, detail);
+    mood = "bad";
+    destination = run.resume_required === true ? "#settings" : "#work";
+  } else if (phase === "waiting_for_codex") {
+    title = "Review is ready";
+    mood = "warn";
+  } else if (phase === "done") {
+    title = "Run complete — inspect the evidence";
+    destination = "#runs";
+  }
+  setText("owner-action-title", title);
+  setText("owner-action-detail", detail);
+  var owner = el("owner-action");
+  if (owner) owner.setAttribute("data-tone", mood);
+  var link = el("owner-action-link");
+  if (link) link.setAttribute("href", destination);
+  maybeNotifyOwner(run, phase, title, detail);
+}
+
+function maybeNotifyOwner(run, phase, title, detail) {
+  if (preferences.browser_notifications !== true || typeof Notification !== "function") return;
+  if (Notification.permission !== "granted") return;
+  if (!(run.resume_required === true || phase === "blocked" || phase === "waiting_for_codex" || phase === "done")) return;
+  var key = text(run.run_id, "") + ":" + phase + ":" + String(run.resume_required === true);
+  if (key === lastNotificationKey) return;
+  lastNotificationKey = key;
+  new Notification(title, { body: detail, tag: key });
+}
+
+function renderWorkspace(state) {
+  var catalog = record(state.repository_catalog);
+  var entries = list(catalog.entries);
+  setText(
+    "workspace-repositories-summary",
+    entries.length + " repositor" + (entries.length === 1 ? "y" : "ies")
+  );
+  var node = el("workspace-repositories");
+  if (!node) return;
+  var cards = entries.map(function (entry) {
+    var path = text(entry.path, "");
+    var run = runHistory.find(function (candidate) { return text(candidate.path, "") === path; });
+    var card = document.createElement("li");
+    card.className = "workspace-card";
+    card.setAttribute("data-active", entry.active === true ? "true" : "false");
+    card.appendChild(recordBlock(
+      text(entry.name, "Repository"),
+      run ? text(run.status, "unknown") : (entry.initialized === true ? "ready" : "setup"),
+      run
+        ? "Goal " + text(run.goal_id, "none") + " · seen " + new Date(Number(run.last_seen_at) * 1000).toLocaleString()
+        : path
+    ));
+    return card;
+  });
+  if (cards.length === 0) cards.push(item("is-empty", "No repositories are available."));
+  node.replaceChildren.apply(node, cards);
+}
+
+function renderGuardrails(state) {
+  var run = record(state.run);
+  var guardrails = record(state.guardrails);
+  activeRunId = text(run.run_id, "");
+  setText("guardrails-state", text(guardrails.status, "not configured"));
+  setTone("guardrails-state", tone(text(guardrails.status, "")));
+  var form = el("guardrails-form");
+  if (!form) return;
+  Array.prototype.forEach.call(form.elements, function (control) {
+    if (control && control.name) control.disabled = activeRunId === "";
+  });
+  if (activeRunId === "" || guardrailFormRunId === activeRunId) return;
+  guardrailFormRunId = activeRunId;
+  var policy = record(run.policy);
+  Object.keys(GuardrailDefaults).forEach(function (name) {
+    var control = form.elements.namedItem(name);
+    if (!control) return;
+    var value = policy[name];
+    control.value = value === null || value === undefined ? GuardrailDefaults[name] : String(value);
+  });
+  setText("guardrails-feedback", run.resume_required === true
+    ? "This run is paused. Adjust limits if needed, then resume it from Runs."
+    : "Limits are evaluated only from provider-reported values.");
+}
+
+var GuardrailDefaults = {
+  turn_seconds: "",
+  overall_seconds: "",
+  generated_tokens: "",
+  input_tokens: "",
+  cache_read_tokens: "",
+  cache_write_tokens: "",
+  correction_rounds: "",
+  concurrent_workers: "",
+  no_progress_seconds: "",
+  warning_ratio: "0.8",
+};
+
+function loadRuns() {
+  if (runsLoading) return;
+  runsLoading = true;
+  setText("runs-feedback", "Loading durable run history…");
+  apiGet("/api/runs?limit=200").then(function (payload) {
+    runHistory = list(payload.runs);
+    runsLoaded = true;
+    renderRunRecords();
+    if (latestState) renderWorkspace(latestState);
+    setText("runs-feedback", runHistory.length + " durable run" + (runHistory.length === 1 ? "" : "s") + ".");
+  }).catch(function (error) {
+    setText("runs-feedback", "Could not load runs: " + describe(error));
+  }).then(function () { runsLoading = false; });
+}
+
+function renderRunRecords() {
+  var queryNode = el("runs-filter");
+  var query = queryNode ? queryNode.value.trim().toLowerCase() : "";
+  var values = runHistory.filter(function (run) {
+    return query === "" || [run.repository, run.goal_id, run.status, run.path].join(" ").toLowerCase().indexOf(query) !== -1;
+  });
+  var node = el("run-records");
+  if (!node) return;
+  var rows = values.map(function (run) {
+    var row = document.createElement("li");
+    var button = document.createElement("button");
+    button.type = "button";
+    button.className = "record-select";
+    button.appendChild(recordBlock(
+      text(run.repository, "Repository") + " · " + text(run.goal_id, "Goal"),
+      text(run.status, "unknown"),
+      new Date(Number(run.last_seen_at) * 1000).toLocaleString() +
+        (run.resume_required === true ? " · owner action required" : "")
+    ));
+    button.addEventListener("click", function () { loadRunDetail(text(run.run_id, "")); });
+    row.appendChild(button);
+    return row;
+  });
+  if (rows.length === 0) rows.push(item("is-empty", "No runs match this filter."));
+  node.replaceChildren.apply(node, rows);
+}
+
+function loadRunDetail(runId) {
+  if (runId === "") return;
+  setText("run-detail-title", "Loading run…");
+  Promise.all([apiGet("/api/runs/" + encodeURIComponent(runId)), apiGet("/api/runs/" + encodeURIComponent(runId) + "/events")])
+    .then(function (values) {
+      selectedRun = record(values[0].run);
+      selectedRunEvents = list(values[1].events);
+      renderRunDetail();
+    }).catch(function (error) {
+      setText("run-detail-title", "Could not load run");
+      setText("run-detail-meta", describe(error));
+    });
+}
+
+function renderRunDetail() {
+  var run = record(selectedRun);
+  setText("run-detail-title", text(run.repository, "Repository") + " · " + text(run.goal_id, "Goal"));
+  setText("run-detail-meta", text(run.status, "unknown") + " · " + text(run.run_id, "") +
+    (run.pause_reason ? " · " + text(run.pause_reason, "") : ""));
+  var timeline = el("run-timeline");
+  if (timeline) {
+    var entries = selectedRunEvents.map(function (event) {
+      var row = document.createElement("li");
+      row.appendChild(span("record-title", text(event.type, "event")));
+      var payload = record(event.payload);
+      var workflow = record(payload.workflow);
+      var task = record(payload.task);
+      var detail = new Date(Number(event.created_at) * 1000).toLocaleString();
+      if (workflow.label) detail += " · " + text(workflow.label, "");
+      if (task.id) detail += " · " + text(task.id, "");
+      row.appendChild(span("record-meta", detail));
+      return row;
+    });
+    if (entries.length === 0) entries.push(item("is-empty", "No transitions recorded."));
+    timeline.replaceChildren.apply(timeline, entries);
+  }
+  var exportButton = el("run-export");
+  var resumeButton = el("run-resume");
+  if (exportButton) exportButton.disabled = false;
+  if (resumeButton) resumeButton.disabled = run.resume_required !== true;
+}
+
+function applyTheme(theme) {
+  if (theme === "dark" || theme === "light") document.documentElement.setAttribute("data-theme", theme);
+  else document.documentElement.removeAttribute("data-theme");
+}
+
+function loadPreferences() {
+  apiGet("/api/preferences").then(function (payload) {
+    preferences = Object.assign(preferences, record(payload.preferences));
+    preferencesLoaded = true;
+    LOG_VIEW_LINES = Number(preferences.log_lines) || 200;
+    applyTheme(text(preferences.theme, "system"));
+    var form = el("preferences-form");
+    if (form) {
+      form.elements.namedItem("theme").value = text(preferences.theme, "system");
+      form.elements.namedItem("log_lines").value = String(LOG_VIEW_LINES);
+      form.elements.namedItem("browser_notifications").checked = preferences.browser_notifications === true;
+    }
+  }).catch(function (error) {
+    setText("preferences-feedback", "Could not load preferences: " + describe(error));
+  });
 }
 
 function wireLogout() {
@@ -1584,6 +1818,13 @@ function recordRow(title, badgeText, detail) {
   return row;
 }
 
+function recordBlock(title, badgeText, detail) {
+  var row = recordRow(title, badgeText, detail);
+  var block = document.createElement("div");
+  while (row.firstChild) block.appendChild(row.firstChild);
+  return block;
+}
+
 function setToneOnNode(node, mood) {
   if (mood) {
     node.setAttribute("data-tone", mood);
@@ -1724,6 +1965,112 @@ function wireAdministration() {
   });
 }
 
+function wireDailyDriver() {
+  var refresh = el("runs-refresh");
+  var filter = el("runs-filter");
+  var exportButton = el("run-export");
+  var resumeButton = el("run-resume");
+  if (refresh) refresh.addEventListener("click", loadRuns);
+  if (filter) filter.addEventListener("input", renderRunRecords);
+  if (exportButton) exportButton.addEventListener("click", function () {
+    if (!selectedRun) return;
+    var contents = JSON.stringify({ run: selectedRun, events: selectedRunEvents }, null, 2);
+    var url = URL.createObjectURL(new Blob([contents], { type: "application/json" }));
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = text(selectedRun.run_id, "coordinator-run") + ".json";
+    link.click();
+    window.setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+  });
+  if (resumeButton) resumeButton.addEventListener("click", function () {
+    var runId = text(record(selectedRun).run_id, "");
+    if (runId === "") return;
+    resumeButton.disabled = true;
+    apiPost("/api/runs/" + encodeURIComponent(runId) + "/resume").then(function (result) {
+      if (result.status !== 200) throw new Error("resume failed");
+      runsLoaded = false;
+      loadRuns();
+      loadRunDetail(runId);
+      restartStateFeed();
+    }).catch(function (error) {
+      setText("run-detail-meta", "Could not resume: " + describe(error));
+      resumeButton.disabled = false;
+    });
+  });
+
+  var guardrailForm = el("guardrails-form");
+  if (guardrailForm) guardrailForm.addEventListener("submit", function (event) {
+    event.preventDefault();
+    if (activeRunId === "") return;
+    var policy = {};
+    Object.keys(GuardrailDefaults).forEach(function (name) {
+      var raw = guardrailForm.elements.namedItem(name).value.trim();
+      policy[name] = raw === "" ? null : Number(raw);
+    });
+    setText("guardrails-feedback", "Saving guardrails…");
+    apiPost("/api/runs/" + encodeURIComponent(activeRunId) + "/policy", policy)
+      .then(function (result) {
+        if (result.status !== 200) throw new Error(text(result.payload.message, "save failed"));
+        setText("guardrails-feedback", "Guardrails saved. New snapshots use these limits immediately.");
+        restartStateFeed();
+      }).catch(function (error) {
+        setText("guardrails-feedback", "Could not save guardrails: " + describe(error));
+      });
+  });
+
+  var preferencesForm = el("preferences-form");
+  if (preferencesForm) preferencesForm.addEventListener("submit", function (event) {
+    event.preventDefault();
+    var wantsNotifications = preferencesForm.elements.namedItem("browser_notifications").checked;
+    var permission = Promise.resolve();
+    if (wantsNotifications && typeof Notification === "function" && Notification.permission === "default") {
+      permission = Notification.requestPermission();
+    }
+    permission.then(function () {
+      var payload = {
+        theme: preferencesForm.elements.namedItem("theme").value,
+        log_lines: Number(preferencesForm.elements.namedItem("log_lines").value),
+        browser_notifications: wantsNotifications &&
+          (typeof Notification !== "function" || Notification.permission === "granted"),
+      };
+      return apiPost("/api/preferences", payload);
+    }).then(function (result) {
+      if (result.status !== 200) throw new Error(text(result.payload.message, "save failed"));
+      preferences = Object.assign(preferences, record(result.payload.preferences));
+      LOG_VIEW_LINES = Number(preferences.log_lines) || 200;
+      applyTheme(text(preferences.theme, "system"));
+      setText("preferences-feedback", "Preferences saved.");
+      if (latestState) renderLog(latestState);
+    }).catch(function (error) {
+      setText("preferences-feedback", "Could not save preferences: " + describe(error));
+    });
+  });
+  loadPreferences();
+}
+
+function wireShortcuts() {
+  document.addEventListener("keydown", function (event) {
+    var target = event.target;
+    var tag = target && target.tagName ? target.tagName.toLowerCase() : "";
+    if (tag === "input" || tag === "select" || tag === "textarea" || target === el("codex-terminal")) return;
+    var key = String(event.key || "").toLowerCase();
+    if (key === "?") {
+      window.location.hash = "#settings";
+      return;
+    }
+    if (!shortcutPrefix) {
+      if (key === "g") {
+        shortcutPrefix = true;
+        window.setTimeout(function () { shortcutPrefix = false; }, 1200);
+      }
+      return;
+    }
+    shortcutPrefix = false;
+    var destinations = { w: "monitor", r: "runs", t: "terminal", l: "logs", s: "settings" };
+    if (destinations[key]) window.location.hash = "#" + destinations[key];
+  });
+}
+
 /* Hash-based view navigation ------------------------------------------------ */
 
 function routeFromHash() {
@@ -1760,6 +2107,10 @@ function applyRoute() {
     }
   } else if (route === "activity") {
     loadActivity();
+  } else if (route === "runs") {
+    loadRuns();
+  } else if (route === "settings" && !preferencesLoaded) {
+    loadPreferences();
   } else if (route === "sessions") {
     loadSessions();
   } else if (route === "diagnostics") {
@@ -1779,6 +2130,8 @@ function start() {
   wireRepositoryPicker();
   wireLogout();
   wireAdministration();
+  wireDailyDriver();
+  wireShortcuts();
   paintConnection();
   startStateFeed();
   tickTimer = window.setInterval(paintConnection, POLL_INTERVAL_MS);

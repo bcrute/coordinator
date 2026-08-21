@@ -577,6 +577,21 @@ class LocalAppTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(response.json()["policy"]["generated_tokens"], 1000)
 
+            response = client.post(
+                "/api/preferences",
+                json={
+                    "browser_notifications": False,
+                    "theme": "dark",
+                    "log_lines": 100,
+                },
+                headers=self.headers(csrf),
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(
+                client.get("/api/preferences").json()["preferences"]["theme"],
+                "dark",
+            )
+
             self.app.state.operational_store.pause(run_id, "test pause")
             paused = client.get("/api/state").json()
             self.assertEqual(paused["guardrails"]["status"], "paused")

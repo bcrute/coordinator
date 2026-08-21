@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark light" />
-    <title>Coordination workflow</title>
+    <title>Coordinator</title>
     <link rel="stylesheet" href="/vendor/xterm.css" />
     <link rel="stylesheet" href="/app.css" />
     <script src="/vendor/xterm.js" defer></script>
@@ -16,7 +16,7 @@
 
     <header class="topbar">
       <div class="topbar-identity">
-        <h1>Coordination workflow</h1>
+        <h1>Coordinator</h1>
         <p class="repo" id="repo-path">Loading repository…</p>
       </div>
       <div class="topbar-repo">
@@ -48,12 +48,14 @@
 
     <nav class="views-nav" aria-label="Dashboard views">
       <ul>
-        <li><a href="#monitor" id="nav-monitor" data-route="monitor">Monitor</a></li>
+        <li><a href="#monitor" id="nav-monitor" data-route="monitor">Workspace</a></li>
         <li><a href="#terminal" id="nav-terminal" data-route="terminal">Terminal</a></li>
         <li><a href="#work" id="nav-work" data-route="work">Work</a></li>
         <li><a href="#agents" id="nav-agents" data-route="agents">Agents</a></li>
         <li><a href="#logs" id="nav-logs" data-route="logs">Logs</a></li>
         <li><a href="#activity" id="nav-activity" data-route="activity">Activity</a></li>
+        <li><a href="#runs" id="nav-runs" data-route="runs">Runs</a></li>
+        <li><a href="#settings" id="nav-settings" data-route="settings">Settings</a></li>
         <li><a href="#setup" id="nav-setup" data-route="setup">Setup</a></li>
         <li><a href="#sessions" id="nav-sessions" data-route="sessions">Sessions</a></li>
         <li><a href="#diagnostics" id="nav-diagnostics" data-route="diagnostics">Diagnostics</a></li>
@@ -62,7 +64,26 @@
 
     <main id="dashboard" class="dashboard">
       <section id="view-monitor" class="view" aria-labelledby="view-monitor-heading">
-        <h2 class="view-heading" id="view-monitor-heading">Monitor</h2>
+        <h2 class="view-heading" id="view-monitor-heading">Workspace</h2>
+
+        <section class="owner-action" id="owner-action" data-tone="ok" aria-live="polite">
+          <div>
+            <p class="eyebrow">Owner action</p>
+            <p class="objective" id="owner-action-title">No action required</p>
+            <p class="note" id="owner-action-detail">Waiting for the first run snapshot.</p>
+          </div>
+          <a class="control-button action-link" id="owner-action-link" href="#work">Open work</a>
+        </section>
+
+        <section class="panel panel-wide" aria-labelledby="workspace-repositories-heading">
+          <header class="panel-head">
+            <h3 id="workspace-repositories-heading">Repositories</h3>
+            <p class="badge" id="workspace-repositories-summary">0 repositories</p>
+          </header>
+          <div class="panel-body">
+            <ul class="workspace-grid" id="workspace-repositories"></ul>
+          </div>
+        </section>
 
         <section class="panel panel-wide" aria-labelledby="workflow-heading">
           <header class="panel-head">
@@ -394,6 +415,77 @@
             <p class="note" id="activity-feedback">Open this page to load recent control and authentication events.</p>
             <ul class="records" id="activity-events"></ul>
           </div>
+        </section>
+      </section>
+
+      <section id="view-runs" class="view" aria-labelledby="view-runs-heading" hidden>
+        <h2 class="view-heading" id="view-runs-heading">Runs</h2>
+        <section class="panel" aria-labelledby="run-history-heading">
+          <header class="panel-head">
+            <h3 id="run-history-heading">Run history</h3>
+            <button type="button" class="control-button" id="runs-refresh">Refresh</button>
+          </header>
+          <div class="panel-body">
+            <label class="filter-label" for="runs-filter">Filter runs</label>
+            <input id="runs-filter" type="search" placeholder="Repository, goal, status…" />
+            <p class="note" id="runs-feedback">Open this page to load durable run history.</p>
+            <ul class="records selectable-records" id="run-records"></ul>
+          </div>
+        </section>
+        <section class="panel" aria-labelledby="run-detail-heading">
+          <header class="panel-head">
+            <h3 id="run-detail-heading">Run detail</h3>
+            <div class="controls">
+              <button type="button" class="control-button" id="run-export" disabled>Export JSON</button>
+              <button type="button" class="control-button" id="run-resume" disabled>Resume</button>
+            </div>
+          </header>
+          <div class="panel-body">
+            <p class="objective" id="run-detail-title">Select a run</p>
+            <p class="note" id="run-detail-meta">No run selected.</p>
+            <ol class="timeline" id="run-timeline"></ol>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-settings" class="view" aria-labelledby="view-settings-heading" hidden>
+        <h2 class="view-heading" id="view-settings-heading">Settings</h2>
+        <section class="panel" aria-labelledby="guardrails-heading">
+          <header class="panel-head">
+            <h3 id="guardrails-heading">Active run guardrails</h3>
+            <p class="badge" id="guardrails-state">not loaded</p>
+          </header>
+          <form class="panel-body settings-form" id="guardrails-form">
+            <p class="note">Leave a limit blank to keep that dimension provider-managed.</p>
+            <label>Turn seconds <input name="turn_seconds" type="number" min="1" step="1" /></label>
+            <label>Overall seconds <input name="overall_seconds" type="number" min="1" step="1" /></label>
+            <label>Generated tokens <input name="generated_tokens" type="number" min="1" step="1" /></label>
+            <label>New input tokens <input name="input_tokens" type="number" min="1" step="1" /></label>
+            <label>Cache-read tokens <input name="cache_read_tokens" type="number" min="1" step="1" /></label>
+            <label>Cache-write tokens <input name="cache_write_tokens" type="number" min="1" step="1" /></label>
+            <label>Correction rounds <input name="correction_rounds" type="number" min="1" step="1" /></label>
+            <label>Concurrent workers <input name="concurrent_workers" type="number" min="1" step="1" /></label>
+            <label>No-progress seconds <input name="no_progress_seconds" type="number" min="1" step="1" /></label>
+            <label>Warning threshold <input name="warning_ratio" type="number" min="0.1" max="0.99" step="0.05" value="0.8" /></label>
+            <button type="submit" class="control-button">Save guardrails</button>
+            <p class="note form-feedback" id="guardrails-feedback" role="status">A run must be active before limits can be saved.</p>
+          </form>
+        </section>
+        <section class="panel" aria-labelledby="preferences-heading">
+          <header class="panel-head"><h3 id="preferences-heading">Browser experience</h3></header>
+          <form class="panel-body settings-form" id="preferences-form">
+            <label>Theme
+              <select name="theme"><option value="system">System</option><option value="dark">Dark</option><option value="light">Light</option></select>
+            </label>
+            <label>Visible log lines <input name="log_lines" type="number" min="50" max="200" step="50" value="200" /></label>
+            <label class="check-label"><input name="browser_notifications" type="checkbox" /> Notify when owner action is required</label>
+            <button type="submit" class="control-button">Save preferences</button>
+            <p class="note form-feedback" id="preferences-feedback" role="status">Preferences contain no secrets.</p>
+          </form>
+        </section>
+        <section class="panel panel-wide" aria-labelledby="shortcuts-heading">
+          <header class="panel-head"><h3 id="shortcuts-heading">Keyboard shortcuts</h3></header>
+          <div class="panel-body"><p class="note"><kbd>g</kbd> then <kbd>w</kbd> workspace, <kbd>r</kbd> runs, <kbd>t</kbd> terminal, <kbd>l</kbd> logs, or <kbd>s</kbd> settings. Press <kbd>?</kbd> to open this page.</p></div>
         </section>
       </section>
 

@@ -18,6 +18,8 @@ ROUTES = [
     "agents",
     "logs",
     "activity",
+    "runs",
+    "settings",
     "setup",
     "sessions",
     "diagnostics",
@@ -26,7 +28,7 @@ ROUTES = [
 # Panel/element ids expected to live inside each view section, keyed by
 # route name. These are used to check panel-to-view grouping.
 VIEW_PANEL_IDS = {
-    "monitor": ["workflow-heading", "metrics-heading"],
+    "monitor": ["workspace-repositories-heading", "workflow-heading", "metrics-heading"],
     "terminal": ["codex-session-heading"],
     "work": ["goal-heading", "roadmap-heading", "task-heading", "review-heading"],
     "agents": [
@@ -37,6 +39,8 @@ VIEW_PANEL_IDS = {
     ],
     "logs": ["relay-log-heading"],
     "activity": ["activity-heading"],
+    "runs": ["run-history-heading", "run-detail-heading"],
+    "settings": ["guardrails-heading", "preferences-heading", "shortcuts-heading"],
     "setup": ["create-repository-heading", "initialize-heading"],
     "sessions": ["sessions-heading"],
     "diagnostics": ["diagnostics-heading"],

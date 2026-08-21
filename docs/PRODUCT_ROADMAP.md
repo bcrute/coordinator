@@ -151,6 +151,15 @@ Exit gate:
 
 **Status: in progress.**
 
+Progress:
+
+- Workspace cards, owner-action guidance, searchable run history, run detail timelines,
+  JSON completion export, explicit resume, guardrail editing, browser preferences,
+  opt-in notifications, theme selection, responsive layouts, and keyboard navigation
+  are available without leaving the application.
+- The Chromium journey covers repository setup, workspace discovery, run history and
+  timeline inspection, preference persistence, and live guardrail editing.
+
 Deliverables:
 
 1. Replace the single-repository landing view with a workspace home showing every

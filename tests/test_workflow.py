@@ -788,7 +788,7 @@ class WebAppTests(unittest.TestCase):
         status, content_type, body = self.get(f"{base}/")
         self.assertEqual(status, 200)
         self.assertIn("text/html", content_type)
-        self.assertIn("<title>Coordination workflow</title>", body)
+        self.assertIn("<title>Coordinator</title>", body)
 
         status, content_type, body = self.get(f"{base}/app.css")
         self.assertEqual(status, 200)
@@ -818,7 +818,7 @@ class WebAppTests(unittest.TestCase):
 
         self.assertIn('href="/app.css"', html_body)
         self.assertIn('src="/app.js" defer', html_body)
-        self.assertIn("<title>Coordination workflow</title>", html_body)
+        self.assertIn("<title>Coordinator</title>", html_body)
         self.assertIn("<main", html_body)
 
         self.assertIn("/api/state", js_body)

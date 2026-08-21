@@ -707,7 +707,7 @@ class OperationalStore:
                 "USING(repository_id) ORDER BY r.last_seen_at DESC LIMIT ?",
                 (max(1, min(limit, 500)),),
             ).fetchall()
-        return [self._run_row(row) for row in rows]
+        return [self._run_row(row, include_snapshot=False) for row in rows]
 
     def get_run(self, run_id: str) -> dict[str, object] | None:
         with self._connect() as connection:
@@ -716,11 +716,11 @@ class OperationalStore:
                 "USING(repository_id) WHERE run_id = ?",
                 (run_id,),
             ).fetchone()
-        return self._run_row(row) if row is not None else None
+        return self._run_row(row, include_snapshot=True) if row is not None else None
 
     @staticmethod
-    def _run_row(row: sqlite3.Row) -> dict[str, object]:
-        return {
+    def _run_row(row: sqlite3.Row, *, include_snapshot: bool) -> dict[str, object]:
+        value = {
             "run_id": row["run_id"],
             "repository_id": row["repository_id"],
             "repository": row["display_name"],
@@ -735,8 +735,10 @@ class OperationalStore:
             "pause_reason": row["pause_reason"],
             "resume_required": bool(row["resume_required"]),
             "policy": json.loads(row["policy_json"]),
-            "snapshot": json.loads(row["snapshot_json"]),
         }
+        if include_snapshot:
+            value["snapshot"] = json.loads(row["snapshot_json"])
+        return value
 
     def list_events(self, run_id: str, after_id: int = 0, limit: int = 200):
         with self._connect() as connection:

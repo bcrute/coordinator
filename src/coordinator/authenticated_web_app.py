@@ -331,6 +331,7 @@ def create_authenticated_app(
                     "pause_reason",
                     "resume_required",
                     "last_change_at",
+                    "policy",
                 )
             }
             payload["guardrails"] = guardrails
@@ -415,7 +416,14 @@ def create_authenticated_app(
         return JSONResponse({"ok": True, "sessions": values})
 
     async def run_history(request: Request):
-        return JSONResponse({"ok": True, "runs": await run_in_threadpool(operational.list_runs)})
+        raw_limit = request.query_params.get("limit", "100")
+        if not raw_limit.isdigit():
+            return JSONResponse(
+                {"ok": False, "outcome": "validation", "message": "invalid limit"},
+                status_code=400,
+            )
+        runs = await run_in_threadpool(operational.list_runs, int(raw_limit))
+        return JSONResponse({"ok": True, "runs": runs})
 
     async def run_detail(request: Request):
         run = await run_in_threadpool(operational.get_run, request.path_params["run_id"])
@@ -485,6 +493,53 @@ def create_authenticated_app(
                 "policy": policy.as_dict(),
             },
             status_code=200 if updated else 404,
+        )
+
+    async def preferences_get(request: Request):
+        return JSONResponse(
+            {"ok": True, "preferences": await run_in_threadpool(operational.preferences)}
+        )
+
+    async def preferences_update(request: Request):
+        value = await _json_body(request, SETUP_BODY_BYTES)
+        if isinstance(value, JSONResponse):
+            return value
+        allowed = {"browser_notifications", "theme", "log_lines"}
+        if not isinstance(value, dict) or not value or set(value) - allowed:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "outcome": "validation",
+                    "message": "expected one or more supported preferences",
+                },
+                status_code=400,
+            )
+        if "browser_notifications" in value and not isinstance(
+            value["browser_notifications"], bool
+        ):
+            return JSONResponse(
+                {"ok": False, "outcome": "validation", "message": "invalid notifications value"},
+                status_code=400,
+            )
+        if "theme" in value and value["theme"] not in {"system", "dark", "light"}:
+            return JSONResponse(
+                {"ok": False, "outcome": "validation", "message": "invalid theme"},
+                status_code=400,
+            )
+        if "log_lines" in value and (
+            not isinstance(value["log_lines"], int)
+            or isinstance(value["log_lines"], bool)
+            or not 50 <= value["log_lines"] <= 200
+        ):
+            return JSONResponse(
+                {"ok": False, "outcome": "validation", "message": "invalid log line limit"},
+                status_code=400,
+            )
+        for key, preference in value.items():
+            await run_in_threadpool(operational.set_preference, key, preference)
+        preferences = await run_in_threadpool(operational.preferences)
+        return JSONResponse(
+            {"ok": True, "outcome": "updated", "preferences": preferences}
         )
 
     async def session_revoke(request: Request):
@@ -592,6 +647,11 @@ def create_authenticated_app(
                     "name": "security state",
                     "ok": os.access(store.state_dir, os.R_OK | os.W_OK),
                     "detail": str(store.state_dir),
+                },
+                {
+                    "name": "operational index",
+                    "ok": operational.schema_version > 0,
+                    "detail": f"schema {operational.schema_version} at {operational.path}",
                 },
             ]
         return {
@@ -1039,6 +1099,8 @@ def create_authenticated_app(
         Route("/api/runs/{run_id:str}/events", run_events, methods=["GET"]),
         Route("/api/runs/{run_id:str}/resume", run_resume, methods=["POST"]),
         Route("/api/runs/{run_id:str}/policy", run_policy, methods=["POST"]),
+        Route("/api/preferences", preferences_get, methods=["GET"]),
+        Route("/api/preferences", preferences_update, methods=["POST"]),
         Route("/api/sessions/revoke", session_revoke, methods=["POST"]),
         Route(
             "/api/sessions/revoke-others",
