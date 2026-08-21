@@ -1489,7 +1489,7 @@ function loadProviderUsage() {
     cache: "no-store",
     headers: { Accept: "application/json" },
   }).then(answer).then(function (result) {
-    if (!result.response.ok) {
+    if (result.status < 200 || result.status >= 300) {
       throw new Error(text(result.payload.message, "usage request failed"));
     }
     renderProviderUsage(result.payload);
@@ -1512,7 +1512,7 @@ function refreshProviderUsage() {
     cache: "no-store",
     headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
   }).then(answer).then(function (result) {
-    if (!result.response.ok) {
+    if (result.status < 200 || result.status >= 300) {
       throw new Error(text(result.payload.message, "usage refresh failed"));
     }
     renderProviderUsage(result.payload);

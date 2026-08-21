@@ -122,6 +122,8 @@ class ProviderUsageHeaderTests(unittest.TestCase):
         self.assertIsNotNone(refresh)
         self.assertIn('method: "POST"', refresh.group(0))
         self.assertIn('"X-CSRF-Token": csrfToken', refresh.group(0))
+        self.assertIn("result.status < 200 || result.status >= 300", refresh.group(0))
+        self.assertNotIn("result.response", refresh.group(0))
 
     def test_usage_is_rendered_as_remaining_not_consumed(self):
         renderer = re.search(r"function renderProviderUsage\([\s\S]*?\n}\n", self.js)

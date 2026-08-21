@@ -68,7 +68,28 @@ class DashboardBrowserTests(unittest.TestCase):
                             else None
                         ),
                     )
+                    page.route(
+                        "**/api/provider-usage",
+                        lambda route: route.fulfill(
+                            status=200,
+                            content_type="application/json",
+                            body='{"ok":true,"generated_at":"2026-08-21T13:00:00Z",'
+                            '"next_refresh_at":"2026-08-21T14:00:00Z",'
+                            '"refresh_interval_seconds":3600,"refreshing":false,'
+                            '"providers":[{"id":"codex","name":"Codex",'
+                            '"status":"available","plan":"pro",'
+                            '"remaining_percent":70,"windows":[]},'
+                            '{"id":"claude","name":"Claude","status":"available",'
+                            '"plan":"max","remaining_percent":80,"windows":[]}]}',
+                        ),
+                    )
                     page.goto(url, wait_until="domcontentloaded")
+                    page.locator("#usage-codex-value").filter(has_text="70%").wait_for(
+                        timeout=10_000
+                    )
+                    page.locator("#usage-claude-value").filter(has_text="80%").wait_for(
+                        timeout=10_000
+                    )
                     page.locator("#connection-label").filter(
                         has_text="state feed"
                     ).wait_for(timeout=10_000)
