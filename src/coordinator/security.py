@@ -66,6 +66,7 @@ class LocalSettings:
     rate_limit_auth_attempts: int = 30
     rate_limit_control_attempts: int = 120
     rate_limit_terminal_connections: int = 30
+    terminal_enabled: bool = True
 
     def __post_init__(self) -> None:
         external = self.external_url.rstrip("/")
@@ -127,6 +128,7 @@ class OIDCSettings:
     rate_limit_auth_attempts: int = 30
     rate_limit_control_attempts: int = 120
     rate_limit_terminal_connections: int = 30
+    terminal_enabled: bool = False
 
     def __post_init__(self) -> None:
         issuer = self.issuer.strip()
@@ -226,6 +228,8 @@ def _validate_rate_limits(settings: OIDCSettings | LocalSettings) -> None:
         for value in values
     ):
         raise ValueError("rate-limit settings must be positive integers")
+    if not isinstance(settings.terminal_enabled, bool):
+        raise ValueError("terminal_enabled must be a boolean")
 
 
 class SlidingWindowRateLimiter:

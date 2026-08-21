@@ -535,6 +535,11 @@ def create_authenticated_app(
             }
             payload["guardrails"] = guardrails
             payload["api_version"] = "v1"
+            payload["capabilities"] = {
+                "terminal": settings.terminal_enabled,
+                "watcher_control": True,
+                "repository_write": True,
+            }
         if isinstance(settings, OIDCSettings):
             user = dict(session["user"])
             payload["security"] = {
@@ -1071,10 +1076,13 @@ def create_authenticated_app(
                 },
                 {
                     "name": "terminal provider",
-                    "ok": codex_session.get("state") != "error",
-                    "detail": str(codex_session.get("detail") or codex_session.get("state")),
+                    "ok": not settings.terminal_enabled
+                    or codex_session.get("state") != "error",
+                    "detail": "browser terminal disabled by configuration"
+                    if not settings.terminal_enabled
+                    else str(codex_session.get("detail") or codex_session.get("state")),
                     "category": "runtime",
-                    "required": True,
+                    "required": settings.terminal_enabled,
                 },
             ]
         required = [check for check in checks if check["required"]]
@@ -1272,6 +1280,15 @@ def create_authenticated_app(
         return JSONResponse(payload, status_code=status)
 
     async def codex_control(request: Request):
+        if not settings.terminal_enabled:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "outcome": "not_available",
+                    "message": "browser terminal capability is disabled",
+                },
+                status_code=404,
+            )
         action = request.path_params["action"]
         if action not in {"start", "stop"}:
             return JSONResponse({"ok": False, "outcome": "not_found"}, status_code=404)
@@ -1372,6 +1389,9 @@ def create_authenticated_app(
         )
 
     async def terminal_socket(websocket: WebSocket):
+        if not settings.terminal_enabled:
+            await websocket.close(code=1008, reason="terminal capability disabled")
+            return
         attachment_id = secrets.token_urlsafe(18)
         writable = False
         source = websocket.client.host if websocket.client else "unknown"
@@ -1744,6 +1764,7 @@ def settings_from_args(args: Any) -> OIDCSettings:
         rate_limit_auth_attempts=int(args.rate_limit_auth_attempts),
         rate_limit_control_attempts=int(args.rate_limit_control_attempts),
         rate_limit_terminal_connections=int(args.rate_limit_terminal_connections),
+        terminal_enabled=bool(args.terminal_enabled),
         secure_cookie=not bool(args.insecure_oidc_http),
         trusted_hosts=tuple(args.trusted_host or ()),
     )
@@ -1769,6 +1790,7 @@ def local_settings_from_args(args: Any, port: int | None = None) -> LocalSetting
         rate_limit_auth_attempts=int(args.rate_limit_auth_attempts),
         rate_limit_control_attempts=int(args.rate_limit_control_attempts),
         rate_limit_terminal_connections=int(args.rate_limit_terminal_connections),
+        terminal_enabled=bool(args.terminal_enabled),
         trusted_hosts=hosts,
     )
 

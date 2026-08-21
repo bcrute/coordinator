@@ -12,6 +12,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from authlib.integrations.base_client.errors import OAuthError
 from joserfc import jwt
@@ -119,6 +120,7 @@ class AuthenticatedAppTests(unittest.TestCase):
             state_dir=self.base / "state",
             secure_cookie=False,
             trusted_hosts=("127.0.0.1",),
+            terminal_enabled=True,
         )
 
     def client(
@@ -790,6 +792,56 @@ class LocalAppTests(unittest.TestCase):
             activity = client.get("/api/activity").json()["events"]
             self.assertTrue(any(item["event"] == "rate_limit" for item in activity))
 
+    def test_terminal_capability_can_be_disabled_at_server_boundary(self) -> None:
+        settings = LocalSettings(
+            external_url="http://127.0.0.1",
+            state_dir=self.base / "no-terminal-state",
+            secure_cookie=False,
+            trusted_hosts=("127.0.0.1",),
+            terminal_enabled=False,
+        )
+        app = create_authenticated_app(
+            self.repo,
+            settings,
+            repositories_root=self.base,
+            codex_command_for_repo=lambda repo: [sys.executable, "-c", "pass"],
+        )
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            state = client.get("/api/v1/state").json()
+            self.assertFalse(state["capabilities"]["terminal"])
+            csrf = state["security"]["csrf_token"]
+            response = client.post(
+                "/api/v1/codex/start", headers=self.headers(csrf)
+            )
+            self.assertEqual(response.status_code, 404, response.text)
+            self.assertEqual(response.json()["error"]["code"], "not_available")
+            with self.assertRaises(WebSocketDisconnect) as closed:
+                with client.websocket_connect(
+                    "ws://127.0.0.1/ws/terminal",
+                    headers={"Origin": "http://127.0.0.1"},
+                ):
+                    pass
+            self.assertEqual(closed.exception.code, 1008)
+
+    def test_state_reconstruction_is_coalesced_and_file_changes_invalidate_it(self) -> None:
+        import coordinator.authenticated_web_app as runtime
+
+        with mock.patch.object(
+            runtime.web_app,
+            "build_state",
+            wraps=runtime.web_app.build_state,
+        ) as build_state:
+            with TestClient(self.app, base_url="http://127.0.0.1") as client:
+                for _ in range(8):
+                    self.assertEqual(client.get("/api/v1/state").status_code, 200)
+                self.assertEqual(build_state.call_count, 1)
+
+                goal = self.repo / ".coordination" / "planner" / "goal.md"
+                goal.parent.mkdir(parents=True)
+                goal.write_text("# Goal\n\n- Goal ID: `cache-test`\n", encoding="utf-8")
+                self.assertEqual(client.get("/api/v1/state").status_code, 200)
+                self.assertEqual(build_state.call_count, 2)
+
     def test_run_history_policy_events_and_explicit_resume(self) -> None:
         with TestClient(self.app, base_url="http://127.0.0.1") as client:
             state = client.get("/api/state").json()
@@ -980,6 +1032,54 @@ class LocalAppTests(unittest.TestCase):
                     self.assertEqual(response["protocol"], "terminal.v1")
                     self.assertIsInstance(response["sequence"], int)
                     self.assertIn("read-only", response["message"])
+
+    def test_terminal_websocket_replays_from_reconnect_cursor(self) -> None:
+        marker = "terminal-replay-marker"
+        with TestClient(self.app, base_url="http://127.0.0.1") as client:
+            csrf = client.get("/api/state").json()["security"]["csrf_token"]
+            client.post("/api/codex/start", headers=self.headers(csrf))
+            with client.websocket_connect(
+                "ws://127.0.0.1/ws/terminal",
+                headers={"Origin": "http://127.0.0.1"},
+            ) as socket:
+                socket.send_json(
+                    {
+                        "type": "hello",
+                        "protocol": "terminal.v1",
+                        "csrf_token": csrf,
+                        "cursor": 0,
+                    }
+                )
+                socket.send_json(
+                    {"type": "input", "protocol": "terminal.v1", "data": marker + "\n"}
+                )
+                for _ in range(12):
+                    message = socket.receive_json()
+                    if message["type"] == "output" and marker in message["output"]["text"]:
+                        break
+                else:
+                    self.fail("terminal did not echo replay marker")
+
+            with client.websocket_connect(
+                "ws://127.0.0.1/ws/terminal",
+                headers={"Origin": "http://127.0.0.1"},
+            ) as replay:
+                replay.send_json(
+                    {
+                        "type": "hello",
+                        "protocol": "terminal.v1",
+                        "csrf_token": csrf,
+                        "cursor": 0,
+                    }
+                )
+                for _ in range(6):
+                    message = replay.receive_json()
+                    if message["type"] == "output":
+                        self.assertIn(marker, message["output"]["text"])
+                        self.assertGreater(message["sequence"], 0)
+                        break
+                else:
+                    self.fail("terminal reconnect did not replay buffered output")
 
 
 class SettingsValidationTests(unittest.TestCase):

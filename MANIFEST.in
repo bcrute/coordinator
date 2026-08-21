@@ -1,0 +1,18 @@
+include CHANGELOG.md
+include LICENSE
+include README.md
+include pyproject.toml
+recursive-include src/coordinator *.py *.md *.html *.css *.js
+prune .coordination
+prune .github
+prune build
+prune deploy
+prune docs
+prune examples
+prune readiness_demo
+prune skills
+prune tests
+global-exclude *.py[cod]
+global-exclude __pycache__
+exclude citadel-main.zip
+exclude workflow.toml

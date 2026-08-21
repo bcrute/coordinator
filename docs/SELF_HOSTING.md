@@ -180,6 +180,18 @@ owner-only writable `state_dir`, and a TLS reverse proxy whose address matches
 file; load it from a separate mode-0600 environment/credential file. OIDC mode
 refuses wildcard trusted hosts and `forwarded_allow_ips = "*"`.
 
+`deploy/Caddyfile.example` is a native-OIDC reverse-proxy starting point. It
+terminates TLS, keeps the application upstream on loopback, flushes SSE/WebSocket
+traffic without conversational-page buffering, removes unused Authentik identity
+headers, and adds HSTS. Match its hostname, `external_url`, `trusted_hosts`, and the
+provider's exact callback URI. If Caddy runs in a container or on another host, replace
+the loopback upstream and narrow the service firewall so only that proxy can connect.
+
+OIDC mode disables the interactive browser terminal by default. Keep
+`terminal_enabled = false` for monitoring-only deployment; setting it to `true` gives
+an authorized browser command execution as the Coordinator service identity and should
+be a deliberate deployment decision.
+
 The authenticated application does not remove the need for service-account,
 filesystem, proxy, backup, and recovery hardening. Treat the network-ready
 checklist in `docs/SECURITY_ROADMAP.md` as the deployment gate.

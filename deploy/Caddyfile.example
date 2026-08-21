@@ -1,0 +1,19 @@
+# Replace this hostname with the exact external_url hostname from workflow.toml.
+coordinator.example.com {
+    encode zstd gzip
+
+    # Coordinator performs native OIDC. Remove identity headers supplied by a
+    # client so they can never be mistaken for a trusted authentication signal.
+    reverse_proxy 127.0.0.1:8765 {
+        header_up -X-Authentik-Email
+        header_up -X-Authentik-Groups
+        header_up -X-Authentik-Name
+        header_up -X-Authentik-Uid
+        flush_interval -1
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        -Server
+    }
+}

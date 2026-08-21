@@ -140,6 +140,7 @@ command-line flag always overrides the matching config value.
 | `session_idle_seconds` / `session_absolute_seconds` | `3600` / `43200` | Server-enforced session lifetimes. |
 | `rate_limit_window_seconds` | `60` | Sliding-window duration for in-process abuse controls. |
 | `rate_limit_auth_attempts` / `rate_limit_control_attempts` / `rate_limit_terminal_connections` | `30` / `120` / `30` | Per-source/session limits for sign-in, state-changing controls, and terminal attachments. |
+| `terminal_enabled`   | `true` in local mode; `false` in OIDC mode | Explicitly enables the interactive command-execution surface. Set it deliberately for a network deployment. |
 | `trusted_hosts`      | external URL hostname               | Exact accepted HTTP hostnames; wildcards are refused. |
 | `forwarded_allow_ips` | `127.0.0.1`                         | Proxy IP/CIDR values Uvicorn may trust for forwarded scheme/client data; `*` is refused. |
 
@@ -194,6 +195,10 @@ remain file-backed. See
 [`docs/adr/0001-authenticated-runtime.md`](docs/adr/0001-authenticated-runtime.md)
 for the decision and [`docs/SECURITY_ROADMAP.md`](docs/SECURITY_ROADMAP.md) for the
 remaining network-readiness gates.
+
+Version history is in [`CHANGELOG.md`](CHANGELOG.md). Release upgrades, checksum and
+attestation verification, database migration, and rollback are documented in
+[`docs/UPGRADING.md`](docs/UPGRADING.md).
 
 ## Testing
 

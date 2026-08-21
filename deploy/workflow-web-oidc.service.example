@@ -26,6 +26,8 @@ EnvironmentFile=/etc/coordinator/coordinator.env
 ExecStart=/opt/coordinator/.venv/bin/coordinator serve --config /etc/coordinator/workflow.toml
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=30
+KillMode=control-group
 UMask=0077
 
 StateDirectory=coordinator
@@ -44,9 +46,12 @@ ProtectHostname=true
 RestrictSUIDSGID=true
 RestrictRealtime=true
 LockPersonality=true
+SystemCallArchitectures=native
 CapabilityBoundingSet=
 AmbientCapabilities=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LimitNOFILE=4096
+TasksMax=64
 ReadWritePaths=/var/lib/coordinator /srv/repositories
 
 [Install]

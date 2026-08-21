@@ -36,6 +36,7 @@ var pendingControl = "";
 var renderedLog = null;
 var csrfToken = "";
 var securityMode = "local";
+var terminalEnabled = true;
 var latestState = null;
 var activeRunId = "";
 var guardrailFormRunId = "";
@@ -1090,7 +1091,13 @@ function closeCodexSocket() {
 }
 
 function connectCodexSocket() {
-  if (csrfToken === "" || !codexTerminalReady || (codexSocket && codexSocket.readyState < 2)) {
+  if (
+    !terminalEnabled ||
+    currentRoute !== "terminal" ||
+    csrfToken === "" ||
+    !codexTerminalReady ||
+    (codexSocket && codexSocket.readyState < 2)
+  ) {
     return;
   }
   var protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -1229,13 +1236,13 @@ function paintCodexControls() {
   var stopNode = el("codex-session-stop");
   var clearNode = el("codex-terminal-clear");
   if (startNode) {
-    startNode.disabled = busy || codexSession.can_start !== true;
+    startNode.disabled = !terminalEnabled || busy || codexSession.can_start !== true;
   }
   if (stopNode) {
-    stopNode.disabled = busy || codexSession.can_stop !== true;
+    stopNode.disabled = !terminalEnabled || busy || codexSession.can_stop !== true;
   }
   if (clearNode) {
-    clearNode.disabled = !codexTerminalReady;
+    clearNode.disabled = !terminalEnabled || !codexTerminalReady;
   }
   paintRepositorySelector();
 }
@@ -1263,6 +1270,14 @@ function applyCodexSession(session) {
 }
 
 function renderCodexSession(state) {
+  if (!terminalEnabled) {
+    closeCodexSocket();
+    setText("codex-session-state", "disabled");
+    setTone("codex-session-state", "muted");
+    setText("codex-session-detail", "The browser terminal is disabled by server configuration.");
+    paintCodexControls();
+    return;
+  }
   applyCodexSession(record(state.codex_session));
 }
 
@@ -1353,7 +1368,6 @@ function wireCodexControls() {
   if (clearNode) {
     clearNode.addEventListener("click", codexClear);
   }
-  initCodexTerminal();
   paintCodexControls();
 }
 
@@ -1366,6 +1380,19 @@ function render(state) {
   var userNode = el("authenticated-user");
   var logoutNode = el("logout");
   var authenticated = security.authenticated === true;
+  terminalEnabled = record(state.capabilities).terminal === true;
+  var terminalNav = el("nav-terminal");
+  if (terminalNav) {
+    terminalNav.parentElement.hidden = !terminalEnabled;
+  }
+  if (terminalEnabled && !codexTerminalReady) {
+    initCodexTerminal();
+  } else if (!terminalEnabled) {
+    closeCodexSocket();
+    if (routeFromHash() === "terminal") {
+      window.location.hash = "#monitor";
+    }
+  }
   if (userNode) {
     userNode.hidden = !authenticated;
     userNode.textContent = authenticated ? text(user.display, text(user.sub, "signed in")) : "";
@@ -2137,7 +2164,8 @@ function wireShortcuts() {
       return;
     }
     shortcutPrefix = false;
-    var destinations = { w: "monitor", r: "runs", t: "terminal", l: "logs", s: "settings" };
+    var destinations = { w: "monitor", r: "runs", l: "logs", s: "settings" };
+    if (terminalEnabled) destinations.t = "terminal";
     if (destinations[key]) window.location.hash = "#" + destinations[key];
   });
 }
@@ -2171,8 +2199,16 @@ function applyRoute() {
     }
   });
 
+  if (route !== "terminal") {
+    closeCodexSocket();
+  }
   if (route === "terminal") {
+    if (!terminalEnabled) {
+      window.location.hash = "#monitor";
+      return;
+    }
     terminalEverVisible = true;
+    connectCodexSocket();
     if (codexTerminalReady) {
       scheduleCodexFitAndResize();
     }

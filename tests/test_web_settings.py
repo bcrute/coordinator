@@ -86,6 +86,7 @@ class ConfigValuesTests(unittest.TestCase):
             self.assertEqual(args.host, "127.0.0.1")
             self.assertIsNone(args.repositories_root)
             self.assertEqual(args.repo, Path.cwd())
+            self.assertTrue(args.terminal_enabled)
 
     def test_oidc_settings_arrays_lifetimes_and_state_path_are_applied(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -111,6 +112,7 @@ class ConfigValuesTests(unittest.TestCase):
                 trusted_hosts = ["coordinator.example"]
                 forwarded_allow_ips = "127.0.0.1"
                 insecure_oidc_http = false
+                terminal_enabled = true
                 """,
             )
             args = parse_args(["--config", str(config)])
@@ -125,6 +127,7 @@ class ConfigValuesTests(unittest.TestCase):
             self.assertEqual(args.rate_limit_control_attempts, 80)
             self.assertEqual(args.rate_limit_terminal_connections, 8)
             self.assertEqual(args.trusted_host, ["coordinator.example"])
+            self.assertTrue(args.terminal_enabled)
 
 
 class ConfigRelativeResolutionTests(unittest.TestCase):

@@ -200,7 +200,7 @@ Exit gate:
 
 ## Phase 4 - Versioned interfaces and operations
 
-**Status: in progress.**
+**Status: complete.**
 
 Progress:
 
@@ -225,6 +225,19 @@ Progress:
 - Diagnostics distinguish required dependencies from optional providers and inspect
   repository/state access, owner-only modes, disk headroom, both SQLite indexes,
   watcher-lock contention, event-index freshness, CLI discovery, and terminal health.
+
+Exit evidence:
+
+- Router-enumeration tests require every versioned HTTP method to appear in OpenAPI
+  and require every referenced response schema to resolve; failure tests verify the
+  common error envelope.
+- Durable event cursor/retention tests, the bounded terminal-buffer suite, live
+  WebSocket disconnect/reconnect replay, one-input-owner tests, and shared-state
+  coalescing/invalidation tests cover the principal backpressure and replay contracts.
+- Full browser and unit suites exercise liveness/readiness, correlation IDs, metrics,
+  diagnostics, SSE fallback behavior, and terminal transport. Optional OpenTelemetry
+  export is deliberately deferred until this owner-operated deployment has a trace
+  collector; structured JSON logs and Prometheus text remain the supported baseline.
 
 Deliverables:
 
@@ -263,6 +276,16 @@ Progress:
   `sub`/`sid`, and single-use `jti` values before atomically revoking matching
   sessions. Session persistence uses update-only writes so an in-flight request cannot
   recreate a record revoked by logout or an administrator.
+- OIDC deployments now default the interactive terminal off; the server refuses both
+  its process controls and WebSocket unless `terminal_enabled` is deliberately set.
+  The browser lazily constructs and attaches the terminal only while that view is open.
+- Version `0.3.0` has one metadata source, a changelog, an `uv.lock`, weekly uv/action
+  dependency updates, upgrade/rollback instructions, and a tag workflow that tests and
+  builds wheel/sdist, emits a CycloneDX SBOM and checksums, creates GitHub provenance
+  and SBOM attestations, and publishes release assets.
+- Dedicated-service and Caddy examples keep the upstream on a proxy-only socket,
+  preserve SSE/WebSocket behavior, remove unused identity headers, bound service
+  resources, and document the terminal's command-execution consequence.
 
 Deliverables:
 

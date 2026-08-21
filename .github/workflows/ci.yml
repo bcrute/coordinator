@@ -24,17 +24,19 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install application and test dependencies
-        run: python -m pip install --editable . --requirement requirements-dev.txt
+      - name: Install locked application and test dependencies
+        run: |
+          python -m pip install uv==0.12.3
+          uv sync --locked --extra dev
 
       - name: Audit application dependencies
-        run: python -m pip_audit --requirement requirements.txt
+        run: uv run python -m pip_audit --requirement requirements.txt
 
       - name: Byte-compile skills and tests
-        run: python -m compileall -q src skills tests
+        run: uv run python -m compileall -q src skills tests
 
       - name: Run unit test suite
-        run: python -m unittest discover -s tests -v
+        run: uv run python -m unittest discover -s tests -v
 
       - name: Set up Node 24
         uses: actions/setup-node@v7
@@ -57,13 +59,15 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install application and test dependencies
-        run: python -m pip install --editable . --requirement requirements-dev.txt
+      - name: Install locked application and test dependencies
+        run: |
+          python -m pip install uv==0.12.3
+          uv sync --locked --extra dev
 
       - name: Install Chromium
-        run: python -m playwright install --with-deps chromium
+        run: uv run python -m playwright install --with-deps chromium
 
       - name: Run browser workflow
         env:
           COORDINATOR_E2E: "1"
-        run: python -m unittest -v tests.test_web_e2e
+        run: uv run python -m unittest -v tests.test_web_e2e

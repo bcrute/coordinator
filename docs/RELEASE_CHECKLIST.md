@@ -6,7 +6,8 @@ performs those actions automatically.
 
 ## 1. Clean tests
 
-- [ ] Install `requirements-dev.txt` in a clean virtual environment.
+- [ ] Run `uv sync --locked --extra dev` in a clean environment and confirm
+      `uv.lock` is unchanged.
 - [ ] Run the full local suite:
       `.venv/bin/python -m unittest discover -s tests -v`.
 - [ ] Run `.venv/bin/python -m compileall -q src skills tests` to catch syntax
@@ -15,6 +16,9 @@ performs those actions automatically.
       explicitly document every finding.
 - [ ] Confirm CI (`.github/workflows/ci.yml`) is green on Python 3.11, 3.12,
       and 3.13 for the commit you intend to push.
+- [ ] Build wheel and sdist with `uv run python -m build`, install the wheel in
+      a fresh environment, and verify its reported version matches the intended
+      `v<version>` tag.
 
 ## 2. Ignored and private material
 
@@ -89,3 +93,6 @@ about to publish still says so.
 - [ ] Confirm the intended remote and branch immediately before pushing. The
       repository tooling does not push on its own. Do not push until steps 1-8
       above are complete, including the license verification in step 7.
+- [ ] After pushing the signed version tag, confirm the Release workflow uploads
+      wheel, sdist, CycloneDX SBOM, and `SHA256SUMS`, and that `gh attestation
+      verify` succeeds for the wheel before announcing the release.

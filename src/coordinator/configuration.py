@@ -30,6 +30,7 @@ CONFIG_KEYS = {
     "rate_limit_auth_attempts",
     "rate_limit_control_attempts",
     "rate_limit_terminal_connections",
+    "terminal_enabled",
     "trusted_hosts",
     "forwarded_allow_ips",
     "insecure_oidc_http",
@@ -152,11 +153,12 @@ def load_config(path: Path) -> dict[str, object]:
             raise ValueError(f"--config {key} must be a positive integer")
         settings[key] = value
 
-    if "insecure_oidc_http" in data:
-        value = data["insecure_oidc_http"]
-        if not isinstance(value, bool):
-            raise ValueError("--config insecure_oidc_http must be a boolean")
-        settings["insecure_oidc_http"] = value
+    for key in ("insecure_oidc_http", "terminal_enabled"):
+        if key in data:
+            value = data[key]
+            if not isinstance(value, bool):
+                raise ValueError(f"--config {key} must be a boolean")
+            settings[key] = value
 
     return settings
 
@@ -245,6 +247,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--rate-limit-control-attempts", type=int, default=None)
     parser.add_argument("--rate-limit-terminal-connections", type=int, default=None)
     parser.add_argument(
+        "--terminal-enabled",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="enable the high-risk interactive browser terminal capability",
+    )
+    parser.add_argument(
         "--trusted-host", action="append", default=None, help="accepted Host value; repeatable"
     )
     parser.add_argument(
@@ -311,6 +319,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     args.rate_limit_terminal_connections = resolved(
         "rate_limit_terminal_connections", args.rate_limit_terminal_connections, 30
+    )
+    args.terminal_enabled = bool(
+        resolved("terminal_enabled", args.terminal_enabled, args.auth_mode == "local")
     )
     args.trusted_host = resolved("trusted_hosts", args.trusted_host, [])
     args.forwarded_allow_ips = resolved(

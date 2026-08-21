@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "coordinator-workflow"
-version = "0.2.0"
+dynamic = ["version"]
 description = "Local run control for file-backed Codex and Claude coding workflows"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,6 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "build==1.5.0",
   "httpx2==2.9.1",
   "pip-audit==2.10.1",
   "playwright==1.62.0",
@@ -32,6 +33,9 @@ coordinator = "coordinator.cli:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
+
+[tool.setuptools.dynamic]
+version = { attr = "coordinator.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]

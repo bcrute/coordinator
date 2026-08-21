@@ -16,12 +16,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills" / "coordinate-claude-work"
 CI_PATH = ROOT / ".github" / "workflows" / "ci.yml"
+RELEASE_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "release.yml"
 README_PATH = ROOT / "README.md"
 CHECKLIST_PATH = ROOT / "docs" / "RELEASE_CHECKLIST.md"
 SELF_HOSTING_PATH = ROOT / "docs" / "SELF_HOSTING.md"
 EXAMPLE_CONFIG = ROOT / "workflow.example.toml"
 EXAMPLE_SERVICE = ROOT / "deploy" / "workflow-web.service.example"
 OIDC_SERVICE = ROOT / "deploy" / "workflow-web-oidc.service.example"
+CADDYFILE = ROOT / "deploy" / "Caddyfile.example"
 LICENSE_PATH = ROOT / "LICENSE"
 PACKAGE = ROOT / "src" / "coordinator"
 VENDOR_DIR = PACKAGE / "assets" / "web" / "vendor"
@@ -60,9 +62,11 @@ NO_LEAK_FILES = [
     EXAMPLE_CONFIG,
     EXAMPLE_SERVICE,
     OIDC_SERVICE,
+    CADDYFILE,
     SKILL / "SKILL.md",
     CI_PATH,
     CHECKLIST_PATH,
+    RELEASE_WORKFLOW_PATH,
 ]
 
 
@@ -103,6 +107,8 @@ def _first_party_public_files() -> list[Path]:
         ROOT / "AGENTS.md",
         ROOT / "CLAUDE.md",
         ROOT / "pyproject.toml",
+        ROOT / "uv.lock",
+        ROOT / "CHANGELOG.md",
     ]
     for path in sorted(SKILL.rglob("*")):
         if not path.is_file():
@@ -135,12 +141,19 @@ class RequiredFilesExistTests(unittest.TestCase):
             ROOT / "requirements.txt",
             ROOT / "requirements-dev.txt",
             ROOT / "pyproject.toml",
+            ROOT / "MANIFEST.in",
+            ROOT / "uv.lock",
+            ROOT / "CHANGELOG.md",
             EXAMPLE_CONFIG,
             EXAMPLE_SERVICE,
             OIDC_SERVICE,
+            CADDYFILE,
             SELF_HOSTING_PATH,
             CHECKLIST_PATH,
+            ROOT / "docs" / "UPGRADING.md",
             CI_PATH,
+            ROOT / ".github" / "workflows" / "release.yml",
+            ROOT / ".github" / "dependabot.yml",
             SKILL / "SKILL.md",
             SKILL / "scripts" / "web_app.py",
             SKILL / "scripts" / "authenticated_web_app.py",
@@ -168,6 +181,11 @@ class PackageMetadataTests(unittest.TestCase):
         self.assertEqual(project["scripts"]["coordinator"], "coordinator.cli:main")
         self.assertEqual(self.data["tool"]["setuptools"]["package-dir"][""], "src")
         self.assertEqual(project["requires-python"], ">=3.11")
+        self.assertEqual(project["dynamic"], ["version"])
+        self.assertEqual(
+            self.data["tool"]["setuptools"]["dynamic"]["version"]["attr"],
+            "coordinator.__version__",
+        )
 
     def test_application_dependency_pins_match_requirements_file(self) -> None:
         metadata = set(self.data["project"]["dependencies"])
@@ -177,6 +195,19 @@ class PackageMetadataTests(unittest.TestCase):
             if line.strip() and not line.lstrip().startswith("#")
         }
         self.assertEqual(metadata, requirements)
+
+    def test_source_manifest_excludes_local_and_private_worktrees(self) -> None:
+        manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
+        for entry in (
+            "prune .coordination",
+            "prune tests",
+            "prune examples",
+            "prune readiness_demo",
+            "exclude citadel-main.zip",
+            "exclude workflow.toml",
+        ):
+            with self.subTest(entry=entry):
+                self.assertIn(entry, manifest)
 
 
 class NoPrivatePathLeakTests(unittest.TestCase):
@@ -330,7 +361,7 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertRegex(self.text, r"package-manager-cache:\s*false")
 
     def test_installs_declared_dependencies_without_provider_agent_launch(self) -> None:
-        self.assertIn("pip install --editable . --requirement requirements-dev.txt", self.text)
+        self.assertIn("uv sync --locked --extra dev", self.text)
         forbidden_terms = [
             "npm install",
             "npm ci",
@@ -359,6 +390,36 @@ class CiWorkflowTests(unittest.TestCase):
     def test_runs_on_ubuntu_with_timeout(self) -> None:
         self.assertIn("ubuntu-latest", self.text)
         self.assertIn("timeout-minutes:", self.text)
+
+
+class ReleaseWorkflowTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.text = RELEASE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    def test_tag_release_is_locked_tested_and_version_checked(self) -> None:
+        for contract in (
+            'tags:',
+            '"v*"',
+            "uv sync --locked --extra dev",
+            "unittest discover -s tests",
+            'test "v${version}" = "${GITHUB_REF_NAME}"',
+            "python -m build",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, self.text)
+
+    def test_release_has_sbom_checksums_and_attestations(self) -> None:
+        for contract in (
+            "cyclonedx-json",
+            "SHA256SUMS",
+            "actions/attest@v4",
+            "sbom-path:",
+            "id-token: write",
+            "attestations: write",
+            "gh release create",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, self.text)
 
 
 class ReleaseChecklistTests(unittest.TestCase):
