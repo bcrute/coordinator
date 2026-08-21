@@ -14,6 +14,8 @@ import unittest
 from pathlib import Path
 
 from authlib.integrations.base_client.errors import OAuthError
+from joserfc import jwt
+from joserfc.jwk import RSAKey
 from starlette.responses import RedirectResponse
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -39,10 +41,12 @@ class FakeOIDCClient:
         claims: dict[str, object],
         algorithm: str = "RS256",
         end_session_endpoint: str | None = None,
+        jwks: dict[str, object] | None = None,
     ) -> None:
         self.claims = claims
         self.algorithm = algorithm
         self.end_session_endpoint = end_session_endpoint
+        self.jwks = jwks
 
     async def authorize_redirect(self, request, redirect_uri):
         request.session["fake_oidc_state"] = {
@@ -80,6 +84,11 @@ class FakeOIDCClient:
         if self.end_session_endpoint is None:
             raise RuntimeError("no end-session endpoint")
         return {"end_session_endpoint": self.end_session_endpoint}
+
+    async def fetch_jwk_set(self, force=False):
+        if self.jwks is None:
+            raise RuntimeError("no JWKS configured")
+        return self.jwks
 
 
 class AuthenticatedAppTests(unittest.TestCase):
@@ -211,6 +220,99 @@ class AuthenticatedAppTests(unittest.TestCase):
             self.assertIn(
                 "post_logout_redirect_uri=http%3A%2F%2F127.0.0.1%2F", redirect
             )
+
+    def test_signed_backchannel_logout_revokes_session_and_rejects_replay(self) -> None:
+        key = RSAKey.generate_key(auto_kid=True)
+        public_key = key.as_dict(private=False)
+        claims = {**self.owner_claims(), "sid": "provider-session-1"}
+        app = create_authenticated_app(
+            self.repo,
+            self.settings(),
+            repositories_root=self.base,
+            oidc_client=FakeOIDCClient(
+                claims,
+                jwks={"keys": [public_key]},
+            ),
+        )
+        now = int(time.time())
+        logout_claims = {
+            "iss": self.issuer,
+            "aud": "coordinator-test",
+            "iat": now,
+            "exp": now + 120,
+            "jti": "logout-token-1",
+            "sid": "provider-session-1",
+            "events": {
+                "http://schemas.openid.net/event/backchannel-logout": {}
+            },
+        }
+        compact = jwt.encode(
+            {"alg": "RS256", "kid": public_key["kid"]}, logout_claims, key
+        )
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            self.login(client)
+            response = client.post(
+                "/auth/backchannel-logout", data={"logout_token": compact}
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(client.get("/api/state").status_code, 401)
+            replay = client.post(
+                "/auth/backchannel-logout", data={"logout_token": compact}
+            )
+            self.assertEqual(replay.status_code, 400, replay.text)
+            events = app.state.security_store.list_audit_events()
+            outcomes = [
+                item["outcome"]
+                for item in events
+                if item["event"] == "backchannel_logout"
+            ]
+            self.assertEqual(outcomes, ["success", "invalid"])
+
+    def test_backchannel_logout_rejects_invalid_claims_and_signature(self) -> None:
+        key = RSAKey.generate_key(auto_kid=True)
+        other_key = RSAKey.generate_key(auto_kid=True)
+        public_key = key.as_dict(private=False)
+        app = create_authenticated_app(
+            self.repo,
+            self.settings(),
+            repositories_root=self.base,
+            oidc_client=FakeOIDCClient(
+                self.owner_claims(), jwks={"keys": [public_key]}
+            ),
+        )
+        now = int(time.time())
+        base_claims = {
+            "iss": self.issuer,
+            "aud": "coordinator-test",
+            "iat": now,
+            "jti": "logout-invalid",
+            "sub": "owner-subject",
+            "events": {
+                "http://schemas.openid.net/event/backchannel-logout": {}
+            },
+        }
+        cases = [
+            ({**base_claims, "aud": "different-client"}, key),
+            ({**base_claims, "iat": now - 600}, key),
+            ({**base_claims, "nonce": "not-allowed"}, key),
+            ({**base_claims, "events": {}}, key),
+            (base_claims, other_key),
+        ]
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            for index, (case, signing_key) in enumerate(cases):
+                case["jti"] = f"logout-invalid-{index}"
+                signing_public = signing_key.as_dict(private=False)
+                compact = jwt.encode(
+                    {"alg": "RS256", "kid": signing_public["kid"]},
+                    case,
+                    signing_key,
+                )
+                with self.subTest(index=index):
+                    response = client.post(
+                        "/auth/backchannel-logout",
+                        data={"logout_token": compact},
+                    )
+                    self.assertEqual(response.status_code, 400, response.text)
 
     def test_group_can_authorize_when_subject_is_not_allowlisted(self) -> None:
         claims = self.owner_claims()
@@ -467,6 +569,46 @@ class SQLiteSecurityStoreTests(unittest.TestCase):
             handle = store.session_handle("revoked")
             self.assertTrue(store.revoke_session_handle(handle))
             self.assertFalse(store.is_active("revoked", now=101))
+
+    def test_revoked_session_cannot_be_resurrected_by_inflight_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLiteSecurityStore(Path(tmp), idle_seconds=10, absolute_seconds=20)
+            store.save("revoked", {"user": {"sub": "owner"}}, created_at=100, now=100)
+            store.delete("revoked")
+            self.assertFalse(
+                store.update_existing(
+                    "revoked", {"user": {"sub": "owner"}}, now=101
+                )
+            )
+            self.assertIsNone(store.load("revoked", now=101))
+
+    def test_security_schema_migrates_and_refuses_future_versions(self) -> None:
+        sqlite3 = __import__("sqlite3")
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            database = base / "security.sqlite3"
+            with sqlite3.connect(database) as connection:
+                connection.execute("PRAGMA user_version = 1")
+            SQLiteSecurityStore(base, idle_seconds=10, absolute_seconds=20)
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    connection.execute("PRAGMA user_version").fetchone()[0], 2
+                )
+                tables = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+            self.assertIn("oidc_logout_tokens", tables)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            database = base / "security.sqlite3"
+            with sqlite3.connect(database) as connection:
+                connection.execute("PRAGMA user_version = 3")
+            with self.assertRaisesRegex(ValueError, "unsupported security database"):
+                SQLiteSecurityStore(base, idle_seconds=10, absolute_seconds=20)
 
 
 class LocalAppTests(unittest.TestCase):

@@ -29,7 +29,15 @@ from starlette.responses import JSONResponse, RedirectResponse
 from starlette.websockets import WebSocket
 
 LOG = logging.getLogger("coordinator.auth")
-PUBLIC_PATHS = frozenset({"/healthz", "/readyz", "/auth/login", "/auth/callback"})
+PUBLIC_PATHS = frozenset(
+    {
+        "/healthz",
+        "/readyz",
+        "/auth/login",
+        "/auth/callback",
+        "/auth/backchannel-logout",
+    }
+)
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 SESSION_COOKIE = "__Host-coordinator_session"
 DEV_SESSION_COOKIE = "coordinator_session"
@@ -300,7 +308,7 @@ class SQLiteSecurityStore:
     def _initialize(self) -> None:
         with self._connect() as connection:
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if version not in {0, 1}:
+            if version not in {0, 1, 2}:
                 raise ValueError(
                     f"unsupported security database schema version: {version}"
                 )
@@ -325,9 +333,18 @@ class SQLiteSecurityStore:
                 );
                 CREATE INDEX IF NOT EXISTS audit_events_created_at
                     ON audit_events(created_at);
-                PRAGMA user_version = 1;
                 """
             )
+            if version < 2:
+                connection.executescript(
+                    """
+                    CREATE TABLE IF NOT EXISTS oidc_logout_tokens (
+                        jti TEXT PRIMARY KEY,
+                        expires_at REAL NOT NULL
+                    );
+                    PRAGMA user_version = 2;
+                    """
+                )
         try:
             self.path.chmod(0o600)
         except OSError as error:
@@ -399,6 +416,24 @@ class SQLiteSecurityStore:
                 """,
                 (session_id, encoded, created_at, current),
             )
+
+    def update_existing(
+        self,
+        session_id: str,
+        data: Mapping[str, Any],
+        now: float | None = None,
+    ) -> bool:
+        """Update a live session without ever resurrecting a revoked record."""
+
+        current = time.time() if now is None else now
+        encoded = json.dumps(dict(data), separators=(",", ":"), sort_keys=True)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE sessions SET data_json = ?, last_seen_at = ? "
+                "WHERE session_id = ?",
+                (encoded, current, session_id),
+            )
+        return cursor.rowcount == 1
 
     def is_active(self, session_id: str | None, now: float | None = None) -> bool:
         """Check revocation/expiry without extending the idle lifetime."""
@@ -535,6 +570,58 @@ class SQLiteSecurityStore:
                 cursor = connection.execute("DELETE FROM sessions")
             return max(0, int(cursor.rowcount))
 
+    def consume_backchannel_logout(
+        self,
+        *,
+        issuer: str,
+        jti: str,
+        expires_at: float,
+        subject: str | None,
+        sid: str | None,
+        now: float | None = None,
+    ) -> int | None:
+        """Consume one logout token and revoke matching sessions atomically.
+
+        `None` denotes a replayed JTI; otherwise the return value is the number
+        of sessions revoked.
+        """
+
+        if not subject and not sid:
+            raise ValueError("back-channel logout requires a subject or sid")
+        current = time.time() if now is None else now
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM oidc_logout_tokens WHERE expires_at <= ?", (current,)
+            )
+            try:
+                connection.execute(
+                    "INSERT INTO oidc_logout_tokens(jti, expires_at) VALUES (?, ?)",
+                    (jti, expires_at),
+                )
+            except sqlite3.IntegrityError:
+                return None
+            rows = connection.execute(
+                "SELECT session_id, data_json FROM sessions"
+            ).fetchall()
+            matches: list[str] = []
+            for session_id, data_json in rows:
+                try:
+                    data = json.loads(str(data_json))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                user = data.get("user") if isinstance(data, dict) else None
+                if not isinstance(user, dict) or user.get("iss") != issuer:
+                    continue
+                if sid and user.get("sid") == sid:
+                    matches.append(str(session_id))
+                elif not sid and subject and user.get("sub") == subject:
+                    matches.append(str(session_id))
+            connection.executemany(
+                "DELETE FROM sessions WHERE session_id = ?",
+                ((session_id,) for session_id in matches),
+            )
+        return len(matches)
+
     def list_audit_events(
         self, *, after_id: int = 0, limit: int = AUDIT_PAGE_LIMIT
     ) -> list[dict[str, object]]:
@@ -632,12 +719,19 @@ class ServerSideSessionMiddleware(BaseHTTPMiddleware):
                 samesite="lax",
             )
         else:
-            await run_in_threadpool(
-                self.store.save,
+            updated = await run_in_threadpool(
+                self.store.update_existing,
                 session_id,
                 session,
-                float(request.scope["coordinator.session_created_at"]),
             )
+            if not updated:
+                response.delete_cookie(
+                    self.settings.cookie_name,
+                    path="/",
+                    secure=self.settings.secure_cookie,
+                    httponly=True,
+                    samesite="lax",
+                )
         return response
 
 
@@ -734,7 +828,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     @staticmethod
     def group(request: Request) -> str | None:
         path = request.url.path
-        if path in {"/auth/login", "/auth/callback"}:
+        if path in {"/auth/login", "/auth/callback", "/auth/backchannel-logout"}:
             return "auth"
         if request.method.upper() in UNSAFE_METHODS and (
             path.startswith("/api/") or path == "/auth/logout"

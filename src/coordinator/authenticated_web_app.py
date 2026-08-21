@@ -32,6 +32,9 @@ from .api_contract import openapi_document
 from .operational_store import GuardrailPolicy, OperationalStore, evaluate_guardrails
 from authlib.integrations.base_client.errors import OAuthError
 from authlib.integrations.starlette_client import OAuth
+from joserfc import jwt
+from joserfc.errors import InvalidKeyIdError, JoseError
+from joserfc.jwk import KeySet
 from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
@@ -78,6 +81,9 @@ from .security import (
     _local_destination,
     _websocket_origin,
 )
+
+BACKCHANNEL_LOGOUT_EVENT = "http://schemas.openid.net/event/backchannel-logout"
+BACKCHANNEL_LOGOUT_MAX_AGE_SECONDS = 300
 
 
 def create_authenticated_app(
@@ -304,6 +310,7 @@ def create_authenticated_app(
                 "user": {
                     "iss": settings.issuer,
                     "sub": subject,
+                    "sid": claims.get("sid") if isinstance(claims.get("sid"), str) else None,
                     "display": str(display),
                     "groups": groups,
                 },
@@ -320,6 +327,117 @@ def create_authenticated_app(
             source=_client_source(request),
         )
         return RedirectResponse(destination, status_code=303)
+
+    async def validate_backchannel_logout(compact: str) -> dict[str, object]:
+        if not isinstance(settings, OIDCSettings) or oidc_client is None:
+            raise ValueError("OIDC is not configured")
+        if len(compact.encode("utf-8")) > 64 * 1024:
+            raise ValueError("logout token is too large")
+
+        async def decode(force: bool = False):
+            jwks = await oidc_client.fetch_jwk_set(force=force)
+            return jwt.decode(
+                compact,
+                KeySet.import_key_set(jwks),
+                algorithms=settings.id_token_algorithms,
+            )
+
+        try:
+            token = await decode()
+        except InvalidKeyIdError:
+            token = await decode(force=True)
+        claims = dict(token.claims)
+        now = time.time()
+        issuer = claims.get("iss")
+        audience = claims.get("aud")
+        audiences = {audience} if isinstance(audience, str) else (
+            {item for item in audience if isinstance(item, str)}
+            if isinstance(audience, list)
+            else set()
+        )
+        issued_at = claims.get("iat")
+        expires_at = claims.get("exp")
+        jti = claims.get("jti")
+        events = claims.get("events")
+        subject = claims.get("sub")
+        sid = claims.get("sid")
+        if issuer != settings.issuer or settings.client_id not in audiences:
+            raise ValueError("logout token issuer or audience is invalid")
+        if (
+            not isinstance(issued_at, (int, float))
+            or isinstance(issued_at, bool)
+            or issued_at > now + 60
+            or now - float(issued_at) > BACKCHANNEL_LOGOUT_MAX_AGE_SECONDS
+        ):
+            raise ValueError("logout token issue time is invalid")
+        if expires_at is not None and (
+            not isinstance(expires_at, (int, float))
+            or isinstance(expires_at, bool)
+            or float(expires_at) <= now
+        ):
+            raise ValueError("logout token has expired")
+        if not isinstance(jti, str) or not jti or len(jti) > 256:
+            raise ValueError("logout token jti is invalid")
+        if (
+            not isinstance(events, dict)
+            or not isinstance(events.get(BACKCHANNEL_LOGOUT_EVENT), dict)
+            or "nonce" in claims
+        ):
+            raise ValueError("logout token events are invalid")
+        if not (
+            (isinstance(subject, str) and subject)
+            or (isinstance(sid, str) and sid)
+        ):
+            raise ValueError("logout token requires sub or sid")
+        claims["replay_expires_at"] = min(
+            float(expires_at) if isinstance(expires_at, (int, float)) else now + 300,
+            now + BACKCHANNEL_LOGOUT_MAX_AGE_SECONDS,
+        )
+        return claims
+
+    async def backchannel_logout(request: Request):
+        if not isinstance(settings, OIDCSettings) or oidc_client is None:
+            return PlainTextResponse("not found\n", status_code=404)
+        body = await _bounded_body(request, 64 * 1024)
+        if isinstance(body, JSONResponse):
+            return PlainTextResponse("invalid logout request\n", status_code=400)
+        try:
+            form = urllib.parse.parse_qs(
+                body.decode("utf-8"), strict_parsing=True, keep_blank_values=True
+            )
+            values = form.get("logout_token")
+            if set(form) != {"logout_token"} or not values or len(values) != 1:
+                raise ValueError("one logout_token is required")
+            claims = await validate_backchannel_logout(values[0])
+            revoked = await run_in_threadpool(
+                store.consume_backchannel_logout,
+                issuer=settings.issuer,
+                jti=str(claims["jti"]),
+                expires_at=float(claims["replay_expires_at"]),
+                subject=claims.get("sub") if isinstance(claims.get("sub"), str) else None,
+                sid=claims.get("sid") if isinstance(claims.get("sid"), str) else None,
+            )
+            if revoked is None:
+                raise ValueError("logout token was already consumed")
+        except (UnicodeDecodeError, ValueError, JoseError, RuntimeError, TypeError):
+            await run_in_threadpool(
+                store.audit,
+                "backchannel_logout",
+                "invalid",
+                source=_client_source(request),
+                detail="logout token validation failed",
+            )
+            return PlainTextResponse("invalid logout request\n", status_code=400)
+        await run_in_threadpool(
+            store.audit,
+            "backchannel_logout",
+            "success",
+            issuer=settings.issuer,
+            subject=claims.get("sub") if isinstance(claims.get("sub"), str) else None,
+            source=_client_source(request),
+            detail=f"revoked {revoked} session(s)",
+        )
+        return PlainTextResponse("logout accepted\n")
 
     async def logout(request: Request):
         if not isinstance(settings, OIDCSettings):
@@ -1509,6 +1627,7 @@ def create_authenticated_app(
         Route("/api/v1/openapi.json", openapi, methods=["GET"]),
         Route("/auth/login", login, methods=["GET"]),
         Route("/auth/callback", callback, methods=["GET"]),
+        Route("/auth/backchannel-logout", backchannel_logout, methods=["POST"]),
         Route("/auth/logout", logout, methods=["POST"]),
         Route("/api/state", state, methods=["GET"]),
         Route("/api/v1/state", versioned(state), methods=["GET"]),

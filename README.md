@@ -160,7 +160,9 @@ ID-token validation, an exact callback URL, default-deny subject/group authoriza
 opaque SQLite-backed sessions, per-session CSRF tokens, and security headers. OAuth
 tokens and the client secret are not returned to the browser or stored in the session
 database. Sign out clears the local session first and then uses the provider's
-discovered end-session endpoint when one is advertised.
+discovered end-session endpoint when one is advertised. Signed OIDC back-channel
+logout tokens can revoke matching sessions at `/auth/backchannel-logout`; issuer,
+audience, signature, age, event, subject/session, and replay checks are enforced.
 
 To configure it:
 
@@ -186,8 +188,9 @@ To configure it:
    event-stream, and WebSocket behavior stays consistent between development
    and deployment.
 
-The SQLite database holds only sessions and redacted audit events. Coordination goals,
-tasks, reviews, relay logs, and repositories remain file-backed. See
+The security SQLite database holds sessions, consumed logout-token identifiers, and
+redacted audit events. Coordination goals, tasks, reviews, relay logs, and repositories
+remain file-backed. See
 [`docs/adr/0001-authenticated-runtime.md`](docs/adr/0001-authenticated-runtime.md)
 for the decision and [`docs/SECURITY_ROADMAP.md`](docs/SECURITY_ROADMAP.md) for the
 remaining network-readiness gates.

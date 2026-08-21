@@ -453,6 +453,11 @@ matrix remain exit criteria.
 **Status: implemented and covered by local automated tests; deployment evidence
 remains outstanding.**
 
+Signed OIDC back-channel logout is now implemented with issuer, audience, time,
+event, `sub`/`sid`, asymmetric-algorithm, and replay checks. A consumed-token table
+makes `jti` use atomic with session revocation, and update-only session persistence
+prevents an in-flight request from resurrecting a revoked record.
+
 - **Exit:** Sessions are server-side and opaque; the session identifier rotates
   on login; absolute and idle expiry are enforced server-side and tested; logout
   destroys the server-side record and is `POST`-only; every state-changing

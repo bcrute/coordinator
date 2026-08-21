@@ -258,6 +258,11 @@ Progress:
   state-changing controls, and terminal attachments per source/session. Rejections
   include `Retry-After`, remaining-budget headers, a redacted audit event, and the
   standard `/api/v1` error envelope.
+- RP-initiated logout uses provider discovery, and the public back-channel endpoint
+  verifies asymmetric signatures, issuer, audience, issue/expiry time, logout event,
+  `sub`/`sid`, and single-use `jti` values before atomically revoking matching
+  sessions. Session persistence uses update-only writes so an in-flight request cannot
+  recreate a record revoked by logout or an administrator.
 
 Deliverables:
 
