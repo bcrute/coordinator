@@ -438,12 +438,22 @@
             <div class="controls">
               <button type="button" class="control-button" id="run-export" disabled>Export JSON</button>
               <button type="button" class="control-button" id="run-resume" disabled>Resume</button>
+              <button type="button" class="control-button" id="run-archive" disabled>Archive</button>
             </div>
           </header>
           <div class="panel-body">
             <p class="objective" id="run-detail-title">Select a run</p>
             <p class="note" id="run-detail-meta">No run selected.</p>
             <ol class="timeline" id="run-timeline"></ol>
+            <div class="lists run-evidence">
+              <section aria-labelledby="run-evidence-heading"><h4 id="run-evidence-heading">Evidence</h4><ul class="stack" id="run-evidence"></ul></section>
+              <section aria-labelledby="run-findings-heading"><h4 id="run-findings-heading">Review findings</h4><ul class="stack" id="run-findings"></ul></section>
+            </div>
+            <details>
+              <summary>Current repository diff</summary>
+              <button type="button" class="control-button" id="run-diff-load">Load bounded diff</button>
+              <pre class="diff-view" id="run-diff">Diff has not been loaded.</pre>
+            </details>
           </div>
         </section>
       </section>

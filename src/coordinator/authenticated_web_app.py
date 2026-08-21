@@ -462,6 +462,74 @@ def create_authenticated_app(
             status_code=200 if resumed else 404,
         )
 
+    async def run_archive(request: Request):
+        body = await _bounded_body(request, web_app.CONTROL_BODY_BYTES)
+        if isinstance(body, JSONResponse):
+            return body
+        if body:
+            return JSONResponse(
+                {"ok": False, "outcome": "validation", "message": "body must be empty"},
+                status_code=400,
+            )
+        run_id = request.path_params["run_id"]
+        action = request.path_params["action"]
+        if action not in {"archive", "reopen"}:
+            return JSONResponse({"ok": False, "outcome": "not_found"}, status_code=404)
+        changed = await run_in_threadpool(
+            operational.archive if action == "archive" else operational.reopen,
+            run_id,
+        )
+        return JSONResponse(
+            {"ok": changed, "outcome": action if changed else "not_found"},
+            status_code=200 if changed else 404,
+        )
+
+    def repository_diff_snapshot() -> dict[str, object]:
+        with context.lease() as active:
+            commands = (
+                ["git", "status", "--short"],
+                ["git", "diff", "--no-ext-diff", "--no-color", "--stat", "--patch"],
+                [
+                    "git",
+                    "diff",
+                    "--cached",
+                    "--no-ext-diff",
+                    "--no-color",
+                    "--stat",
+                    "--patch",
+                ],
+            )
+            results = [
+                subprocess.run(
+                    command,
+                    cwd=active.repo,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
+                )
+                for command in commands
+            ]
+            output = "\n".join(result.stdout.rstrip() for result in results if result.stdout)
+            limit = 512 * 1024
+            truncated = len(output.encode("utf-8")) > limit
+            if truncated:
+                output = output.encode("utf-8")[:limit].decode("utf-8", errors="replace")
+            return {
+                "ok": all(result.returncode == 0 for result in results),
+                "repository": str(active.repo),
+                "diff": output,
+                "truncated": truncated,
+                "detail": " ".join(
+                    result.stderr.strip() for result in results if result.returncode
+                )[:500],
+            }
+
+    async def repository_diff(request: Request):
+        payload = await run_in_threadpool(repository_diff_snapshot)
+        return JSONResponse(payload, status_code=200 if payload["ok"] else 409)
+
     async def run_policy(request: Request):
         value = await _json_body(request, SETUP_BODY_BYTES)
         if isinstance(value, JSONResponse):
@@ -1099,6 +1167,8 @@ def create_authenticated_app(
         Route("/api/runs/{run_id:str}/events", run_events, methods=["GET"]),
         Route("/api/runs/{run_id:str}/resume", run_resume, methods=["POST"]),
         Route("/api/runs/{run_id:str}/policy", run_policy, methods=["POST"]),
+        Route("/api/runs/{run_id:str}/{action:str}", run_archive, methods=["POST"]),
+        Route("/api/repository/diff", repository_diff, methods=["GET"]),
         Route("/api/preferences", preferences_get, methods=["GET"]),
         Route("/api/preferences", preferences_update, methods=["POST"]),
         Route("/api/sessions/revoke", session_revoke, methods=["POST"]),

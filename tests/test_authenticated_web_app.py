@@ -592,6 +592,26 @@ class LocalAppTests(unittest.TestCase):
                 "dark",
             )
 
+            response = client.post(
+                f"/api/runs/{run_id}/archive",
+                content=b"",
+                headers=self.headers(csrf),
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertIsNotNone(client.get(f"/api/runs/{run_id}").json()["run"]["archived_at"])
+            response = client.post(
+                f"/api/runs/{run_id}/reopen",
+                content=b"",
+                headers=self.headers(csrf),
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertIsNone(client.get(f"/api/runs/{run_id}").json()["run"]["archived_at"])
+
+            diff = client.get("/api/repository/diff")
+            self.assertEqual(diff.status_code, 409, diff.text)
+            self.assertFalse(diff.json()["ok"])
+            self.assertIn("diff", diff.json())
+
             self.app.state.operational_store.pause(run_id, "test pause")
             paused = client.get("/api/state").json()
             self.assertEqual(paused["guardrails"]["status"], "paused")

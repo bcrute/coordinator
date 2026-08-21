@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-LATEST_SCHEMA_VERSION = 3
+LATEST_SCHEMA_VERSION = 4
 IDENTIFIER_NAMESPACE = uuid.UUID("f3288cb2-d2d3-4b2f-a0c5-dc5d15d76b7f")
 
 
@@ -293,6 +293,14 @@ class OperationalStore:
                         PRIMARY KEY(run_id, signature)
                     );
                     PRAGMA user_version = 3;
+                    """
+                )
+                version = 3
+            if version < 4:
+                connection.executescript(
+                    """
+                    ALTER TABLE runs ADD COLUMN archived_at REAL;
+                    PRAGMA user_version = 4;
                     """
                 )
         self.path.chmod(0o600)
@@ -635,6 +643,23 @@ class OperationalStore:
                 )
         return cursor.rowcount == 1
 
+    def archive(self, run_id: str, now: float | None = None) -> bool:
+        current = time.time() if now is None else now
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE runs SET archived_at = ? WHERE run_id = ? AND archived_at IS NULL",
+                (current, run_id),
+            )
+        return cursor.rowcount == 1
+
+    def reopen(self, run_id: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE runs SET archived_at = NULL WHERE run_id = ? AND archived_at IS NOT NULL",
+                (run_id,),
+            )
+        return cursor.rowcount == 1
+
     def recover_interrupted(self, now: float | None = None) -> int:
         """Require explicit resume for runs that were active when the service stopped."""
 
@@ -720,6 +745,10 @@ class OperationalStore:
 
     @staticmethod
     def _run_row(row: sqlite3.Row, *, include_snapshot: bool) -> dict[str, object]:
+        snapshot = json.loads(row["snapshot_json"])
+        workflow = snapshot.get("workflow") if isinstance(snapshot.get("workflow"), dict) else {}
+        runtime = snapshot.get("runtime") if isinstance(snapshot.get("runtime"), dict) else {}
+        review = snapshot.get("review") if isinstance(snapshot.get("review"), dict) else {}
         value = {
             "run_id": row["run_id"],
             "repository_id": row["repository_id"],
@@ -734,10 +763,24 @@ class OperationalStore:
             "last_change_at": row["last_change_at"],
             "pause_reason": row["pause_reason"],
             "resume_required": bool(row["resume_required"]),
+            "archived_at": row["archived_at"],
             "policy": json.loads(row["policy_json"]),
+            "summary": {
+                "workflow": {
+                    "phase": workflow.get("phase"),
+                    "label": workflow.get("label"),
+                    "detail": workflow.get("detail"),
+                },
+                "timing": runtime.get("timing") if isinstance(runtime.get("timing"), dict) else {},
+                "tokens": runtime.get("tokens") if isinstance(runtime.get("tokens"), dict) else {},
+                "review": {
+                    "verdict": review.get("verdict"),
+                    "examined_ref": review.get("examined_ref"),
+                },
+            },
         }
         if include_snapshot:
-            value["snapshot"] = json.loads(row["snapshot_json"])
+            value["snapshot"] = snapshot
         return value
 
     def list_events(self, run_id: str, after_id: int = 0, limit: int = 200):

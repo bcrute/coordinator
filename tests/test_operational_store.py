@@ -150,6 +150,14 @@ class OperationalStoreTests(unittest.TestCase):
         self.assertEqual(self.store.preferences(), {"theme": {"name": "system"}})
         self.assertEqual(len(self.store.list_runs()), 1)
 
+    def test_run_can_be_archived_and_reopened_without_losing_history(self):
+        details = self.store.sync_snapshot(self.repo, snapshot())
+        self.assertTrue(self.store.archive(details["run_id"], now=50))
+        self.assertEqual(self.store.get_run(details["run_id"])["archived_at"], 50)
+        self.assertFalse(self.store.archive(details["run_id"], now=60))
+        self.assertTrue(self.store.reopen(details["run_id"]))
+        self.assertIsNone(self.store.get_run(details["run_id"])["archived_at"])
+
     def test_online_backup_is_verified_and_restorable(self):
         details = self.store.sync_snapshot(self.repo, snapshot())
         backup = self.store.backup(self.root / "backup.sqlite3")
@@ -254,6 +262,39 @@ class OperationalStoreTests(unittest.TestCase):
                 )
             }
         self.assertTrue({"process_instances", "failure_signatures"} <= tables)
+
+    def test_version_three_database_migrates_to_current_schema(self):
+        legacy = self.root / "legacy-v3"
+        legacy.mkdir(mode=0o700)
+        path = legacy / "operations.sqlite3"
+        with sqlite3.connect(path) as connection:
+            connection.executescript(
+                """
+                CREATE TABLE runs (
+                    run_id TEXT PRIMARY KEY,
+                    repository_id TEXT NOT NULL,
+                    goal_id TEXT NOT NULL,
+                    starting_ref TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    started_at REAL NOT NULL,
+                    ended_at REAL,
+                    last_seen_at REAL NOT NULL,
+                    last_change_at REAL NOT NULL,
+                    state_digest TEXT NOT NULL,
+                    snapshot_json TEXT NOT NULL,
+                    pause_reason TEXT,
+                    resume_required INTEGER NOT NULL DEFAULT 0,
+                    policy_json TEXT NOT NULL DEFAULT '{}'
+                );
+                PRAGMA user_version = 3;
+                """
+            )
+        path.chmod(0o600)
+        migrated = OperationalStore(legacy)
+        self.assertEqual(migrated.schema_version, LATEST_SCHEMA_VERSION)
+        with sqlite3.connect(path) as connection:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(runs)")}
+        self.assertIn("archived_at", columns)
 
     def test_guardrails_reject_nonpositive_limits_and_bad_warning_ratio(self):
         with self.assertRaisesRegex(ValueError, "positive"):

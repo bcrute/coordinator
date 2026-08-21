@@ -1420,6 +1420,10 @@ function renderWorkspace(state) {
   var cards = entries.map(function (entry) {
     var path = text(entry.path, "");
     var run = runHistory.find(function (candidate) { return text(candidate.path, "") === path; });
+    var summary = record(run && run.summary);
+    var workflow = record(summary.workflow);
+    var timing = record(record(summary.timing).overall);
+    var tokens = record(summary.tokens);
     var card = document.createElement("li");
     card.className = "workspace-card";
     card.setAttribute("data-active", entry.active === true ? "true" : "false");
@@ -1427,7 +1431,8 @@ function renderWorkspace(state) {
       text(entry.name, "Repository"),
       run ? text(run.status, "unknown") : (entry.initialized === true ? "ready" : "setup"),
       run
-        ? "Goal " + text(run.goal_id, "none") + " · seen " + new Date(Number(run.last_seen_at) * 1000).toLocaleString()
+        ? "Goal " + text(run.goal_id, "none") + " · " + text(workflow.label, text(run.status, "unknown")) +
+          " · " + text(timing.display, "00:00:00") + " · " + count(tokens.output_tokens) + " generated"
         : path
     ));
     return card;
@@ -1554,8 +1559,16 @@ function renderRunDetail() {
   }
   var exportButton = el("run-export");
   var resumeButton = el("run-resume");
+  var archiveButton = el("run-archive");
   if (exportButton) exportButton.disabled = false;
   if (resumeButton) resumeButton.disabled = run.resume_required !== true;
+  if (archiveButton) {
+    archiveButton.disabled = false;
+    archiveButton.textContent = run.archived_at ? "Reopen" : "Archive";
+  }
+  var snapshot = record(run.snapshot);
+  fillList("run-evidence", record(snapshot.completion).evidence, "No completion evidence recorded.");
+  fillList("run-findings", record(snapshot.review).findings, "No review findings recorded.");
 }
 
 function applyTheme(theme) {
@@ -1970,6 +1983,8 @@ function wireDailyDriver() {
   var filter = el("runs-filter");
   var exportButton = el("run-export");
   var resumeButton = el("run-resume");
+  var archiveButton = el("run-archive");
+  var diffButton = el("run-diff-load");
   if (refresh) refresh.addEventListener("click", loadRuns);
   if (filter) filter.addEventListener("input", renderRunRecords);
   if (exportButton) exportButton.addEventListener("click", function () {
@@ -1996,6 +2011,32 @@ function wireDailyDriver() {
       setText("run-detail-meta", "Could not resume: " + describe(error));
       resumeButton.disabled = false;
     });
+  });
+  if (archiveButton) archiveButton.addEventListener("click", function () {
+    var run = record(selectedRun);
+    var runId = text(run.run_id, "");
+    if (runId === "") return;
+    var action = run.archived_at ? "reopen" : "archive";
+    archiveButton.disabled = true;
+    apiPost("/api/runs/" + encodeURIComponent(runId) + "/" + action).then(function (result) {
+      if (result.status !== 200) throw new Error(action + " failed");
+      runsLoaded = false;
+      loadRuns();
+      loadRunDetail(runId);
+    }).catch(function (error) {
+      setText("run-detail-meta", "Could not " + action + ": " + describe(error));
+      archiveButton.disabled = false;
+    });
+  });
+  if (diffButton) diffButton.addEventListener("click", function () {
+    diffButton.disabled = true;
+    setText("run-diff", "Loading bounded repository diff…");
+    apiGet("/api/repository/diff").then(function (payload) {
+      setText("run-diff", text(payload.diff, "Working tree is clean.") +
+        (payload.truncated === true ? "\n\n[diff truncated at 512 KiB]" : ""));
+    }).catch(function (error) {
+      setText("run-diff", "Could not load diff: " + describe(error));
+    }).then(function () { diffButton.disabled = false; });
   });
 
   var guardrailForm = el("guardrails-form");
