@@ -184,10 +184,20 @@ class DashboardBrowserTests(unittest.TestCase):
                     page.locator("#usage-claude-value .usage-chip").filter(
                         has_text="Fable"
                     ).filter(has_text="100%").wait_for(timeout=10_000)
-                    for forecast in ("Run out", "Close", "Nowhere near", "Unknown"):
-                        page.locator("#usage-forecast-list").filter(
-                            has_text=forecast
-                        ).wait_for(timeout=10_000)
+                    projection_expectations = (
+                        ("#usage-codex-value .usage-chip", 0, "210%", "bad"),
+                        ("#usage-codex-value .usage-chip", 1, "0%", "ok"),
+                        ("#usage-codex-value .usage-chip", 2, "17%", "ok"),
+                        ("#usage-claude-value .usage-chip", 0, "50%", "ok"),
+                        ("#usage-claude-value .usage-chip", 1, "90%", "warn"),
+                        ("#usage-claude-value .usage-chip", 2, "—", "neutral"),
+                    )
+                    for selector, index, expected, tone in projection_expectations:
+                        projection = page.locator(selector).nth(index).locator(
+                            ".usage-window-projection"
+                        )
+                        self.assertEqual(projection.inner_text(), expected)
+                        self.assertEqual(projection.get_attribute("data-tone"), tone)
                     page.locator("#connection-label").filter(
                         has_text="state feed"
                     ).wait_for(timeout=10_000)

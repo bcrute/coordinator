@@ -1459,14 +1459,6 @@ function usageResetShort(value) {
   });
 }
 
-function isWeeklyUsage(windowValue) {
-  var details = record(windowValue);
-  return details.duration_minutes === 10080 ||
-    text(details.group) === "weekly" ||
-    text(details.kind).indexOf("weekly") !== -1 ||
-    text(details.label).toLowerCase().indexOf("weekly") !== -1;
-}
-
 function usagePaceForecast(windowValue, nowMilliseconds) {
   var details = record(windowValue);
   var reset = new Date(details.resets_at);
@@ -1475,83 +1467,44 @@ function usagePaceForecast(windowValue, nowMilliseconds) {
   if (typeof details.resets_at !== "string" ||
       !Number.isFinite(reset.getTime()) || typeof duration !== "number" ||
       duration <= 0 || typeof used !== "number") {
-    return { label: "Unknown", tone: "neutral", projected: null };
+    return { tone: "neutral", projected: null };
   }
   var durationMilliseconds = duration * 60 * 1000;
   var elapsed = durationMilliseconds - (reset.getTime() - nowMilliseconds);
-  if (elapsed <= 0) {
-    return { label: "Too early", tone: "neutral", projected: used };
-  }
-  var projected = used * durationMilliseconds / elapsed;
+  var projected = elapsed <= 0 ? used : used * durationMilliseconds / elapsed;
   if (projected >= 100) {
-    return { label: "Run out", tone: "bad", projected: projected };
+    return { tone: "bad", projected: projected };
   }
   if (projected >= 80) {
-    return { label: "Close", tone: "warn", projected: projected };
+    return { tone: "warn", projected: projected };
   }
-  return { label: "Nowhere near", tone: "ok", projected: projected };
-}
-
-function usageScopeName(windowValue) {
-  var details = record(windowValue);
-  if (typeof details.scope === "string") return details.scope;
-  return text(record(record(details.scope).model).display_name, "");
-}
-
-function renderUsageForecast(providers) {
-  var listElement = el("usage-forecast-list");
-  if (!listElement) return;
-  listElement.replaceChildren();
-  var rows = [];
-  providers.forEach(function (providerValue) {
-    var provider = record(providerValue);
-    list(provider.windows).filter(isWeeklyUsage).forEach(function (windowValue) {
-      var details = record(windowValue);
-      var scope = usageScopeName(details);
-      rows.push({
-        label: text(provider.name, "Provider") + (scope ? " · " + scope : ""),
-        forecast: usagePaceForecast(details, Date.now()),
-        reset: details.resets_at,
-      });
-    });
-  });
-  if (!rows.length) {
-    rows.push({ label: "Unavailable", forecast: { label: "Unknown", tone: "neutral" } });
-  }
-  rows.forEach(function (item) {
-    var row = document.createElement("span");
-    var label = document.createElement("span");
-    var result = document.createElement("strong");
-    row.className = "usage-forecast-row";
-    row.dataset.tone = item.forecast.tone;
-    label.textContent = item.label;
-    result.textContent = item.forecast.label;
-    row.append(label, result);
-    var projected = item.forecast.projected;
-    row.title = typeof projected === "number" ?
-      "Linear projection: " + Math.round(projected) + "% used by " +
-        usageResetShort(item.reset) :
-      "A reset time and window duration are required for a forecast.";
-    listElement.append(row);
-  });
+  return { tone: "ok", projected: projected };
 }
 
 function usageWindowChip(windowValue) {
   var details = record(windowValue);
   var remaining = details.remaining_percent;
   var chip = document.createElement("span");
+  var name = document.createElement("span");
   var label = document.createElement("span");
   var reset = document.createElement("small");
   var value = document.createElement("strong");
+  var projection = document.createElement("strong");
+  var forecast = usagePaceForecast(details, Date.now());
   chip.className = "usage-chip";
-  chip.dataset.tone = usageTone(remaining);
+  name.className = "usage-window-name";
   label.textContent = text(details.label, "Usage");
   reset.className = "usage-window-reset";
   reset.textContent = usageResetShort(details.resets_at);
+  value.dataset.tone = usageTone(remaining);
   value.textContent = usagePercent(remaining);
-  chip.append(label, reset, value);
-  chip.title = label.textContent + ": " + value.textContent + " remaining, " +
-    usageReset(details.resets_at);
+  projection.className = "usage-window-projection";
+  projection.dataset.tone = forecast.tone;
+  projection.textContent = usagePercent(forecast.projected);
+  name.append(label, reset);
+  chip.append(name, value, projection);
+  chip.title = label.textContent + ": " + value.textContent + " remaining; " +
+    projection.textContent + " projected used by reset; " + usageReset(details.resets_at);
   return chip;
 }
 
@@ -1609,7 +1562,6 @@ function renderProviderUsage(payload) {
     }
     providerElement.title = title;
   });
-  renderUsageForecast(providers);
   var refresh = el("usage-refresh");
   if (refresh) refresh.disabled = record(payload).refreshing === true;
 }

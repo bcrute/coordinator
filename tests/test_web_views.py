@@ -116,26 +116,23 @@ class ProviderUsageHeaderTests(unittest.TestCase):
 
     def test_usage_is_grouped_into_provider_columns(self):
         self.assertIn(
-            "grid-template-columns: repeat(2, minmax(20rem, 1fr)) "
-            "minmax(14rem, 0.8fr) auto",
+            "grid-template-columns: repeat(2, minmax(23rem, 1fr)) auto",
             self.css,
         )
         self.assertIn(".usage-provider:first-child", self.css)
-        self.assertIn('id="usage-forecast-list"', self.html)
+        self.assertEqual(self.html.count("<span>Projected</span>"), 2)
+        self.assertNotIn('id="usage-forecast-list"', self.html)
 
-    def test_weekly_reset_and_linear_pace_forecast_are_rendered(self):
-        for function in (
-            "usageResetShort",
-            "isWeeklyUsage",
-            "usagePaceForecast",
-            "renderUsageForecast",
-        ):
+    def test_reset_and_linear_pace_projection_are_rendered_per_window(self):
+        for function in ("usageResetShort", "usagePaceForecast", "usageWindowChip"):
             self.assertIn(f"function {function}", self.js)
-        self.assertIn('label: "Run out"', self.js)
-        self.assertIn('label: "Close"', self.js)
-        self.assertIn('label: "Nowhere near"', self.js)
         self.assertIn("projected >= 100", self.js)
         self.assertIn("projected >= 80", self.js)
+        self.assertIn('projection.className = "usage-window-projection"', self.js)
+        self.assertIn("projection.textContent = usagePercent(forecast.projected)", self.js)
+        self.assertIn('.usage-chip strong[data-tone="ok"]', self.css)
+        self.assertIn('.usage-chip strong[data-tone="warn"]', self.css)
+        self.assertIn('.usage-chip strong[data-tone="bad"]', self.css)
 
     def test_usage_reads_cache_and_manual_refresh_uses_post(self):
         self.assertIn('var PROVIDER_USAGE_URL = "/api/provider-usage"', self.js)

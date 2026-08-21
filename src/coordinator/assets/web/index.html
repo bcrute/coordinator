@@ -35,20 +35,20 @@
       <div class="provider-usage" aria-label="Provider usage">
         <span class="usage-provider" id="usage-codex" title="Waiting for Codex usage">
           <span class="usage-provider-label">Codex <small id="usage-codex-plan"></small></span>
+          <span class="usage-column-heads" aria-hidden="true">
+            <span>Limit / reset</span><span>Left</span><span>Projected</span>
+          </span>
           <span class="usage-window-list" id="usage-codex-value" aria-live="polite">
-            <span class="usage-chip" data-tone="neutral"><span>Checking</span><strong>…</strong></span>
+            <span class="usage-chip"><span class="usage-window-name"><span>Checking</span></span><strong data-tone="neutral">…</strong><strong class="usage-window-projection" data-tone="neutral">…</strong></span>
           </span>
         </span>
         <span class="usage-provider" id="usage-claude" title="Waiting for Claude usage">
           <span class="usage-provider-label">Claude <small id="usage-claude-plan"></small></span>
-          <span class="usage-window-list" id="usage-claude-value" aria-live="polite">
-            <span class="usage-chip" data-tone="neutral"><span>Checking</span><strong>…</strong></span>
+          <span class="usage-column-heads" aria-hidden="true">
+            <span>Limit / reset</span><span>Left</span><span>Projected</span>
           </span>
-        </span>
-        <span class="usage-forecast" title="Linear forecast from usage so far">
-          <span class="usage-provider-label">Weekly forecast</span>
-          <span class="usage-forecast-list" id="usage-forecast-list" aria-live="polite">
-            <span class="usage-forecast-row" data-tone="neutral"><span>Calculating</span><strong>…</strong></span>
+          <span class="usage-window-list" id="usage-claude-value" aria-live="polite">
+            <span class="usage-chip"><span class="usage-window-name"><span>Checking</span></span><strong data-tone="neutral">…</strong><strong class="usage-window-projection" data-tone="neutral">…</strong></span>
           </span>
         </span>
         <button
