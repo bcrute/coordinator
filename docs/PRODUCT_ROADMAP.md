@@ -56,7 +56,7 @@ Exit evidence:
 
 ## Phase 1 - Installable and maintainable application core
 
-**Status: in progress.**
+**Status: complete.**
 
 Progress:
 
@@ -66,7 +66,16 @@ Progress:
   and terminal HTTP polling/input routes are removed.
 - Security settings, server-side sessions, authorization policy, and security
   middleware now have an independent application module with compatibility exports.
-- Further module extraction and public-contract cleanup remain before the phase gate.
+- Configuration, repository discovery, watcher supervision, workflow-state parsing,
+  terminal management, and HTTP routing now have bounded package modules.
+
+Exit evidence:
+
+- An isolated wheel installation on Python 3.14 runs `coordinator --help`, reports a
+  passing `coordinator doctor --json`, and initializes every packaged coordination
+  template in a new Git repository.
+- The 388-test unit suite, Python/JavaScript syntax checks, and Chromium journey pass
+  with Starlette/Uvicorn as the only production request runtime.
 
 Deliverables:
 
@@ -90,7 +99,7 @@ Exit gate:
 
 ## Phase 2 - Durable runs, recovery, and resource guardrails
 
-**Status: planned.**
+**Status: in progress.**
 
 Deliverables:
 
