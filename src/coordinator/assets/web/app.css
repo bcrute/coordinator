@@ -77,14 +77,18 @@ a {
   position: sticky;
   top: 0;
   z-index: 4;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(15rem, 0.8fr) minmax(22rem, 1fr) auto;
+  align-items: start;
   gap: 0.5rem 1.5rem;
   padding: 0.7rem 1rem;
   background: linear-gradient(var(--panel-head), #131926);
   border-bottom: 1px solid var(--edge-solid);
+}
+
+.topbar-identity {
+  grid-column: 1;
+  grid-row: 1;
 }
 
 .topbar h1 {
@@ -104,6 +108,9 @@ a {
 }
 
 .topbar-status {
+  grid-column: 1 / 3;
+  grid-row: 2;
+  justify-self: end;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -111,8 +118,11 @@ a {
 }
 
 .provider-usage {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  justify-self: end;
   display: grid;
-  grid-template-columns: repeat(2, minmax(23rem, 1fr)) auto;
+  grid-template-columns: repeat(2, minmax(18rem, 1fr)) auto;
   align-items: stretch;
   gap: 0;
 }
@@ -191,10 +201,17 @@ a {
 
 .usage-window-name {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 0.45rem;
+}
+
+.usage-window-name > span {
+  flex: 0 1 auto;
 }
 
 .usage-window-reset {
+  flex: 0 0 auto;
   color: var(--dim);
   font-size: 0.68rem;
   font-weight: 400;
@@ -274,6 +291,8 @@ a {
 /* Repository picker --------------------------------------------------------- */
 
 .topbar-repo {
+  grid-column: 2;
+  grid-row: 1;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -1147,17 +1166,58 @@ kbd { padding: 0.08rem 0.35rem; border: 1px solid var(--edge-solid); border-radi
 
 /* Narrow screens ---------------------------------------------------------- */
 
+@media (max-width: 78rem) {
+  .topbar {
+    grid-template-columns: minmax(12rem, 1fr) auto;
+  }
+
+  .topbar-identity {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .topbar-repo {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .provider-usage {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
+  .topbar-status {
+    grid-column: 1 / -1;
+    grid-row: 3;
+  }
+}
+
+@media (max-width: 54rem) {
+  .topbar {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar-identity,
+  .topbar-repo,
+  .provider-usage,
+  .topbar-status {
+    grid-column: 1;
+    grid-row: auto;
+    justify-self: stretch;
+  }
+}
+
 @media (max-width: 40rem) {
   body {
     font-size: 13px;
   }
 
   .topbar {
+    grid-template-columns: 1fr;
     padding: 0.6rem 0.75rem;
   }
 
   .provider-usage {
-    order: 3;
     width: 100%;
     grid-template-columns: 1fr;
     gap: 0.5rem;

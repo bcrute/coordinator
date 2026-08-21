@@ -1495,7 +1495,7 @@ function usageWindowChip(windowValue) {
   name.className = "usage-window-name";
   label.textContent = text(details.label, "Usage");
   reset.className = "usage-window-reset";
-  reset.textContent = usageResetShort(details.resets_at);
+  reset.textContent = "· " + usageResetShort(details.resets_at);
   value.dataset.tone = usageTone(remaining);
   value.textContent = usagePercent(remaining);
   projection.className = "usage-window-projection";

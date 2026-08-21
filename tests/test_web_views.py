@@ -116,12 +116,24 @@ class ProviderUsageHeaderTests(unittest.TestCase):
 
     def test_usage_is_grouped_into_provider_columns(self):
         self.assertIn(
-            "grid-template-columns: repeat(2, minmax(23rem, 1fr)) auto",
+            "grid-template-columns: repeat(2, minmax(18rem, 1fr)) auto",
             self.css,
         )
         self.assertIn(".usage-provider:first-child", self.css)
         self.assertEqual(self.html.count("<span>Projected</span>"), 2)
         self.assertNotIn('id="usage-forecast-list"', self.html)
+
+    def test_provider_limits_are_top_right_and_resets_are_inline(self):
+        provider = re.search(r"\.provider-usage\s*\{[^}]*\}", self.css)
+        self.assertIsNotNone(provider)
+        self.assertIn("grid-column: 3", provider.group(0))
+        self.assertIn("grid-row: 1 / span 2", provider.group(0))
+        self.assertIn("justify-self: end", provider.group(0))
+        self.assertRegex(
+            self.css,
+            r"\.usage-window-name\s*\{[^}]*flex-direction:\s*row",
+        )
+        self.assertIn('reset.textContent = "· " + usageResetShort', self.js)
 
     def test_reset_and_linear_pace_projection_are_rendered_per_window(self):
         for function in ("usageResetShort", "usagePaceForecast", "usageWindowChip"):
