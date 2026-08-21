@@ -106,6 +106,12 @@ See `skills/coordinate-claude-work/SKILL.md` for the full procedure Codex
 follows, including watched goal mode, native Claude teams, and the review
 standard.
 
+The staged path from the current realtime dashboard to the installable,
+recoverable, network-ready application is tracked in
+[`docs/PRODUCT_ROADMAP.md`](docs/PRODUCT_ROADMAP.md). Architectural decisions are
+recorded in the ADR series, including
+[`ADR 0003`](docs/adr/0003-professional-application-core.md).
+
 ## Settings
 
 `web_app.py --config <file>` reads a TOML file with these optional keys.
