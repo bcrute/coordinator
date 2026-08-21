@@ -53,6 +53,10 @@
         <li><a href="#work" id="nav-work" data-route="work">Work</a></li>
         <li><a href="#agents" id="nav-agents" data-route="agents">Agents</a></li>
         <li><a href="#logs" id="nav-logs" data-route="logs">Logs</a></li>
+        <li><a href="#activity" id="nav-activity" data-route="activity">Activity</a></li>
+        <li><a href="#setup" id="nav-setup" data-route="setup">Setup</a></li>
+        <li><a href="#sessions" id="nav-sessions" data-route="sessions">Sessions</a></li>
+        <li><a href="#diagnostics" id="nav-diagnostics" data-route="diagnostics">Diagnostics</a></li>
       </ul>
     </nav>
 
@@ -378,11 +382,78 @@
           </div>
         </section>
       </section>
+
+      <section id="view-activity" class="view" aria-labelledby="view-activity-heading" hidden>
+        <h2 class="view-heading" id="view-activity-heading">Activity</h2>
+        <section class="panel panel-wide" aria-labelledby="activity-heading">
+          <header class="panel-head">
+            <h3 id="activity-heading">Audit trail</h3>
+            <button type="button" class="control-button" id="activity-refresh">Refresh</button>
+          </header>
+          <div class="panel-body">
+            <p class="note" id="activity-feedback">Open this page to load recent control and authentication events.</p>
+            <ul class="records" id="activity-events"></ul>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-setup" class="view" aria-labelledby="view-setup-heading" hidden>
+        <h2 class="view-heading" id="view-setup-heading">Setup</h2>
+        <section class="panel" aria-labelledby="create-repository-heading">
+          <header class="panel-head"><h3 id="create-repository-heading">Create repository</h3></header>
+          <form class="panel-body setup-form" id="repository-create-form">
+            <label for="repository-create-name">Repository directory name</label>
+            <input id="repository-create-name" name="name" maxlength="80" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*" required />
+            <button type="submit" class="control-button">Create, initialize Git, and select</button>
+            <p class="note" id="repository-create-feedback" role="status">Created as a direct child of the configured catalog root.</p>
+          </form>
+        </section>
+        <section class="panel" aria-labelledby="initialize-heading">
+          <header class="panel-head"><h3 id="initialize-heading">Initialize coordination</h3></header>
+          <form class="panel-body setup-form" id="repository-initialize-form">
+            <label for="repository-project-name">Project name</label>
+            <input id="repository-project-name" name="project_name" maxlength="120" required />
+            <button type="submit" class="control-button">Initialize active repository</button>
+            <p class="note" id="repository-initialize-feedback" role="status">Adds the bundled coordination files without replacing existing project content.</p>
+          </form>
+        </section>
+      </section>
+
+      <section id="view-sessions" class="view" aria-labelledby="view-sessions-heading" hidden>
+        <h2 class="view-heading" id="view-sessions-heading">Sessions</h2>
+        <section class="panel panel-wide" aria-labelledby="sessions-heading">
+          <header class="panel-head">
+            <h3 id="sessions-heading">Active browser sessions</h3>
+            <div class="controls">
+              <button type="button" class="control-button" id="sessions-refresh">Refresh</button>
+              <button type="button" class="control-button" id="sessions-revoke-others" data-kind="stop">Revoke others</button>
+            </div>
+          </header>
+          <div class="panel-body">
+            <p class="note" id="sessions-feedback">Session identifiers are displayed only as one-way handles.</p>
+            <ul class="records" id="session-records"></ul>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-diagnostics" class="view" aria-labelledby="view-diagnostics-heading" hidden>
+        <h2 class="view-heading" id="view-diagnostics-heading">Diagnostics</h2>
+        <section class="panel panel-wide" aria-labelledby="diagnostics-heading">
+          <header class="panel-head">
+            <h3 id="diagnostics-heading">Runtime checks</h3>
+            <button type="button" class="control-button" id="diagnostics-refresh">Run checks</button>
+          </header>
+          <div class="panel-body">
+            <p class="note" id="diagnostics-feedback">Open this page to inspect the active runtime and repository.</p>
+            <ul class="records" id="diagnostic-checks"></ul>
+          </div>
+        </section>
+      </section>
     </main>
 
     <footer class="footer">
       <p>Snapshot generated <span id="generated-at">not recorded</span></p>
-      <p id="refresh-age">Refreshing every second.</p>
+      <p id="refresh-age">Opening the live state feed.</p>
     </footer>
 
     <noscript>

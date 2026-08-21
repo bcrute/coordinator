@@ -44,3 +44,26 @@ jobs:
 
       - name: Syntax-check vendored dashboard app
         run: node --check skills/coordinate-claude-work/assets/web/app.js
+
+  browser-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install application and test dependencies
+        run: python -m pip install --requirement requirements-dev.txt
+
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run browser workflow
+        env:
+          COORDINATOR_E2E: "1"
+        run: python -m unittest -v tests.test_web_e2e

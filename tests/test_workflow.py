@@ -953,7 +953,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("pendingControl = kind;", body)
         self.assertIn('pendingControl = "";', body)
         self.assertIn("CONTROL_URLS[kind]", body)
-        self.assertIn("schedule(0);", body)
+        self.assertIn("restartStateFeed();", body)
         self.assertIn("applyManaged(next);", body)
 
         # Log lines and control feedback reach the page as text only.

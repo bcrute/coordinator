@@ -35,9 +35,9 @@ repository:
 
 The durable state lives in the target project's `.coordination/` directory,
 so a fresh chat can resume without you restating the project or the last
-handoff. A small web app (`web_app.py`) provides a dependency-free local mode
-and an authenticated ASGI mode so you can watch and control that loop from a
-browser instead of a terminal.
+handoff. The `web_app.py` dashboard uses the same Starlette/Uvicorn runtime in
+local and authenticated modes, with live state events and a WebSocket-backed
+Codex terminal.
 
 ## Quickstart (from a fresh clone)
 
@@ -87,8 +87,9 @@ Run these from the directory where you cloned this repository:
 
 ## Onboarding your first repository
 
-If the repository you selected has no `.coordination/` yet, the Monitor view
-shows onboarding guidance instead of a workflow summary:
+Use the **Setup** view to create a direct-child Git repository or initialize
+the selected repository with the coordination template. If you want Codex to
+shape the files from a project discussion first:
 
 1. Open the **Terminal** view and click **Start** to launch a real,
    interactive `codex -C <repo>` session in the browser.
@@ -96,9 +97,9 @@ shows onboarding guidance instead of a workflow summary:
 3. Ask Codex to begin coordinated work. Codex creates the `.coordination/`
    files from that discussion (it runs the same initializer described in
    `skills/coordinate-claude-work/SKILL.md`).
-4. Once `.coordination/` exists, the **Agents** view's watcher **Start**
-   control becomes available (a later poll notices the new coordination
-   marker automatically), and you can start the automatic watcher that
+4. Once `.coordination/` exists, the live state feed updates the dashboard and
+   the **Agents** view's watcher **Start** control becomes available. You can
+   then start the automatic watcher that
    relays Claude and Codex turns for you.
 
 See `skills/coordinate-claude-work/SKILL.md` for the full procedure Codex
@@ -118,8 +119,8 @@ command-line flag always overrides the matching config value.
 | `host`               | `127.0.0.1`                          | Bind address. Keep this at loopback unless you provide an authenticated boundary yourself (see warning below). |
 | `port`               | `8765`                               | TCP port; `0` picks a free port. |
 | `relay_log_lines`    | `200`                                | Number of `runtime/relay.log` lines returned by `/api/state`. |
-| `quiet`              | `false`                              | Suppress per-request logging in local mode; OIDC access logging is always disabled to protect callback query data. |
-| `auth_mode`          | `local`                              | `local` uses the loopback-only development server; `oidc` uses the authenticated ASGI runtime. |
+| `quiet`              | `false`                              | Suppress Uvicorn lifecycle messages; request access logging is disabled in both modes. |
+| `auth_mode`          | `local`                              | Both modes use the ASGI runtime; `local` enforces loopback, while `oidc` enables authentication. |
 | `oidc_issuer`        | none                                 | Exact Authentik issuer URL. Required in OIDC mode. |
 | `oidc_client_id`     | none                                 | Authentik confidential-client identifier. Required in OIDC mode. |
 | `oidc_client_secret_env` | `COORDINATOR_OIDC_CLIENT_SECRET` | Environment-variable name holding the client secret; the secret itself never goes in TOML. |
@@ -147,7 +148,8 @@ Provider. It uses Authorization Code flow with PKCE `S256`, Authlib discovery an
 ID-token validation, an exact callback URL, default-deny subject/group authorization,
 opaque SQLite-backed sessions, per-session CSRF tokens, and security headers. OAuth
 tokens and the client secret are not returned to the browser or stored in the session
-database.
+database. Sign out clears the local session first and then uses the provider's
+discovered end-session endpoint when one is advertised.
 
 To configure it:
 
@@ -169,8 +171,9 @@ To configure it:
 
 4. Keep the application bound to loopback or another proxy-only transport. Terminate
    TLS at the reverse proxy and make the upstream unreachable from other machines.
-5. Start the same entrypoint. `auth_mode = "oidc"` selects Starlette/Uvicorn instead
-   of the local `http.server` path.
+5. Start the same entrypoint. Both modes use Starlette/Uvicorn, so HTTP,
+   event-stream, and WebSocket behavior stays consistent between development
+   and deployment.
 
 The SQLite database holds only sessions and redacted audit events. Coordination goals,
 tasks, reviews, relay logs, and repositories remain file-backed. See
@@ -184,6 +187,13 @@ Run the full local suite:
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
+```
+
+The Chromium workflow is opt-in locally because it requires a browser download:
+
+```bash
+.venv/bin/python -m playwright install chromium
+COORDINATOR_E2E=1 .venv/bin/python -m unittest -v tests.test_web_e2e
 ```
 
 Or run a focused subset relevant to the web app and settings:
@@ -201,8 +211,9 @@ Or run a focused subset relevant to the web app and settings:
 every push and pull request, on `ubuntu-latest` with read-only permissions,
 across a Python 3.11 / 3.12 / 3.13 matrix. It installs the pinned application
 and test dependencies, audits the application dependency set for known
-vulnerabilities, and uses Node 24 for a syntax check of the dashboard app. The
-tests launch no external identity provider or agent CLI.
+vulnerabilities, uses Node 24 for a syntax check, and runs a separate Playwright
+Chromium workflow through the local server. The tests launch no external identity
+provider or agent CLI.
 
 Before publishing a release or substantial security-sensitive update, work through
 [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md).
@@ -214,7 +225,8 @@ Before publishing a release or substantial security-sensitive update, work throu
   described in `docs/SELF_HOSTING.md`) for the dashboard and Codex terminal
   to work.
 - The default `local` mode has **no authentication, TLS, or per-user access
-  control** and now refuses non-loopback bind addresses. OIDC mode provides the
+  control** and refuses non-loopback bind addresses. Its opaque local browser
+  session exists for CSRF protection and auditing, not user authentication. OIDC provides the
   application authentication boundary, but TLS termination, proxy isolation,
   Authentik policy, service-account isolation, backups, and operational review are
   still deployment responsibilities.
@@ -235,10 +247,11 @@ Before publishing a release or substantial security-sensitive update, work throu
 
 ## Security posture
 
-The default local dashboard has **no authentication, no sessions, no TLS, and no
-authorization**. It is restricted to loopback in code because anyone who can reach
-it gets the browser terminal's full interactive `codex -C <repo>` session as your OS
-user.
+The default local dashboard has **no user authentication, no TLS, and no
+authorization**. Its opaque local browser session supports CSRF protection and
+the activity trail; it does not identify a user. Local mode is restricted to
+loopback because anyone who can reach it gets the browser terminal's full
+interactive `codex -C <repo>` session as your OS user.
 
 An authenticated OIDC/ASGI mode now supplies default-deny route enforcement,
 server-side sessions, CSRF checks, and audit events. **That does not by itself make a

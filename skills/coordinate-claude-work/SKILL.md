@@ -179,13 +179,13 @@ equivalent command-line flags always override the matching config value, which
 in turn overrides the built-in default. Relative `repo`, `repositories_root`,
 and `state_dir` paths in a config file resolve against that file's own directory,
 not the launch working directory.
-Repository creation and cloning happen outside the app for now, and selecting
-a catalog entry never creates or resets its `.coordination/` state. To bring
-an uninitialized repository into coordinated work: select it in the picker,
-open the Terminal view, start Codex, describe the project and overall goal,
-and ask it to begin coordinated work — Codex initializes the coordination
-files from that discussion. Watcher Start remains disabled until setup
-completes and a later poll notices the coordination marker. It binds
+The Setup view can create and select a new Git repository as a validated direct
+child of `repositories_root`, or install the bundled coordination template into
+the active repository. Selecting a catalog entry never resets its existing
+`.coordination/` state. For a discussion-led setup, select the repository, open
+Terminal, start Codex, describe the project and overall goal, and ask it to
+begin coordinated work. Watcher Start remains disabled until setup completes;
+the live state stream notices the coordination marker. The app binds
 `127.0.0.1:8765` by default; `--port 0` picks a free port and `--relay-log-lines`
 sets the `/api/state` log tail. Open `http://127.0.0.1:8765`.
 
@@ -194,11 +194,11 @@ troubleshooting, and an optional systemd user-service example), see the
 repository root's `docs/SELF_HOSTING.md`; this skill file stays focused on the
 operational procedure, not hosting mechanics.
 
-The page's "state feed" fetches `/api/state` once per second — on its own timer,
-independent of whether Claude or Codex is doing anything, and independent of
-which view is currently showing.
+The page's state feed uses `/api/events` Server-Sent Events. The server emits
+changed snapshots and periodic heartbeats, independently of whether Claude or
+Codex is doing anything and independently of the visible view.
 
-Instead of one long dashboard, the page is split into five focused views,
+Instead of one long dashboard, the page is split into focused views,
 reachable by nav links or directly by URL hash:
 
 - **Monitor** (`#monitor`, default) — current workflow summary/conclusion and
@@ -210,9 +210,14 @@ reachable by nav links or directly by URL hash:
 - **Agents** (`#agents`) — coder status, observed native Claude subagents, and
   watcher status/controls.
 - **Logs** (`#logs`) — the tail of `.coordination/runtime/relay.log`.
+- **Activity** (`#activity`) — redacted authentication and control events.
+- **Setup** (`#setup`) — bounded repository creation and coordination setup.
+- **Sessions** (`#sessions`) — opaque session handles and revocation controls.
+- **Diagnostics** (`#diagnostics`) — repository, CLI, state-directory, and
+  runtime checks.
 
 Navigation between views is client-side only: it toggles which section is
-visible in the browser and never interrupts the once-per-second state feed or a
+visible in the browser and never interrupts the live state feed or a
 running Codex terminal session — both keep running in the background regardless
 of the active view. Loading the page with an empty or unrecognized hash falls
 back to Monitor. Monitor's full completion evidence and limitations are
@@ -229,8 +234,9 @@ that matching Codex completion record — not a coder's own claim — is what ma
 
 The watcher controls are deliberately narrow: start and stop for one fixed
 command, the automatic `both` watcher for that repository with `--no-dashboard`.
-The web app never selects a subgoal, writes a verdict, or edits coordination
-files, and a start request is refused without creating a process while
+Outside the explicit Setup action, the web app never selects a subgoal, writes
+a verdict, or edits coordination files. A watcher start request is refused
+without creating a process while
 `runtime/watcher-both.lock` is held, so a watcher already running in a terminal is
 untouched. Ctrl-C stops the server and closing it stops only a watcher the app
 itself started.
@@ -259,12 +265,12 @@ for the account running `web_app.py`; the web app itself never prompts for or
 stores credentials. Start launches that command if it is not already running and
 reattaches the browser terminal to its output; Stop ends the running process;
 Clear only redraws the browser terminal and never touches the process or its
-input. Typed input is serialized into bounded chunks; terminal resizes are
-deduplicated and debounced before being sent to the server; leaving the page
-(`pagehide`) tears down output polling, the resize watcher, and the terminal's
-input listener.
+input. Typed input, output, and debounced resize messages share one bounded,
+origin- and CSRF-validated WebSocket; leaving the page (`pagehide`) closes the
+socket, resize watcher, and terminal input listener.
 
-The default local server is unauthenticated and enforced as loopback-only, and
+Both modes use the same Starlette/Uvicorn application. The default local mode
+is unauthenticated and enforced as loopback-only, and
 the Codex terminal means anyone who can load it gets a full interactive shell
 using your inherited Codex login. The optional OIDC runtime adds native
 authentication, default-deny authorization, opaque SQLite sessions, CSRF

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -197,7 +198,9 @@ class CodexSessionManagerTests(unittest.TestCase):
         )
         manager = self._make(script)
         manager.start()
-        self.assertTrue(_wait_until(lambda: snowman in manager.read()["text"], timeout=5))
+        self.assertTrue(
+            _wait_until(lambda: snowman in manager.read()["text"], timeout=5)
+        )
         manager.stop()
 
     def test_truncated_invalid_utf8_replaced_at_eof(self) -> None:
@@ -252,7 +255,42 @@ class CodexSessionManagerTests(unittest.TestCase):
         _wait_until(lambda: manager.snapshot()["running"])
         thread = manager._reader_thread
         manager.stop()
-        self.assertTrue(_wait_until(lambda: thread is not None and not thread.is_alive()))
+        self.assertTrue(
+            _wait_until(lambda: thread is not None and not thread.is_alive())
+        )
+
+    def test_wait_for_output_wakes_immediately_when_reader_appends(self) -> None:
+        script = (
+            f"import sys, time; sys.stderr.write('{MARKER}\\n'); "
+            "time.sleep(0.2); print('streamed-output', flush=True); time.sleep(2)"
+        )
+        manager = self._make(script)
+        manager.start()
+        self.assertTrue(_wait_until(lambda: MARKER in manager.read()["text"]))
+        cursor = manager.read()["next_cursor"]
+        started = time.monotonic()
+        result = manager.wait_for_output(cursor, timeout=2)
+        elapsed = time.monotonic() - started
+        self.assertIn("streamed-output", result["text"])
+        self.assertLess(elapsed, 1.5)
+        manager.stop()
+
+    def test_wait_for_output_wakes_when_session_stops(self) -> None:
+        script = f"import sys, time; sys.stderr.write('{MARKER}\\n'); time.sleep(30)"
+        manager = self._make(script)
+        manager.start()
+        self.assertTrue(_wait_until(lambda: manager.snapshot()["running"]))
+        cursor = manager.read()["next_cursor"]
+        result: dict[str, object] = {}
+
+        def wait() -> None:
+            result.update(manager.wait_for_output(cursor, timeout=5))
+
+        waiter = threading.Thread(target=wait)
+        waiter.start()
+        manager.stop()
+        waiter.join(timeout=2)
+        self.assertFalse(waiter.is_alive())
 
 
 def _pgrep_count() -> int:

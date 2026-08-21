@@ -740,6 +740,37 @@ a {
   opacity: 0.6;
 }
 
+.setup-form {
+  display: grid;
+  gap: 0.7rem;
+  align-content: start;
+}
+
+.setup-form label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.setup-form input {
+  width: 100%;
+  padding: 0.65rem 0.7rem;
+  border: 1px solid var(--edge-solid);
+  border-radius: 5px;
+  background: #0b1017;
+  color: var(--text);
+  font: inherit;
+}
+
+.setup-form input:focus {
+  border-color: var(--accent);
+  outline: 2px solid transparent;
+}
+
+.record-action {
+  margin-top: 0.55rem;
+}
+
 /* Terminal ------------------------------------------------------------------ */
 
 .terminal-viewport {

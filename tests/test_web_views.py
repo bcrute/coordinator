@@ -17,7 +17,17 @@ WEB_DIR = (
     / "web"
 )
 
-ROUTES = ["monitor", "terminal", "work", "agents", "logs"]
+ROUTES = [
+    "monitor",
+    "terminal",
+    "work",
+    "agents",
+    "logs",
+    "activity",
+    "setup",
+    "sessions",
+    "diagnostics",
+]
 
 # Panel/element ids expected to live inside each view section, keyed by
 # route name. These are used to check panel-to-view grouping.
@@ -25,8 +35,17 @@ VIEW_PANEL_IDS = {
     "monitor": ["workflow-heading", "metrics-heading"],
     "terminal": ["codex-session-heading"],
     "work": ["goal-heading", "roadmap-heading", "task-heading", "review-heading"],
-    "agents": ["coder-heading", "subagents-heading", "watcher-controls-heading", "watchers-heading"],
+    "agents": [
+        "coder-heading",
+        "subagents-heading",
+        "watcher-controls-heading",
+        "watchers-heading",
+    ],
     "logs": ["relay-log-heading"],
+    "activity": ["activity-heading"],
+    "setup": ["create-repository-heading", "initialize-heading"],
+    "sessions": ["sessions-heading"],
+    "diagnostics": ["diagnostics-heading"],
 }
 
 
@@ -39,10 +58,10 @@ class RouteAndHashTests(unittest.TestCase):
         self.js = read(WEB_DIR / "app.js")
         self.html = read(WEB_DIR / "index.html")
 
-    def test_routes_array_has_exact_five_routes_in_order(self):
-        match = re.search(r'var ROUTES\s*=\s*\[([^\]]*)\];', self.js)
+    def test_routes_array_has_expected_routes_in_order(self):
+        match = re.search(r"var ROUTES\s*=\s*\[([^\]]*)\];", self.js)
         self.assertIsNotNone(match, "ROUTES array not found")
-        found = [item.strip().strip('"').strip("'") for item in match.group(1).split(",")]
+        found = re.findall(r'["\']([a-z]+)["\']', match.group(1))
         self.assertEqual(found, ROUTES)
 
     def test_nav_links_use_exact_hashes(self):
@@ -91,7 +110,8 @@ class PanelGroupingTests(unittest.TestCase):
     def test_each_view_section_contains_its_expected_panels(self):
         for route in ROUTES:
             section_match = re.search(
-                r'<section id="view-%s"[\s\S]*?(?=<section id="view-|</main>)' % re.escape(route),
+                r'<section id="view-%s"[\s\S]*?(?=<section id="view-|</main>)'
+                % re.escape(route),
                 self.html,
             )
             self.assertIsNotNone(section_match, "view section not found for: " + route)
@@ -100,7 +120,8 @@ class PanelGroupingTests(unittest.TestCase):
                 self.assertIn(
                     'id="%s"' % panel_id,
                     section_body,
-                    "panel %s expected inside view-%s but not found" % (panel_id, route),
+                    "panel %s expected inside view-%s but not found"
+                    % (panel_id, route),
                 )
 
     def test_panels_are_not_duplicated_across_views(self):
@@ -126,7 +147,9 @@ class VisibilityAndActiveStateTests(unittest.TestCase):
         for route in ROUTES:
             if route == "monitor":
                 continue
-            match = re.search(r'<section id="view-%s"[^>]*>' % re.escape(route), self.html)
+            match = re.search(
+                r'<section id="view-%s"[^>]*>' % re.escape(route), self.html
+            )
             self.assertIsNotNone(match, "view section not found for: " + route)
             self.assertIn("hidden", match.group(0))
 
@@ -155,7 +178,7 @@ class TerminalFitDeferralTests(unittest.TestCase):
         body = match.group(0)
         # Must not unconditionally fit at init time; fitting only happens
         # when the terminal route is already the current route.
-        self.assertIn("if (currentRoute === \"terminal\")", body)
+        self.assertIn('if (currentRoute === "terminal")', body)
         self.assertIn("scheduleCodexFitAndResize()", body)
         # No bare unconditional call to fitAddon.fit() in this function.
         self.assertNotRegex(body, r"(?<!\.)\bfitAddon\.fit\(\)")
@@ -193,19 +216,15 @@ class CompletionDetailsTests(unittest.TestCase):
         self.assertIn("results.length > 0 ? results[0].trim()", body)
 
 
-class CodexEndpointPreservationTests(unittest.TestCase):
+class CodexTransportTests(unittest.TestCase):
     def setUp(self):
         self.js = read(WEB_DIR / "app.js")
 
-    def test_fixed_codex_endpoint_literals_preserved(self):
-        for literal in (
-            '"/api/codex/start"',
-            '"/api/codex/stop"',
-            '"/api/codex/output"',
-            '"/api/codex/input"',
-            '"/api/codex/resize"',
-        ):
+    def test_controls_remain_http_and_interactive_io_uses_websocket(self):
+        for literal in ('"/api/codex/start"', '"/api/codex/stop"', '"/ws/terminal"'):
             self.assertIn(literal, self.js, "missing endpoint literal: " + literal)
+        self.assertIn("new WebSocket", self.js)
+        self.assertNotIn("fetch(CODEX_INPUT_URL", self.js)
 
 
 if __name__ == "__main__":

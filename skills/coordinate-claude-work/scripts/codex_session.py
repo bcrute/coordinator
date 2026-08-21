@@ -72,6 +72,7 @@ class CodexSessionManager:
         self._max_write_bytes = max_write_bytes
 
         self._lock = threading.RLock()
+        self._output_changed = threading.Condition(self._lock)
         self._state = STATE_NOT_STARTED
         self._pid: int | None = None
         self._process: subprocess.Popen | None = None
@@ -150,6 +151,7 @@ class CodexSessionManager:
             self._stop_requested = False
             self._state = STATE_RUNNING
             self._detail = "process started"
+            self._output_changed.notify_all()
 
             self._set_winsize_locked(self._rows, self._cols)
 
@@ -205,6 +207,7 @@ class CodexSessionManager:
             if self._shutdown:
                 return
             self._shutdown = True
+            self._output_changed.notify_all()
         self.stop()
         with self._lock:
             if self._state != STATE_ERROR:
@@ -288,6 +291,40 @@ class CodexSessionManager:
                 "base_cursor": base,
                 "reset": False,
             }
+
+    def wait_for_output(
+        self, cursor: int | None, timeout: float = 1.0
+    ) -> dict[str, object]:
+        """Wait until output or lifecycle state changes, then return a cursor read.
+
+        This gives streaming transports an event-driven bridge to the reader
+        thread without busy-polling the PTY. The bounded timeout lets callers
+        notice disconnects and session expiry even while the process is quiet.
+        """
+
+        if cursor is not None and (
+            not isinstance(cursor, int) or isinstance(cursor, bool)
+        ):
+            raise ValueError("cursor must be an integer or None")
+        if timeout < 0:
+            raise ValueError("timeout must not be negative")
+        with self._output_changed:
+            initial_cursor = self._buffer_next_cursor
+            initial_state = self._state
+            if cursor is not None and (
+                cursor < self._buffer_base_cursor or cursor > self._buffer_next_cursor
+            ):
+                return self.read(cursor)
+            if cursor is None or cursor < self._buffer_next_cursor:
+                return self.read(cursor)
+            self._output_changed.wait_for(
+                lambda: (
+                    self._buffer_next_cursor != initial_cursor
+                    or self._state != initial_state
+                ),
+                timeout=timeout,
+            )
+            return self.read(cursor)
 
     # -- observability ------------------------------------------------
 
@@ -384,6 +421,7 @@ class CodexSessionManager:
                         self._detail = detail
                     self._exit_code = exit_code
                     self._ended_at = time.time()
+                self._output_changed.notify_all()
 
     def _append_output(self, chunk: bytes, final: bool = False) -> None:
         text = self._decoder.decode(chunk, final)
@@ -396,3 +434,4 @@ class CodexSessionManager:
             if overflow > 0:
                 self._buffer = self._buffer[overflow:]
                 self._buffer_base_cursor += overflow
+            self._output_changed.notify_all()

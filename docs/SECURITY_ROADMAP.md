@@ -23,10 +23,11 @@ identity provider without lying to themselves about the risk.
 
 Current posture, stated plainly:
 
-- `auth_mode = "local"` uses the original `http.server`-based
-  `ThreadingHTTPServer`. It has **no authentication, no sessions, no TLS, and no
-  per-user authorization**, and now refuses any non-loopback bind address.
-- `auth_mode = "oidc"` uses Starlette/Uvicorn and Authlib. It implements the
+- Both modes now use Starlette/Uvicorn. `auth_mode = "local"` has **no user
+  authentication, no TLS, and no per-user authorization**; it uses an opaque
+  local browser session only for CSRF/audit continuity and refuses any
+  non-loopback bind address.
+- `auth_mode = "oidc"` additionally uses Authlib. It implements the
   application controls listed in the implementation-status section above, but
   it has not yet been exercised against the owner's live Authentik deployment
   or its intended TLS reverse proxy.
@@ -51,10 +52,12 @@ exposure.
 
 | Asset | Where it lives | Why it matters |
 | --- | --- | --- |
-| Interactive Codex PTY | `/api/codex/*`, `codex_session.py` | Arbitrary interactive command execution as the server's OS user, using the owner's authenticated Codex CLI session. Highest-value asset by a wide margin. |
+| Interactive Codex PTY | `/ws/terminal`, `/api/codex/*`, `codex_session.py` | Arbitrary interactive command execution as the server's OS user, using the owner's authenticated Codex CLI session. Highest-value asset by a wide margin. |
 | Automatic watcher control | `/api/watcher/start`, `/api/watcher/stop` | Starts/stops a process that spends provider quota and writes to a real project repository. |
 | Repository selection | `/api/repository/select` | Chooses which local Git repository the tool operates on, and therefore what the PTY and watcher can reach. |
-| Coordination state and relay log | `/api/state` | Discloses task packets, reports, reviews, and recent agent output — project content, prompts, and file paths. |
+| Repository setup | `/api/repository/create`, `/api/repository/initialize` | Creates a direct-child Git repository or installs coordination files into the selected repository. |
+| Coordination state and relay log | `/api/state`, `/api/events` | Discloses task packets, reports, reviews, and recent agent output — project content, prompts, and file paths. |
+| Security administration | `/api/activity`, `/api/sessions/*`, `/api/diagnostics` | Discloses redacted security/runtime data and can revoke browser sessions. |
 | Repository catalog | `/api/state` | Discloses the names and paths of sibling repositories under `repositories_root`. |
 | Host identity and credentials | Filesystem of the server's OS user | The Codex/Claude CLI credentials and Git identity the process inherits. Never sent to the browser, but fully reachable from a PTY. |
 
@@ -65,16 +68,20 @@ exposure.
 - One fixed, non-configurable Codex launch command resolved at server
   construction; no request can change the program, its arguments, or its working
   directory.
-- Same-origin/`Sec-Fetch-Site` refusal on state-changing `POST` routes.
-- Bounded request bodies, rejection of chunked transfer encoding, strict body
-  and query-parameter validation on control routes.
+- Same-origin/`Sec-Fetch-Site` refusal and CSRF validation on state-changing
+  `POST` routes; origin, authentication, and CSRF validation on the terminal
+  WebSocket handshake.
+- Bounded request and WebSocket message bodies, plus strict body and
+  query-parameter validation on control routes.
 - Repository discovery restricted to Git direct children of `repositories_root`
   plus the already-configured active repository.
+- Repository creation restricted to validated direct-child names, and
+  coordination initialization invokes a fixed bundled script without a shell.
 - In OIDC mode: default-deny middleware, Authlib discovery and ID-token
   validation, exact issuer and asymmetric-algorithm checks, subject/group allow
   policy, opaque SQLite sessions, login rotation, idle and absolute expiry,
-  POST-only logout, CSRF tokens, exact trusted hosts, security headers, and
-  redacted security/control audit events.
+  POST-only provider-aware logout, CSRF tokens, exact trusted hosts, security
+  headers, redacted security/control audit events, and browser session revocation.
 
 ### Controls not yet demonstrated for a network deployment
 

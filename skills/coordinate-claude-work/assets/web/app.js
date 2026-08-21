@@ -7,18 +7,13 @@
 "use strict";
 
 var STATE_URL = "/api/state";
+var STATE_EVENTS_URL = "/api/events";
+var TERMINAL_SOCKET_URL = "/ws/terminal";
 var REPOSITORY_SELECT_URL = "/api/repository/select";
 var REPOSITORY_SELECT_TIMEOUT_MS = 30000;
 var CONTROL_URLS = { start: "/api/watcher/start", stop: "/api/watcher/stop" };
 var CODEX_CONTROL_URLS = { start: "/api/codex/start", stop: "/api/codex/stop" };
 var CODEX_CONTROL_TIMEOUT_MS = 30000;
-var CODEX_OUTPUT_URL = "/api/codex/output";
-var CODEX_INPUT_URL = "/api/codex/input";
-var CODEX_RESIZE_URL = "/api/codex/resize";
-var CODEX_OUTPUT_POLL_MS = 250;
-var CODEX_OUTPUT_TIMEOUT_MS = 4000;
-var CODEX_INPUT_TIMEOUT_MS = 4000;
-var CODEX_RESIZE_TIMEOUT_MS = 4000;
 var CODEX_RESIZE_DEBOUNCE_MS = 150;
 var CODEX_INPUT_CHUNK_CHARS = 16 * 1024;
 var POLL_INTERVAL_MS = 1000;
@@ -30,9 +25,8 @@ var NOT_RECORDED = "not recorded";
 
 var nodes = Object.create(null);
 var counts = new Intl.NumberFormat();
-var pollTimer = null;
 var tickTimer = null;
-var inFlight = false;
+var stateSource = null;
 var lastSuccessAt = null;
 var failures = 0;
 var lastFailure = "";
@@ -41,11 +35,11 @@ var managed = Object.create(null);
 var pendingControl = "";
 var renderedLog = null;
 var csrfToken = "";
+var securityMode = "local";
 
 var repositoryCatalog = { root: "", active: "", entries: [] };
 var repositorySwitching = false;
 var stateEpoch = 0;
-var pollRefreshQueued = false;
 
 var codexTerminal = null;
 var codexTerminalReady = false;
@@ -53,15 +47,8 @@ var codexFitAddon = null;
 var codexSession = Object.create(null);
 var codexPendingControl = "";
 
-var codexOutputCursor = null;
-var codexOutputTimer = null;
-var codexOutputInFlight = false;
-var codexOutputPollActive = false;
-var codexOutputRunningKnown = false;
-var codexOutputGeneration = 0;
-
-var codexInputQueue = [];
-var codexInputInFlight = false;
+var codexSocket = null;
+var codexSocketTimer = null;
 var codexOnDataDisposable = null;
 
 var codexResizeTimer = null;
@@ -70,7 +57,17 @@ var codexLastSentCols = null;
 var codexResizeObserver = null;
 var codexResizeFallbackWired = false;
 
-var ROUTES = ["monitor", "terminal", "work", "agents", "logs"];
+var ROUTES = [
+  "monitor",
+  "terminal",
+  "work",
+  "agents",
+  "logs",
+  "activity",
+  "setup",
+  "sessions",
+  "diagnostics",
+];
 var DEFAULT_ROUTE = "monitor";
 var currentRoute = "";
 var terminalEverVisible = false;
@@ -134,7 +131,17 @@ function record(value) {
 
 function tone(state) {
   var value = String(state || "").toLowerCase();
-  if (value === "accepted" || value === "completed" || value === "done" || value === "running") {
+  if (
+    value === "accepted" ||
+    value === "completed" ||
+    value === "created" ||
+    value === "done" ||
+    value === "initialized" ||
+    value === "ok" ||
+    value === "revoked" ||
+    value === "running" ||
+    value === "success"
+  ) {
     return "ok";
   }
   if (
@@ -146,7 +153,14 @@ function tone(state) {
   ) {
     return "active";
   }
-  if (value === "blocked" || value === "failed" || value === "error" || value === "changes_requested") {
+  if (
+    value === "blocked" ||
+    value === "denied" ||
+    value === "failed" ||
+    value === "error" ||
+    value === "invalid" ||
+    value === "changes_requested"
+  ) {
     return "bad";
   }
   if (
@@ -620,19 +634,10 @@ function describeRepositorySelect(error) {
 }
 
 function resetTerminalClientStateForSwitch() {
-  stopCodexOutputPolling();
-  codexOutputGeneration += 1;
-  codexOutputCursor = null;
-  codexOutputRunningKnown = false;
+  closeCodexSocket();
   if (codexTerminalReady && codexTerminal) {
     codexTerminal.reset();
   }
-  /*
-   * Only clear queued unsent input here. Any in-flight input request keeps
-   * codexInputInFlight true until its own promise settles and releases it,
-   * so we never clobber a serialization flag we do not own.
-   */
-  codexInputQueue = [];
   codexLastSentRows = null;
   codexLastSentCols = null;
   renderedLog = null;
@@ -650,6 +655,7 @@ function selectRepository(path) {
   var select = el("repository-select");
   var previousActive = repositoryCatalog.active;
   repositorySwitching = true;
+  stopStateFeed();
   stateEpoch += 1;
   var myEpoch = stateEpoch;
   paintRepositoryControls();
@@ -707,7 +713,7 @@ function selectRepository(path) {
       repositorySwitching = false;
       paintRepositoryControls();
       if (myEpoch === stateEpoch) {
-        schedule(0);
+        restartStateFeed();
       }
     });
 }
@@ -888,7 +894,7 @@ function control(kind) {
       window.clearTimeout(timeout);
       pendingControl = "";
       paintControls();
-      schedule(0);
+      restartStateFeed();
     });
 }
 
@@ -1012,7 +1018,13 @@ function initCodexTerminal() {
      */
     codexTerminalReady = true;
     codexOnDataDisposable = codexTerminal.onData(function (data) {
-      queueCodexInput(data);
+      if (codexSocket && codexSocket.readyState === WebSocket.OPEN) {
+        for (var index = 0; index < data.length; index += CODEX_INPUT_CHUNK_CHARS) {
+          codexSocket.send(
+            JSON.stringify({ type: "input", data: data.slice(index, index + CODEX_INPUT_CHUNK_CHARS) })
+          );
+        }
+      }
     });
     wireCodexResizeWatcher(viewport);
     if (currentRoute === "terminal") {
@@ -1026,7 +1038,7 @@ function initCodexTerminal() {
   }
 }
 
-/* Codex output polling ----------------------------------------------------- */
+/* Codex terminal socket ---------------------------------------------------- */
 
 function applyCodexOutput(output) {
   if (!codexTerminalReady || !codexTerminal) {
@@ -1034,169 +1046,72 @@ function applyCodexOutput(output) {
   }
   var payload = output && typeof output === "object" ? output : {};
   var chunk = typeof payload.text === "string" ? payload.text : "";
-  var nextCursor =
-    typeof payload.next_cursor === "number" && isFinite(payload.next_cursor)
-      ? payload.next_cursor
-      : null;
   var reset = payload.reset === true;
   if (reset) {
-    var hadCursor = codexOutputCursor !== null;
     codexTerminal.reset();
     if (chunk !== "") {
       codexTerminal.write(chunk);
     }
-    if (hadCursor) {
-      codexReport(
-        "The retained output cursor expired; replayed the retained terminal history.",
-        "warn"
-      );
-    }
   } else if (chunk !== "") {
     codexTerminal.write(chunk);
   }
-  if (nextCursor !== null) {
-    codexOutputCursor = nextCursor;
+}
+
+function closeCodexSocket() {
+  window.clearTimeout(codexSocketTimer);
+  if (codexSocket) {
+    var socket = codexSocket;
+    codexSocket = null;
+    socket.close();
   }
 }
 
-function pollCodexOutput(isFinal) {
-  if (codexOutputInFlight) {
+function connectCodexSocket() {
+  if (csrfToken === "" || !codexTerminalReady || (codexSocket && codexSocket.readyState < 2)) {
     return;
   }
-  codexOutputInFlight = true;
-  var myGeneration = codexOutputGeneration;
-  var controller = typeof AbortController === "function" ? new AbortController() : null;
-  var timeout = window.setTimeout(function () {
-    if (controller) {
-      controller.abort();
+  var protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  var socket = new WebSocket(protocol + "//" + window.location.host + TERMINAL_SOCKET_URL);
+  codexSocket = socket;
+  socket.addEventListener("open", function () {
+    if (socket !== codexSocket) {
+      return;
     }
-  }, CODEX_OUTPUT_TIMEOUT_MS);
-  var url =
-    CODEX_OUTPUT_URL +
-    (codexOutputCursor === null ? "" : "?cursor=" + encodeURIComponent(String(codexOutputCursor)));
-  var options = { cache: "no-store", headers: { Accept: "application/json" } };
-  if (controller) {
-    options.signal = controller.signal;
-  }
-
-  fetch(url, options)
-    .then(function (response) {
-      if (!response.ok) {
-        throw new Error("the output server answered " + response.status);
-      }
-      return response.json();
-    })
-    .then(function (payload) {
-      if (myGeneration !== codexOutputGeneration) {
-        return;
-      }
-      if (payload && typeof payload === "object") {
-        applyCodexOutput(payload.output);
-      }
-    })
-    .catch(function (error) {
-      if (myGeneration !== codexOutputGeneration) {
-        return;
-      }
-      codexReport("Output poll failed: " + describe(error), "bad");
-    })
-    .then(function () {
-      window.clearTimeout(timeout);
-      codexOutputInFlight = false;
-      /*
-       * codexOutputInFlight is released above regardless of generation, so
-       * a stale in-flight request never blocks the current generation's
-       * polling. Reschedule whenever polling is still active, regardless of
-       * this call's generation or isFinal flag, so an active poll loop is
-       * never silently dropped by a stale/final call; the payload/error
-       * handlers above remain generation-guarded so stale data is ignored.
-       */
-      if (codexOutputPollActive) {
-        codexOutputTimer = window.setTimeout(function () {
-          pollCodexOutput(false);
-        }, CODEX_OUTPUT_POLL_MS);
-      }
-    });
-}
-
-function startCodexOutputPolling() {
-  if (codexOutputPollActive) {
-    return;
-  }
-  codexOutputPollActive = true;
-  window.clearTimeout(codexOutputTimer);
-  pollCodexOutput(false);
-}
-
-function stopCodexOutputPolling() {
-  codexOutputPollActive = false;
-  window.clearTimeout(codexOutputTimer);
-}
-
-function manageCodexOutputPolling() {
-  var running = codexSession.running === true;
-  if (running && !codexOutputRunningKnown) {
-    codexOutputRunningKnown = true;
-    startCodexOutputPolling();
-  } else if (!running && codexOutputRunningKnown) {
-    codexOutputRunningKnown = false;
-    stopCodexOutputPolling();
-    pollCodexOutput(true);
-  }
-}
-
-/* Codex input --------------------------------------------------------------- */
-
-function queueCodexInput(data) {
-  if (typeof data !== "string" || data === "") {
-    return;
-  }
-  for (var i = 0; i < data.length; i += CODEX_INPUT_CHUNK_CHARS) {
-    codexInputQueue.push(data.slice(i, i + CODEX_INPUT_CHUNK_CHARS));
-  }
-  drainCodexInputQueue();
-}
-
-function drainCodexInputQueue() {
-  if (codexInputInFlight || codexInputQueue.length === 0) {
-    return;
-  }
-  var chunk = codexInputQueue.shift();
-  codexInputInFlight = true;
-  var controller = typeof AbortController === "function" ? new AbortController() : null;
-  var timeout = window.setTimeout(function () {
-    if (controller) {
-      controller.abort();
+    socket.send(JSON.stringify({ type: "hello", csrf_token: csrfToken }));
+    codexReport("Terminal connected through the live socket.", "ok");
+    scheduleCodexFitAndResize();
+  });
+  socket.addEventListener("message", function (event) {
+    if (socket !== codexSocket) {
+      return;
     }
-  }, CODEX_INPUT_TIMEOUT_MS);
-  var options = {
-    method: "POST",
-    cache: "no-store",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      "X-CSRF-Token": csrfToken,
-    },
-    body: JSON.stringify({ data: chunk }),
-  };
-  if (controller) {
-    options.signal = controller.signal;
-  }
-
-  fetch(CODEX_INPUT_URL, options)
-    .then(function (response) {
-      if (!response.ok) {
-        throw new Error("the input server answered " + response.status);
+    try {
+      var message = JSON.parse(event.data);
+      if (message.type === "output") {
+        applyCodexOutput(record(message.output));
+      } else if (message.type === "session") {
+        applyCodexSession(record(message.session));
+      } else if (message.type === "repository_changed") {
+        closeCodexSocket();
+        connectCodexSocket();
+      } else if (message.type === "error") {
+        codexReport(text(message.message, "Terminal socket error."), "bad");
       }
-    })
-    .catch(function (error) {
-      codexReport("Input send failed: " + describe(error), "bad");
-    })
-    .then(function () {
-      window.clearTimeout(timeout);
-      codexInputInFlight = false;
-      drainCodexInputQueue();
-    });
+    } catch (error) {
+      codexReport("Invalid terminal socket response.", "bad");
+    }
+  });
+  socket.addEventListener("close", function () {
+    if (socket !== codexSocket) {
+      return;
+    }
+    codexSocket = null;
+    codexReport("Terminal socket disconnected; reconnecting.", "warn");
+    codexSocketTimer = window.setTimeout(connectCodexSocket, 1000);
+  });
+  socket.addEventListener("error", function () {
+    codexReport("Terminal socket error; reconnecting.", "bad");
+  });
 }
 
 /* Codex resize --------------------------------------------------------------- */
@@ -1213,38 +1128,9 @@ function sendCodexResize(rows, cols) {
   }
   codexLastSentRows = rows;
   codexLastSentCols = cols;
-  var controller = typeof AbortController === "function" ? new AbortController() : null;
-  var timeout = window.setTimeout(function () {
-    if (controller) {
-      controller.abort();
-    }
-  }, CODEX_RESIZE_TIMEOUT_MS);
-  var options = {
-    method: "POST",
-    cache: "no-store",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      "X-CSRF-Token": csrfToken,
-    },
-    body: JSON.stringify({ rows: rows, cols: cols }),
-  };
-  if (controller) {
-    options.signal = controller.signal;
+  if (codexSocket && codexSocket.readyState === WebSocket.OPEN) {
+    codexSocket.send(JSON.stringify({ type: "resize", rows: rows, cols: cols }));
   }
-
-  fetch(CODEX_RESIZE_URL, options)
-    .then(function (response) {
-      if (!response.ok) {
-        throw new Error("the resize server answered " + response.status);
-      }
-    })
-    .catch(function (error) {
-      codexReport("Resize failed: " + describe(error), "bad");
-    })
-    .then(function () {
-      window.clearTimeout(timeout);
-    });
 }
 
 function scheduleCodexFitAndResize() {
@@ -1275,9 +1161,8 @@ function wireCodexResizeWatcher(viewport) {
 }
 
 function teardownCodexTerminal() {
-  window.clearTimeout(codexOutputTimer);
+  closeCodexSocket();
   window.clearTimeout(codexResizeTimer);
-  codexOutputPollActive = false;
   if (codexResizeObserver) {
     codexResizeObserver.disconnect();
     codexResizeObserver = null;
@@ -1330,7 +1215,7 @@ function applyCodexSession(session) {
   setText("codex-session-size", codexSizeText(session));
   setText("codex-session-command", commandText(session.command));
   paintCodexControls();
-  manageCodexOutputPolling();
+  connectCodexSocket();
 }
 
 function renderCodexSession(state) {
@@ -1379,13 +1264,10 @@ function codexControl(kind) {
         applyCodexSession(next);
       }
       if (kind === "start" && result.status === 200) {
-        codexOutputGeneration += 1;
-        codexOutputCursor = null;
         if (codexTerminalReady && codexTerminal) {
           codexTerminal.reset();
         }
-        stopCodexOutputPolling();
-        startCodexOutputPolling();
+        connectCodexSocket();
       }
     })
     .catch(function (error) {
@@ -1395,7 +1277,7 @@ function codexControl(kind) {
       window.clearTimeout(timeout);
       codexPendingControl = "";
       paintCodexControls();
-      schedule(0);
+      restartStateFeed();
     });
 }
 
@@ -1434,6 +1316,7 @@ function wireCodexControls() {
 function render(state) {
   var security = record(state.security);
   csrfToken = text(security.csrf_token, "");
+  securityMode = text(security.mode, "local");
   var user = record(security.user);
   var userNode = el("authenticated-user");
   var logoutNode = el("logout");
@@ -1517,7 +1400,7 @@ function reportActiveRepositoryReadiness(state) {
   }
 }
 
-/* Polling ----------------------------------------------------------------- */
+/* Live state feed ---------------------------------------------------------- */
 
 function now() {
   return typeof performance === "object" && performance && typeof performance.now === "function"
@@ -1562,13 +1445,13 @@ function paintConnection() {
     detail = "No fresh snapshot: " + lastFailure + ".";
   } else if (failures > 0) {
     status = "reconnecting";
-    detail = "Retrying every second: " + lastFailure + ".";
+    detail = "The live feed is reconnecting: " + lastFailure + ".";
   } else if (stale) {
     status = "stale";
     detail = "The last snapshot is older than " + STALE_AFTER_MS / 1000 + " seconds.";
   } else {
     status = "connected";
-    detail = "Coordination snapshot refreshed every second; agent activity is shown separately.";
+    detail = "Receiving coordination changes from the live event stream.";
   }
 
   if (connection) {
@@ -1591,82 +1474,254 @@ function paintConnection() {
   );
 }
 
-function schedule(delay) {
-  if (delay === 0 && inFlight) {
-    /*
-     * A poll is already in flight, so an immediate setTimeout(poll, 0)
-     * would just find inFlight true and no-op, silently losing the
-     * refresh until the next 1s tick. Queue it instead so the in-flight
-     * request's completion triggers an immediate refresh.
-     */
-    pollRefreshQueued = true;
-    return;
+function acceptState(state) {
+  if (!state || typeof state !== "object" || Array.isArray(state)) {
+    throw new Error("the state server returned an unexpected payload");
   }
-  window.clearTimeout(pollTimer);
-  pollTimer = window.setTimeout(poll, delay);
+  lastSuccessAt = now();
+  failures = 0;
+  lastFailure = "";
+  renderFailure = "";
+  render(state);
+  paintConnection();
 }
 
-function poll() {
-  if (inFlight) {
-    return;
-  }
-  inFlight = true;
-  var pollEpoch = stateEpoch;
-  var controller = typeof AbortController === "function" ? new AbortController() : null;
-  var timeout = window.setTimeout(function () {
-    if (controller) {
-      controller.abort();
-    }
-  }, REQUEST_TIMEOUT_MS);
-  var options = { cache: "no-store", headers: { Accept: "application/json" } };
-  if (controller) {
-    options.signal = controller.signal;
-  }
-
-  fetch(STATE_URL, options)
-    .then(function (response) {
+function probeAuthentication() {
+  fetch(STATE_URL, { cache: "no-store", headers: { Accept: "application/json" } }).then(
+    function (response) {
       if (response.status === 401) {
         var destination = window.location.pathname + window.location.search + window.location.hash;
         window.location.assign("/auth/login?next=" + encodeURIComponent(destination));
-        throw new Error("the authenticated session expired");
       }
-      if (!response.ok) {
-        throw new Error("the state server answered " + response.status);
-      }
-      return response.json();
-    })
-    .then(function (state) {
-      if (!state || typeof state !== "object" || Array.isArray(state)) {
-        throw new Error("the state server returned an unexpected payload");
-      }
-      lastSuccessAt = now();
-      failures = 0;
-      lastFailure = "";
-      if (pollEpoch !== stateEpoch) {
-        return;
-      }
-      try {
-        renderFailure = "";
-        render(state);
-      } catch (error) {
-        renderFailure = describe(error);
-      }
-    })
-    .catch(function (error) {
-      failures += 1;
-      lastFailure = describe(error);
-    })
-    .then(function () {
-      window.clearTimeout(timeout);
-      inFlight = false;
+    }
+  );
+}
+
+function startStateFeed() {
+  if (stateSource) {
+    return;
+  }
+  var source = new EventSource(STATE_EVENTS_URL);
+  stateSource = source;
+  source.addEventListener("state", function (event) {
+    if (source !== stateSource) {
+      return;
+    }
+    try {
+      acceptState(JSON.parse(event.data));
+    } catch (error) {
+      renderFailure = describe(error);
       paintConnection();
-      if (pollRefreshQueued) {
-        pollRefreshQueued = false;
-        schedule(0);
-      } else {
-        schedule(POLL_INTERVAL_MS);
-      }
+    }
+  });
+  source.addEventListener("open", function () {
+    failures = 0;
+    lastFailure = "";
+    paintConnection();
+  });
+  source.addEventListener("error", function () {
+    failures += 1;
+    lastFailure = "live state feed disconnected";
+    paintConnection();
+    probeAuthentication();
+  });
+}
+
+function stopStateFeed() {
+  if (stateSource) {
+    stateSource.close();
+    stateSource = null;
+  }
+}
+
+function restartStateFeed() {
+  stopStateFeed();
+  startStateFeed();
+}
+
+/* Administration pages ---------------------------------------------------- */
+
+function apiGet(url) {
+  return fetch(url, {
+    cache: "no-store",
+    credentials: "same-origin",
+    headers: { Accept: "application/json" },
+  }).then(answer).then(function (result) {
+    if (result.status !== 200) {
+      throw new Error(text(result.payload.message, "the server answered " + result.status));
+    }
+    return result.payload;
+  });
+}
+
+function apiPost(url, payload) {
+  var options = {
+    method: "POST",
+    cache: "no-store",
+    credentials: "same-origin",
+    headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+  };
+  if (payload !== undefined) {
+    options.headers["Content-Type"] = "application/json";
+    options.body = JSON.stringify(payload);
+  }
+  return fetch(url, options).then(answer);
+}
+
+function recordRow(title, badgeText, detail) {
+  var row = document.createElement("li");
+  var head = document.createElement("p");
+  head.className = "record-head";
+  var badge = span("badge", badgeText);
+  setToneOnNode(badge, tone(badgeText));
+  head.appendChild(badge);
+  head.appendChild(span("record-title", title));
+  row.appendChild(head);
+  var meta = document.createElement("p");
+  meta.className = "record-meta";
+  meta.textContent = detail;
+  row.appendChild(meta);
+  return row;
+}
+
+function setToneOnNode(node, mood) {
+  if (mood) {
+    node.setAttribute("data-tone", mood);
+  }
+}
+
+function loadActivity() {
+  setText("activity-feedback", "Loading recent events…");
+  apiGet("/api/activity?limit=200").then(function (payload) {
+    var events = list(payload.events);
+    var node = el("activity-events");
+    setText("activity-feedback", events.length + " recent event" + (events.length === 1 ? "" : "s") + ".");
+    node.replaceChildren.apply(node, events.slice().reverse().map(function (event) {
+      return recordRow(
+        text(event.event, "event"),
+        text(event.outcome, "unknown"),
+        new Date(Number(event.created_at) * 1000).toLocaleString() +
+          " · " + text(event.subject, "local user") +
+          (text(event.detail, "") ? " · " + text(event.detail, "") : "")
+      );
+    }));
+  }).catch(function (error) {
+    setText("activity-feedback", "Could not load activity: " + describe(error));
+  });
+}
+
+function loadSessions() {
+  setText("sessions-feedback", "Loading sessions…");
+  apiGet("/api/sessions").then(function (payload) {
+    var values = list(payload.sessions);
+    var node = el("session-records");
+    setText("sessions-feedback", values.length + " active session" + (values.length === 1 ? "" : "s") + ".");
+    node.replaceChildren.apply(node, values.map(function (session) {
+      var row = recordRow(
+        text(session.display, text(session.subject, "local browser")),
+        session.current === true ? "current" : "active",
+        "Last seen " + new Date(Number(session.last_seen_at) * 1000).toLocaleString() +
+          " · handle " + text(session.handle, "").slice(0, 12)
+      );
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "control-button record-action";
+      button.textContent = "Revoke";
+      button.addEventListener("click", function () {
+        button.disabled = true;
+        apiPost("/api/sessions/revoke", { handle: session.handle }).then(function (result) {
+          if (result.status !== 200) {
+            throw new Error(text(result.payload.message, "revoke failed"));
+          }
+          if (session.current === true) {
+            if (securityMode === "oidc") {
+              window.location.assign("/auth/login");
+            } else {
+              window.location.reload();
+            }
+          } else {
+            loadSessions();
+          }
+        }).catch(function (error) {
+          button.disabled = false;
+          setText("sessions-feedback", "Could not revoke session: " + describe(error));
+        });
+      });
+      row.appendChild(button);
+      return row;
+    }));
+  }).catch(function (error) {
+    setText("sessions-feedback", "Could not load sessions: " + describe(error));
+  });
+}
+
+function loadDiagnostics() {
+  setText("diagnostics-feedback", "Running checks…");
+  apiGet("/api/diagnostics").then(function (payload) {
+    var checks = list(payload.checks);
+    setText(
+      "diagnostics-feedback",
+      "Mode " + text(payload.mode, "unknown") + " · " +
+        (payload.ok === true ? "all checks passed" : "one or more checks need attention")
+    );
+    var node = el("diagnostic-checks");
+    node.replaceChildren.apply(node, checks.map(function (check) {
+      return recordRow(
+        text(check.name, "check"),
+        check.ok === true ? "ok" : "attention",
+        text(check.detail)
+      );
+    }));
+  }).catch(function (error) {
+    setText("diagnostics-feedback", "Could not run diagnostics: " + describe(error));
+  });
+}
+
+function wireAdministration() {
+  var activityRefresh = el("activity-refresh");
+  var sessionsRefresh = el("sessions-refresh");
+  var diagnosticsRefresh = el("diagnostics-refresh");
+  if (activityRefresh) activityRefresh.addEventListener("click", loadActivity);
+  if (sessionsRefresh) sessionsRefresh.addEventListener("click", loadSessions);
+  if (diagnosticsRefresh) diagnosticsRefresh.addEventListener("click", loadDiagnostics);
+  var revokeOthers = el("sessions-revoke-others");
+  if (revokeOthers) revokeOthers.addEventListener("click", function () {
+    revokeOthers.disabled = true;
+    apiPost("/api/sessions/revoke-others").then(function (result) {
+      if (result.status !== 200) throw new Error("revoke failed");
+      loadSessions();
+    }).catch(function (error) {
+      setText("sessions-feedback", "Could not revoke sessions: " + describe(error));
+    }).then(function () { revokeOthers.disabled = false; });
+  });
+  var createForm = el("repository-create-form");
+  if (createForm) createForm.addEventListener("submit", function (event) {
+    event.preventDefault();
+    var name = el("repository-create-name").value;
+    setText("repository-create-feedback", "Creating repository…");
+    apiPost("/api/repository/create", { name: name }).then(function (result) {
+      if (result.status !== 201) throw new Error(text(result.payload.message, "create failed"));
+      applyRepositoryCatalog(record(result.payload.repository_catalog));
+      resetTerminalClientStateForSwitch();
+      restartStateFeed();
+      setText("repository-create-feedback", text(result.payload.message, "Repository created."));
+    }).catch(function (error) {
+      setText("repository-create-feedback", "Could not create repository: " + describe(error));
     });
+  });
+  var initializeForm = el("repository-initialize-form");
+  if (initializeForm) initializeForm.addEventListener("submit", function (event) {
+    event.preventDefault();
+    var projectName = el("repository-project-name").value;
+    setText("repository-initialize-feedback", "Initializing coordination…");
+    apiPost("/api/repository/initialize", { project_name: projectName }).then(function (result) {
+      if (result.status !== 200) throw new Error(text(result.payload.message, "initialization failed"));
+      setText("repository-initialize-feedback", text(result.payload.message, "Coordination initialized."));
+      restartStateFeed();
+    }).catch(function (error) {
+      setText("repository-initialize-feedback", "Could not initialize: " + describe(error));
+    });
+  });
 }
 
 /* Hash-based view navigation ------------------------------------------------ */
@@ -1703,6 +1758,12 @@ function applyRoute() {
     if (codexTerminalReady) {
       scheduleCodexFitAndResize();
     }
+  } else if (route === "activity") {
+    loadActivity();
+  } else if (route === "sessions") {
+    loadSessions();
+  } else if (route === "diagnostics") {
+    loadDiagnostics();
   }
 }
 
@@ -1717,19 +1778,20 @@ function start() {
   wireCodexControls();
   wireRepositoryPicker();
   wireLogout();
+  wireAdministration();
   paintConnection();
-  poll();
+  startStateFeed();
   tickTimer = window.setInterval(paintConnection, POLL_INTERVAL_MS);
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "visible") {
-      schedule(0);
+      restartStateFeed();
     }
   });
   window.addEventListener("online", function () {
-    schedule(0);
+    restartStateFeed();
   });
   window.addEventListener("pagehide", function () {
-    window.clearTimeout(pollTimer);
+    stopStateFeed();
     window.clearInterval(tickTimer);
     teardownCodexTerminal();
   });

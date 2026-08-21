@@ -8,12 +8,14 @@ import json
 import stat
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 from authlib.integrations.base_client.errors import OAuthError
 from starlette.responses import RedirectResponse
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "skills" / "coordinate-claude-work" / "scripts"
@@ -21,6 +23,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 from authenticated_web_app import (
     PUBLIC_PATHS,
+    LocalSettings,
     OIDCSettings,
     SQLiteSecurityStore,
     _local_destination,
@@ -30,9 +33,15 @@ from authenticated_web_app import (
 
 
 class FakeOIDCClient:
-    def __init__(self, claims: dict[str, object], algorithm: str = "RS256") -> None:
+    def __init__(
+        self,
+        claims: dict[str, object],
+        algorithm: str = "RS256",
+        end_session_endpoint: str | None = None,
+    ) -> None:
         self.claims = claims
         self.algorithm = algorithm
+        self.end_session_endpoint = end_session_endpoint
 
     async def authorize_redirect(self, request, redirect_uri):
         request.session["fake_oidc_state"] = {
@@ -65,6 +74,11 @@ class FakeOIDCClient:
             "id_token": f"{header}.e30.must-not-be-persisted-or-returned",
             "userinfo": dict(self.claims),
         }
+
+    async def load_server_metadata(self):
+        if self.end_session_endpoint is None:
+            raise RuntimeError("no end-session endpoint")
+        return {"end_session_endpoint": self.end_session_endpoint}
 
 
 class AuthenticatedAppTests(unittest.TestCase):
@@ -108,7 +122,8 @@ class AuthenticatedAppTests(unittest.TestCase):
             codex_command_for_repo=lambda repo: [
                 sys.executable,
                 "-c",
-                "import time; time.sleep(60)",
+                "import os; exec('while True:\\n data=os.read(0,1024)\\n "
+                "if not data: break\\n os.write(1,data)')",
             ],
         )
         return TestClient(app, base_url="http://127.0.0.1")
@@ -171,6 +186,31 @@ class AuthenticatedAppTests(unittest.TestCase):
             self.assertEqual(response.json()["redirect"], "/auth/login")
             self.assertEqual(client.get("/api/state").status_code, 401)
 
+    def test_logout_uses_provider_end_session_endpoint_when_advertised(self) -> None:
+        app = create_authenticated_app(
+            self.repo,
+            self.settings(),
+            repositories_root=self.base,
+            oidc_client=FakeOIDCClient(
+                self.owner_claims(),
+                end_session_endpoint="https://idp.example/end-session/",
+            ),
+        )
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            self.login(client)
+            csrf = client.get("/api/state").json()["security"]["csrf_token"]
+            response = client.post(
+                "/auth/logout",
+                headers={"X-CSRF-Token": csrf, "Origin": "http://127.0.0.1"},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            redirect = response.json()["redirect"]
+            self.assertTrue(redirect.startswith("https://idp.example/end-session/?"))
+            self.assertIn("client_id=coordinator-test", redirect)
+            self.assertIn(
+                "post_logout_redirect_uri=http%3A%2F%2F127.0.0.1%2F", redirect
+            )
+
     def test_group_can_authorize_when_subject_is_not_allowlisted(self) -> None:
         claims = self.owner_claims()
         claims["sub"] = "different-subject"
@@ -221,6 +261,8 @@ class AuthenticatedAppTests(unittest.TestCase):
     def test_every_nonpublic_route_is_denied_without_a_session(self) -> None:
         with self.client(self.owner_claims()) as client:
             for route in client.app.routes:
+                if not hasattr(route, "methods"):
+                    continue
                 path = route.path
                 if path in PUBLIC_PATHS:
                     continue
@@ -318,6 +360,34 @@ class AuthenticatedAppTests(unittest.TestCase):
             response = client.get("http://evil.test/healthz")
             self.assertEqual(response.status_code, 400)
 
+    def test_terminal_websocket_requires_auth_origin_and_csrf(self) -> None:
+        with self.client(self.owner_claims()) as client:
+            with self.assertRaises(WebSocketDisconnect) as unauthenticated:
+                with client.websocket_connect(
+                    "ws://127.0.0.1/ws/terminal",
+                    headers={"Origin": "http://127.0.0.1"},
+                ):
+                    pass
+            self.assertEqual(unauthenticated.exception.code, 1008)
+
+            self.login(client)
+            with self.assertRaises(WebSocketDisconnect) as wrong_origin:
+                with client.websocket_connect(
+                    "ws://127.0.0.1/ws/terminal",
+                    headers={"Origin": "http://evil.test"},
+                ):
+                    pass
+            self.assertEqual(wrong_origin.exception.code, 1008)
+
+            with client.websocket_connect(
+                "ws://127.0.0.1/ws/terminal",
+                headers={"Origin": "http://127.0.0.1"},
+            ) as socket:
+                socket.send_json({"type": "hello", "csrf_token": "wrong"})
+                with self.assertRaises(WebSocketDisconnect) as raised:
+                    socket.receive_json()
+                self.assertEqual(raised.exception.code, 1008)
+
     def test_database_permissions_and_audit_records(self) -> None:
         with self.client(self.owner_claims()) as client:
             self.assertEqual(client.get("/api/state").status_code, 401)
@@ -388,6 +458,126 @@ class SQLiteSecurityStoreTests(unittest.TestCase):
             (state / "security.sqlite3").symlink_to(target)
             with self.assertRaisesRegex(ValueError, "symbolic link"):
                 SQLiteSecurityStore(state, idle_seconds=10, absolute_seconds=20)
+
+    def test_non_touching_active_check_observes_expiry_and_revocation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLiteSecurityStore(Path(tmp), idle_seconds=10, absolute_seconds=20)
+            store.save("active", {"user": {}}, created_at=90, now=100)
+            self.assertTrue(store.is_active("active", now=109))
+            self.assertFalse(store.is_active("active", now=111))
+            store.save("revoked", {"user": {}}, created_at=100, now=100)
+            handle = store.session_handle("revoked")
+            self.assertTrue(store.revoke_session_handle(handle))
+            self.assertFalse(store.is_active("revoked", now=101))
+
+
+class LocalAppTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.base = Path(self.temp.name)
+        self.repo = self.base / "repo"
+        self.repo.mkdir()
+        (self.repo / ".git").mkdir()
+        settings = LocalSettings(
+            external_url="http://127.0.0.1:8765",
+            state_dir=self.base / "state",
+        )
+        self.app = create_authenticated_app(
+            self.repo,
+            settings,
+            repositories_root=self.base,
+            codex_command_for_repo=lambda repo: [
+                sys.executable,
+                "-c",
+                "import time; time.sleep(60)",
+            ],
+        )
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def headers(self, csrf: str) -> dict[str, str]:
+        return {"X-CSRF-Token": csrf, "Origin": "http://127.0.0.1"}
+
+    def test_local_state_setup_activity_sessions_and_diagnostics(self) -> None:
+        with TestClient(self.app, base_url="http://127.0.0.1") as client:
+            state = client.get("/api/state")
+            self.assertEqual(state.status_code, 200)
+            csrf = state.json()["security"]["csrf_token"]
+            self.assertEqual(state.json()["security"]["mode"], "local")
+
+            response = client.post(
+                "/api/repository/create",
+                json={"name": "sample-project"},
+                headers=self.headers(csrf),
+            )
+            self.assertEqual(response.status_code, 201, response.text)
+            created = self.base / "sample-project"
+            self.assertTrue((created / ".git").is_dir())
+
+            response = client.post(
+                "/api/repository/initialize",
+                json={"project_name": "Sample project"},
+                headers=self.headers(csrf),
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertTrue((created / ".coordination").is_dir())
+
+            diagnostics = client.get("/api/diagnostics").json()
+            self.assertEqual(diagnostics["mode"], "local")
+            self.assertTrue(
+                any(
+                    check["name"] == "coordination files"
+                    for check in diagnostics["checks"]
+                )
+            )
+
+            sessions = client.get("/api/sessions").json()["sessions"]
+            self.assertEqual(len(sessions), 1)
+            self.assertTrue(sessions[0]["current"])
+            self.assertEqual(len(sessions[0]["handle"]), 64)
+
+            self.app.state.security_store.save(
+                "other-session", {"csrf_token": "other"}, time.time()
+            )
+            response = client.post(
+                "/api/sessions/revoke-others", headers=self.headers(csrf)
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["count"], 1)
+            self.assertIsNone(self.app.state.security_store.load("other-session"))
+
+            activity = client.get("/api/activity").json()["events"]
+            self.assertTrue(
+                any(event["event"] == "repository_create" for event in activity)
+            )
+            self.assertTrue(
+                any(event["event"] == "repository_initialize" for event in activity)
+            )
+
+    def test_terminal_websocket_uses_session_csrf_handshake(self) -> None:
+        with TestClient(self.app, base_url="http://127.0.0.1") as client:
+            csrf = client.get("/api/state").json()["security"]["csrf_token"]
+            response = client.post("/api/codex/start", headers=self.headers(csrf))
+            self.assertEqual(response.status_code, 200, response.text)
+            with client.websocket_connect(
+                "ws://127.0.0.1/ws/terminal",
+                headers={"Origin": "http://127.0.0.1"},
+            ) as socket:
+                socket.send_json({"type": "hello", "csrf_token": csrf})
+                message = socket.receive_json()
+                self.assertIn(message["type"], {"output", "session"})
+                if message["type"] == "output":
+                    self.assertEqual(socket.receive_json()["type"], "session")
+                socket.send_json({"type": "input", "data": "socket-roundtrip\n"})
+                chunks = []
+                for _ in range(10):
+                    message = socket.receive_json()
+                    if message["type"] == "output":
+                        chunks.append(message["output"]["text"])
+                        if "socket-roundtrip" in "".join(chunks):
+                            break
+                self.assertIn("socket-roundtrip", "".join(chunks))
 
 
 class SettingsValidationTests(unittest.TestCase):

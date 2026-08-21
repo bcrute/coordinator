@@ -17,7 +17,17 @@ WEB_DIR = (
     / "web"
 )
 
-ROUTES = ["monitor", "terminal", "work", "agents", "logs"]
+ROUTES = [
+    "monitor",
+    "terminal",
+    "work",
+    "agents",
+    "logs",
+    "activity",
+    "setup",
+    "sessions",
+    "diagnostics",
+]
 
 
 def read(path):
@@ -72,7 +82,7 @@ class EndpointTests(unittest.TestCase):
         self.assertIsNotNone(function_match)
         body = function_match.group(0)
         self.assertIn('"Content-Type": "application/json"', body)
-        self.assertIn("Accept: \"application/json\"", body)
+        self.assertIn('Accept: "application/json"', body)
         self.assertIn('cache: "no-store"', body)
         self.assertIn('credentials: "same-origin"', body)
         self.assertIn('method: "POST"', body)
@@ -98,7 +108,7 @@ class CatalogOptionTests(unittest.TestCase):
         self.assertIsNotNone(function_match)
         body = function_match.group(0)
         self.assertIn("opt.value = path", body)
-        self.assertIn('opt.textContent = text(entry.name, path)', body)
+        self.assertIn("opt.textContent = text(entry.name, path)", body)
         self.assertIn("opt.title = path", body)
 
     def test_select_value_synced_to_active(self):
@@ -118,10 +128,8 @@ class SelectionOutcomeTests(unittest.TestCase):
         )
         self.assertIsNotNone(function_match)
         body = function_match.group(0)
-        self.assertIn("stopCodexOutputPolling()", body)
-        self.assertIn("codexOutputCursor = null", body)
+        self.assertIn("closeCodexSocket()", body)
         self.assertIn("codexTerminal.reset()", body)
-        self.assertIn("codexInputQueue = []", body)
         self.assertIn("codexLastSentRows = null", body)
         self.assertIn("codexLastSentCols = null", body)
         self.assertIn("renderedLog = null", body)
@@ -148,11 +156,13 @@ class SelectionOutcomeTests(unittest.TestCase):
         self.assertIn("select.value = previousActive", body)
 
     def test_change_handler_ignores_unchanged_or_empty_value(self):
-        self.assertIn('if (value === "" || value === repositoryCatalog.active) {', self.js)
+        self.assertIn(
+            'if (value === "" || value === repositoryCatalog.active) {', self.js
+        )
 
 
 class StaleResponseInvalidationTests(unittest.TestCase):
-    """A state poll started before a switch must not render afterward."""
+    """A repository switch must replace the prior state stream."""
 
     def setUp(self):
         self.js = read(WEB_DIR / "app.js")
@@ -169,12 +179,13 @@ class StaleResponseInvalidationTests(unittest.TestCase):
         self.assertIn("stateEpoch += 1", body)
         self.assertIn("var myEpoch = stateEpoch", body)
 
-    def test_poll_captures_epoch_and_skips_stale_render(self):
-        function_match = re.search(r"function poll\(\) \{.*?\n\}\n", self.js, re.S)
+    def test_switch_stops_old_feed_before_request(self):
+        function_match = re.search(
+            r"function selectRepository\(path\) \{.*?\n\}\n", self.js, re.S
+        )
         self.assertIsNotNone(function_match)
         body = function_match.group(0)
-        self.assertIn("var pollEpoch = stateEpoch", body)
-        self.assertIn("if (pollEpoch !== stateEpoch) {", body)
+        self.assertLess(body.index("stopStateFeed()"), body.index("fetch("))
 
 
 class ControlDisablingTests(unittest.TestCase):
@@ -187,12 +198,16 @@ class ControlDisablingTests(unittest.TestCase):
         self.assertIn("var repositorySwitching = false;", self.js)
 
     def test_watcher_controls_disabled_while_switching(self):
-        function_match = re.search(r"function paintControls\(\) \{.*?\n\}\n", self.js, re.S)
+        function_match = re.search(
+            r"function paintControls\(\) \{.*?\n\}\n", self.js, re.S
+        )
         self.assertIsNotNone(function_match)
         self.assertIn("repositorySwitching", function_match.group(0))
 
     def test_codex_controls_disabled_while_switching(self):
-        function_match = re.search(r"function paintCodexControls\(\) \{.*?\n\}\n", self.js, re.S)
+        function_match = re.search(
+            r"function paintCodexControls\(\) \{.*?\n\}\n", self.js, re.S
+        )
         self.assertIsNotNone(function_match)
         self.assertIn("repositorySwitching", function_match.group(0))
 
@@ -209,85 +224,77 @@ class ControlDisablingTests(unittest.TestCase):
         )
         self.assertIsNotNone(function_match)
         body = function_match.group(0)
-        self.assertIn("pendingControl !== \"\"", body)
-        self.assertIn("codexPendingControl !== \"\"", body)
+        self.assertIn('pendingControl !== ""', body)
+        self.assertIn('codexPendingControl !== ""', body)
 
 
 class TerminalResetGenerationTests(unittest.TestCase):
-    """Reset must bump the output generation without touching input in-flight."""
+    """Reset must close the old repository's terminal socket."""
 
     def setUp(self):
         self.js = read(WEB_DIR / "app.js")
 
-    def test_reset_increments_generation_and_leaves_input_in_flight_alone(self):
+    def test_reset_closes_socket_and_has_no_http_input_queue(self):
         function_match = re.search(
             r"function resetTerminalClientStateForSwitch\(\) \{.*?\n\}\n", self.js, re.S
         )
         self.assertIsNotNone(function_match)
         body = function_match.group(0)
-        self.assertIn("codexOutputGeneration += 1", body)
-        self.assertNotIn("codexInputInFlight =", body)
+        self.assertIn("closeCodexSocket()", body)
+        self.assertNotIn("codexInputQueue", body)
 
 
-class CodexOutputPollGenerationGuardTests(unittest.TestCase):
-    """Stale generations must not render, but active polling must continue."""
-
-    def setUp(self):
-        self.js = read(WEB_DIR / "app.js")
-
-    def test_poll_captures_generation_before_request(self):
-        function_match = re.search(
-            r"function pollCodexOutput\(isFinal\) \{.*?\n\}\n", self.js, re.S
-        )
-        self.assertIsNotNone(function_match)
-        self.assertIn("var myGeneration = codexOutputGeneration;", function_match.group(0))
-
-    def test_payload_and_error_handlers_guard_by_generation(self):
-        function_match = re.search(
-            r"function pollCodexOutput\(isFinal\) \{.*?\n\}\n", self.js, re.S
-        )
-        self.assertIsNotNone(function_match)
-        body = function_match.group(0)
-        guard_count = len(
-            re.findall(r"if \(myGeneration !== codexOutputGeneration\) \{\s*return;\s*\}", body)
-        )
-        self.assertEqual(guard_count, 2)
-
-    def test_reschedules_when_poll_active_regardless_of_generation(self):
-        function_match = re.search(
-            r"function pollCodexOutput\(isFinal\) \{.*?\n\}\n", self.js, re.S
-        )
-        self.assertIsNotNone(function_match)
-        body = function_match.group(0)
-        finally_body = body.rsplit(".then(function () {", 1)[-1]
-        self.assertIn("if (codexOutputPollActive) {", finally_body)
-        if_match = re.search(r"if \((.*?)\) \{", finally_body)
-        self.assertIsNotNone(if_match)
-        condition = if_match.group(1)
-        self.assertNotIn("myGeneration", condition)
-        self.assertNotIn("isFinal", condition)
-
-
-class PollRefreshQueuedTests(unittest.TestCase):
-    """schedule/poll must use pollRefreshQueued for immediate follow-up."""
+class CodexSocketReplacementTests(unittest.TestCase):
+    """Events from a replaced terminal socket must be ignored."""
 
     def setUp(self):
         self.js = read(WEB_DIR / "app.js")
 
-    def test_schedule_queues_immediate_follow_up_when_in_flight(self):
-        function_match = re.search(r"function schedule\(delay\) \{.*?\n\}\n", self.js, re.S)
+    def test_socket_is_recorded_as_current(self):
+        function_match = re.search(
+            r"function connectCodexSocket\(\) \{.*?\n\}\n", self.js, re.S
+        )
         self.assertIsNotNone(function_match)
-        body = function_match.group(0)
-        self.assertIn("if (delay === 0 && inFlight) {", body)
-        self.assertIn("pollRefreshQueued = true;", body)
+        self.assertIn("codexSocket = socket", function_match.group(0))
 
-    def test_poll_reschedules_immediately_when_refresh_queued(self):
-        function_match = re.search(r"function poll\(\) \{.*?\n\}\n", self.js, re.S)
+    def test_open_and_message_handlers_ignore_replaced_socket(self):
+        function_match = re.search(
+            r"function connectCodexSocket\(\) \{.*?\n\}\n", self.js, re.S
+        )
         self.assertIsNotNone(function_match)
         body = function_match.group(0)
-        self.assertIn("if (pollRefreshQueued) {", body)
-        self.assertIn("pollRefreshQueued = false;", body)
-        self.assertIn("schedule(0);", body)
+        self.assertGreaterEqual(body.count("socket !== codexSocket"), 2)
+
+    def test_close_handler_reconnects_current_socket(self):
+        self.assertIn(
+            "codexSocketTimer = window.setTimeout(connectCodexSocket, 1000)", self.js
+        )
+
+
+class StateFeedRestartTests(unittest.TestCase):
+    """State feed replacement closes the old EventSource first."""
+
+    def setUp(self):
+        self.js = read(WEB_DIR / "app.js")
+
+    def test_stop_closes_and_clears_source(self):
+        function_match = re.search(
+            r"function stopStateFeed\(\) \{.*?\n\}\n", self.js, re.S
+        )
+        self.assertIsNotNone(function_match)
+        body = function_match.group(0)
+        self.assertIn("stateSource.close()", body)
+        self.assertIn("stateSource = null", body)
+
+    def test_restart_stops_then_starts(self):
+        function_match = re.search(
+            r"function restartStateFeed\(\) \{.*?\n\}\n", self.js, re.S
+        )
+        self.assertIsNotNone(function_match)
+        body = function_match.group(0)
+        self.assertLess(
+            body.index("stopStateFeed()"), body.index("\n  startStateFeed()")
+        )
 
 
 class AppJsByteHygieneTests(unittest.TestCase):
@@ -324,12 +331,12 @@ class FreshSnapshotAndRoutePreservationTests(unittest.TestCase):
     def setUp(self):
         self.js = read(WEB_DIR / "app.js")
 
-    def test_schedule_called_after_switch_completes(self):
+    def test_state_feed_restarted_after_switch_completes(self):
         function_match = re.search(
             r"function selectRepository\(path\) \{.*?\n\}\n", self.js, re.S
         )
         self.assertIsNotNone(function_match)
-        self.assertIn("schedule(0)", function_match.group(0))
+        self.assertIn("restartStateFeed()", function_match.group(0))
 
     def test_select_function_never_touches_location_hash(self):
         function_match = re.search(
@@ -338,10 +345,10 @@ class FreshSnapshotAndRoutePreservationTests(unittest.TestCase):
         self.assertIsNotNone(function_match)
         self.assertNotIn("location.hash", function_match.group(0))
 
-    def test_routes_array_still_has_exact_five_routes_in_order(self):
+    def test_routes_array_still_has_expected_routes_in_order(self):
         match = re.search(r"var ROUTES\s*=\s*\[([^\]]*)\];", self.js)
         self.assertIsNotNone(match)
-        found = [item.strip().strip('"') for item in match.group(1).split(",")]
+        found = re.findall(r'["\']([a-z]+)["\']', match.group(1))
         self.assertEqual(found, ROUTES)
 
 
@@ -363,8 +370,8 @@ class SetupNeededLabelTests(unittest.TestCase):
         self.assertIn("entry.initialized === true", signature_block.group(0))
 
     def test_setup_needed_suffix_appended_only_when_uninitialized(self):
-        self.assertIn('if (entry.initialized !== true) {', self.js)
-        self.assertIn('setup needed', self.js)
+        self.assertIn("if (entry.initialized !== true) {", self.js)
+        self.assertIn("setup needed", self.js)
 
     def test_option_value_and_title_remain_exact_path_regardless_of_label(self):
         option_block = re.search(
@@ -383,7 +390,9 @@ class OnboardingWorkflowTests(unittest.TestCase):
 
     def setUp(self):
         self.js = read(WEB_DIR / "app.js")
-        match = re.search(r"function renderWorkflow\(state\) \{.*?\n\}\n", self.js, re.S)
+        match = re.search(
+            r"function renderWorkflow\(state\) \{.*?\n\}\n", self.js, re.S
+        )
         self.assertIsNotNone(match)
         self.function_text = match.group(0)
 
@@ -397,7 +406,7 @@ class OnboardingWorkflowTests(unittest.TestCase):
         self.assertIn("Terminal", branch)
         self.assertIn("Codex", branch)
         self.assertIn("goal", branch.lower())
-        self.assertIn("coordinated \" +\n        \"work", branch)
+        self.assertIn('coordinated " +\n        "work', branch)
 
     def test_onboarding_branch_hides_stale_completion(self):
         branch = self.function_text.split("state.coordination_present !== true")[1]
@@ -407,7 +416,7 @@ class OnboardingWorkflowTests(unittest.TestCase):
     def test_onboarding_branch_returns_early(self):
         segments = self.function_text.split("state.coordination_present !== true")
         self.assertEqual(len(segments), 2)
-        self.assertIn("return;", segments[1].split("setText(\n    \"workflow-phase\"")[0])
+        self.assertIn("return;", segments[1].split('setText(\n    "workflow-phase"')[0])
 
     def test_normal_branch_still_unhides_current_completion(self):
         # After the early-return guard, the normal path must still control
@@ -429,7 +438,9 @@ class ActiveRepositoryReadinessTests(unittest.TestCase):
 
     def test_readiness_function_skips_while_switching(self):
         function_match = re.search(
-            r"function reportActiveRepositoryReadiness\(state\) \{.*?\n\}\n", self.js, re.S
+            r"function reportActiveRepositoryReadiness\(state\) \{.*?\n\}\n",
+            self.js,
+            re.S,
         )
         self.assertIsNotNone(function_match)
         body = function_match.group(0)
@@ -438,7 +449,9 @@ class ActiveRepositoryReadinessTests(unittest.TestCase):
 
     def test_readiness_function_uses_only_server_coordination_present_field(self):
         function_match = re.search(
-            r"function reportActiveRepositoryReadiness\(state\) \{.*?\n\}\n", self.js, re.S
+            r"function reportActiveRepositoryReadiness\(state\) \{.*?\n\}\n",
+            self.js,
+            re.S,
         )
         self.assertIsNotNone(function_match)
         body = function_match.group(0)
@@ -448,8 +461,8 @@ class ActiveRepositoryReadinessTests(unittest.TestCase):
 
 class SyntaxTests(unittest.TestCase):
     def test_app_js_is_valid_javascript_via_node(self):
-        import subprocess
         import shutil
+        import subprocess
 
         node = shutil.which("node")
         if node is None:

@@ -29,10 +29,11 @@ port = 8765
 # Number of relay-log lines returned by /api/state.
 relay_log_lines = 200
 
-# Suppress per-request logging.
+# Suppress Uvicorn lifecycle messages. Request access logs stay disabled.
 quiet = false
 
-# Authentication mode. "local" keeps the dependency-free loopback server.
+# Authentication mode. Both modes use the same ASGI runtime; "local" enforces
+# a loopback bind and "oidc" enables the authentication boundary.
 # Change this to "oidc" only after completing the settings below and placing
 # the app behind a TLS reverse proxy.
 auth_mode = "local"

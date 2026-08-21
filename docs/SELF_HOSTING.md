@@ -1,13 +1,13 @@
 # Self-hosting the coordination dashboard
 
 `web_app.py` is a **dynamic service**, not a static site: it has to keep
-running for the dashboard, `/api/state` polling, and the browser Codex terminal
-to work. There is no front-end build step and nothing to deploy to a CDN or
-static host. It has two runtime modes:
+running for the dashboard event stream and browser Codex WebSocket terminal to
+work. There is no front-end build step and nothing to deploy to a CDN or static
+host. Both runtime modes use Starlette/Uvicorn:
 
-- `local` (the default): the original standard-library server, enforced as
-  loopback-only and unauthenticated;
-- `oidc`: the Starlette/Authlib application served by Uvicorn, with opaque
+- `local` (the default): enforced as loopback-only and unauthenticated, with an
+  opaque browser session for CSRF and audit state;
+- `oidc`: generic OpenID Connect through Authlib, with opaque
   SQLite sessions, CSRF enforcement, and default-deny authorization.
 
 This guide assumes you have already followed the root `README.md` quickstart
@@ -25,11 +25,10 @@ confirmed the app runs in the foreground).
   (via the Agents view's Start control), stopping the server also stops that
   watcher; a watcher you started yourself in a separate terminal is left
   running.
-- In `local` mode, use `--quiet` (or set `quiet = true` in your config file)
-  to suppress per-request HTTP logging, or `--no-quiet` to force it back on.
-  OIDC mode always disables Uvicorn access logs because callback query strings
-  contain short-lived authorization codes and state. Its redacted SQLite audit
-  events are the security record instead.
+- Uvicorn access logs are disabled in both modes. In OIDC mode this also keeps
+  callback query strings containing short-lived authorization codes and state
+  out of generic access logs. The redacted SQLite activity trail is the
+  security and control record.
 - There is no separate application log file by default; redirect stdout/
   stderr yourself if you want one, for example:
 
@@ -90,11 +89,11 @@ The chosen port is printed on startup. You can also set `port = 0` (or any
 specific free port) in `workflow.toml`; a command-line `--port` always wins
 over the config file's value.
 
-**"must be a Git repository or already coordination-initialized."** The
+**"must be a Git repository or already coordination-initialized."** The initial
 `repo` path (from `--repo` or your config file's `repo` key) needs to either
-be a Git repository or already contain `.coordination/README.md`. Point it at
-an existing Git checkout, or initialize coordination first — see "Onboarding
-your first repository" in the root `README.md`.
+be a Git repository or already contain `.coordination/README.md`. Once the app
+is running, the Setup view can create additional direct-child Git repositories
+and initialize coordination for the active repository.
 
 **Codex or Claude CLI authentication errors in the browser terminal.** The
 browser's "Codex session" terminal runs `codex -C <repo>` using whatever
@@ -110,6 +109,11 @@ picker only lists direct children of `repositories_root` that have a `.git`
 file or directory directly inside them (a non-recursive scan). Confirm the
 path in your config file's `repositories_root` key and that the target
 directory is a real Git checkout, not a nested subdirectory of one.
+
+**The terminal says its live socket is disconnected.** Confirm dependencies
+were installed from `requirements.txt`; Uvicorn needs the pinned `websockets`
+package to accept upgrades. Also confirm a reverse proxy passes WebSocket
+upgrades and does not buffer `/api/events` when using OIDC mode.
 
 **Changes to `workflow.toml` do not seem to take effect.** The server reads
 `--config` once at startup; restart it after editing the file. Also confirm

@@ -76,6 +76,20 @@ def default_codex_command(root: Path) -> list[str]:
     return [executable, "-C", str(root)]
 
 
+def default_watcher_command(root: Path) -> list[str]:
+    """Build the fixed automatic both-watcher command for `root`."""
+
+    return [
+        sys.executable,
+        str(WATCHER_SCRIPT),
+        "--repo",
+        str(root),
+        "--role",
+        MANAGED_ROLE,
+        "--no-dashboard",
+    ]
+
+
 def is_loopback_host(host: str) -> bool:
     """Return whether a bind name is unambiguously loopback-only."""
 
@@ -1697,7 +1711,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--auth-mode",
         choices=("local", "oidc"),
         default=None,
-        help="local keeps the legacy loopback-only server; oidc uses the authenticated ASGI runtime",
+        help="local uses the loopback-only ASGI runtime; oidc enables OpenID Connect",
     )
     parser.add_argument("--oidc-issuer", default=None, help="exact OpenID Provider issuer URL")
     parser.add_argument("--oidc-client-id", default=None, help="OIDC confidential client id")
@@ -1798,18 +1812,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    if args.auth_mode == "oidc":
-        try:
-            from authenticated_web_app import serve_authenticated
-        except ModuleNotFoundError as error:
-            print(
-                f"error: authenticated mode dependency is missing ({error.name}); "
-                "install requirements.txt",
-                file=sys.stderr,
-            )
-            return 2
-        return serve_authenticated(args)
-    return serve(args)
+    try:
+        from authenticated_web_app import serve_application
+    except ModuleNotFoundError as error:
+        print(
+            f"error: web runtime dependency is missing ({error.name}); install requirements.txt",
+            file=sys.stderr,
+        )
+        return 2
+    return serve_application(args)
 
 
 if __name__ == "__main__":

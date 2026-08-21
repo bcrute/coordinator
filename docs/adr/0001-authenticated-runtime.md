@@ -29,9 +29,9 @@ directory and database are created with owner-only permissions. No OAuth token i
 returned to JavaScript or deliberately retained after the callback. The database is
 not used for coordination documents, project source, task state, or relay logs.
 
-The original `http.server` path remains available only for the existing loopback
-development mode while the authenticated path is introduced. A routable bind is
-refused unless OIDC mode is active.
+The original `http.server` path initially remained available for loopback
+development. ADR 0002 subsequently consolidated both modes on the ASGI runtime.
+A routable bind is refused unless OIDC mode is active.
 
 ## Why SQLite is justified
 

@@ -48,7 +48,7 @@ class VendorAssetTests(unittest.TestCase):
 
 
 class CodexEndpointTests(unittest.TestCase):
-    """Codex control/output/input/resize endpoints must be fixed literals."""
+    """Codex control routes and terminal socket must be fixed literals."""
 
     def setUp(self):
         self.js = read(WEB_DIR / "app.js")
@@ -57,23 +57,18 @@ class CodexEndpointTests(unittest.TestCase):
         for literal in (
             '"/api/codex/start"',
             '"/api/codex/stop"',
-            '"/api/codex/output"',
-            '"/api/codex/input"',
-            '"/api/codex/resize"',
+            '"/ws/terminal"',
         ):
             self.assertIn(literal, self.js, "missing endpoint literal: " + literal)
 
     def test_no_dynamic_endpoint_construction_from_untrusted_input(self):
         # Endpoint URLs should not be built by string concatenation from
         # server payload fields (e.g. command/path); only the output cursor
-        # query parameter is appended to a fixed base URL. Check this within
-        # the bodies of the functions that actually issue codex endpoint
-        # requests, rather than across the entire app.js source.
+        # Check this within the functions that issue terminal/control traffic.
         forbidden = r"payload\.(command|path|cwd|repo|args)"
         for name in (
             "codexControl",
-            "pollCodexOutput",
-            "drainCodexInputQueue",
+            "connectCodexSocket",
             "sendCodexResize",
         ):
             match = re.search(
@@ -84,7 +79,7 @@ class CodexEndpointTests(unittest.TestCase):
 
 
 class OutputHandlingTests(unittest.TestCase):
-    """Cursor advancement and reset/full-replay handling."""
+    """Socket output and reset/full-replay handling."""
 
     def setUp(self):
         self.js = read(WEB_DIR / "app.js")
@@ -93,9 +88,7 @@ class OutputHandlingTests(unittest.TestCase):
         self.assertIn("codexTerminal.write(chunk)", self.js)
 
     def test_reset_flag_resets_terminal_before_replay(self):
-        match = re.search(
-            r"function applyCodexOutput\([\s\S]*?\n}\n", self.js
-        )
+        match = re.search(r"function applyCodexOutput\([\s\S]*?\n}\n", self.js)
         self.assertIsNotNone(match, "applyCodexOutput function not found")
         body = match.group(0)
         reset_index = body.index("codexTerminal.reset()")
@@ -104,18 +97,16 @@ class OutputHandlingTests(unittest.TestCase):
             reset_index, write_index, "reset must happen before replay write"
         )
 
-    def test_cursor_advances_from_next_cursor_field(self):
-        self.assertIn("codexOutputCursor = nextCursor", self.js)
-
-    def test_start_success_clears_cursor_for_fresh_attachment(self):
+    def test_start_success_resets_terminal_for_fresh_attachment(self):
         match = re.search(r"function codexControl\([\s\S]*?\n}\n", self.js)
         self.assertIsNotNone(match, "codexControl function not found")
         body = match.group(0)
-        self.assertIn("codexOutputCursor = null", body)
+        self.assertIn("codexTerminal.reset()", body)
+        self.assertIn("connectCodexSocket()", body)
 
 
 class InputSerializationTests(unittest.TestCase):
-    """Input must be serialized, queued, and chunked to a 16-KiB bound."""
+    """Input must be chunked and sent directly through the socket."""
 
     def setUp(self):
         self.js = read(WEB_DIR / "app.js")
@@ -123,20 +114,16 @@ class InputSerializationTests(unittest.TestCase):
     def test_input_chunk_size_is_16_kib(self):
         self.assertIn("CODEX_INPUT_CHUNK_CHARS = 16 * 1024", self.js)
 
-    def test_input_is_chunked_before_queueing(self):
-        match = re.search(r"function queueCodexInput\([\s\S]*?\n}\n", self.js)
-        self.assertIsNotNone(match, "queueCodexInput function not found")
+    def test_input_is_chunked_before_socket_send(self):
+        match = re.search(r"codexTerminal\.onData\([\s\S]*?\n    \}\);", self.js)
+        self.assertIsNotNone(match, "terminal input handler not found")
         body = match.group(0)
         self.assertIn("CODEX_INPUT_CHUNK_CHARS", body)
-        self.assertIn("codexInputQueue.push", body)
+        self.assertIn("codexSocket.send", body)
 
-    def test_input_is_drained_serially_one_request_at_a_time(self):
-        match = re.search(r"function drainCodexInputQueue\([\s\S]*?\n}\n", self.js)
-        self.assertIsNotNone(match, "drainCodexInputQueue function not found")
-        body = match.group(0)
-        self.assertIn("codexInputInFlight", body)
-        # Guards re-entrancy while a request is outstanding.
-        self.assertRegex(body, r"if\s*\(\s*codexInputInFlight")
+    def test_input_does_not_use_per_keystroke_http_requests(self):
+        self.assertNotIn("fetch(CODEX_INPUT_URL", self.js)
+        self.assertNotIn("codexInputInFlight", self.js)
 
 
 class ResizeTests(unittest.TestCase):
@@ -147,9 +134,7 @@ class ResizeTests(unittest.TestCase):
 
     def test_resize_is_debounced_with_a_timer(self):
         self.assertIn("CODEX_RESIZE_DEBOUNCE_MS", self.js)
-        match = re.search(
-            r"function scheduleCodexFitAndResize\([\s\S]*?\n}\n", self.js
-        )
+        match = re.search(r"function scheduleCodexFitAndResize\([\s\S]*?\n}\n", self.js)
         self.assertIsNotNone(match, "scheduleCodexFitAndResize function not found")
         body = match.group(0)
         self.assertIn("window.clearTimeout(codexResizeTimer)", body)
@@ -174,15 +159,14 @@ class StartAttachmentTests(unittest.TestCase):
     def setUp(self):
         self.js = read(WEB_DIR / "app.js")
 
-    def test_successful_start_resets_terminal_and_restarts_polling(self):
+    def test_successful_start_resets_terminal_and_uses_socket(self):
         match = re.search(r"function codexControl\([\s\S]*?\n}\n", self.js)
         self.assertIsNotNone(match, "codexControl function not found")
         body = match.group(0)
         self.assertIn('kind === "start"', body)
-        self.assertIn("codexOutputCursor = null", body)
         self.assertIn("codexTerminal.reset()", body)
-        self.assertIn("stopCodexOutputPolling()", body)
-        self.assertIn("startCodexOutputPolling()", body)
+        self.assertIn("connectCodexSocket()", body)
+        self.assertNotIn("OutputPolling", body)
 
 
 class TeardownTests(unittest.TestCase):
@@ -198,14 +182,11 @@ class TeardownTests(unittest.TestCase):
         self.assertIn("teardownCodexTerminal()", body)
 
     def test_teardown_disposes_timers_observer_and_listener(self):
-        match = re.search(
-            r"function teardownCodexTerminal\([\s\S]*?\n}\n", self.js
-        )
+        match = re.search(r"function teardownCodexTerminal\([\s\S]*?\n}\n", self.js)
         self.assertIsNotNone(match, "teardownCodexTerminal function not found")
         body = match.group(0)
-        self.assertIn("window.clearTimeout(codexOutputTimer)", body)
+        self.assertIn("closeCodexSocket()", body)
         self.assertIn("window.clearTimeout(codexResizeTimer)", body)
-        self.assertIn("codexOutputPollActive = false", body)
         self.assertIn("codexResizeObserver.disconnect()", body)
         self.assertIn("dispose()", body)
 
@@ -220,26 +201,21 @@ class StartRequestFieldTests(unittest.TestCase):
         match = re.search(r"function codexControl\([\s\S]*?\n}\n", self.js)
         self.assertIsNotNone(match, "codexControl function not found")
         body = match.group(0)
-        options_match = re.search(
-            r"var options = \{([\s\S]*?)\};", body
-        )
+        options_match = re.search(r"var options = \{([\s\S]*?)\};", body)
         self.assertIsNotNone(options_match, "control fetch options not found")
         options_body = options_match.group(1)
         self.assertNotIn("body", options_body)
 
     def test_no_command_args_executable_repo_cwd_or_path_field_sent(self):
-        # Scoped to the four Codex request functions only (not the whole
+        # Scoped to the Codex transport functions only (not the whole
         # source file), since other parts of app.js legitimately reference
         # a "path" field for the unrelated repository picker feature.
         request_functions = [
             "codexControl",
-            "pollCodexOutput",
-            "drainCodexInputQueue",
+            "connectCodexSocket",
             "sendCodexResize",
         ]
-        forbidden = re.compile(
-            r'["\'](command|args|executable|repo|cwd|path)["\']\s*:'
-        )
+        forbidden = re.compile(r'["\'](command|args|executable|repo|cwd|path)["\']\s*:')
         for name in request_functions:
             match = re.search(r"function " + name + r"\([\s\S]*?\n}\n", self.js)
             self.assertIsNotNone(match, name + " function not found")

@@ -398,6 +398,7 @@ class PublicCheckoutUnitDiscoveryTests(unittest.TestCase):
             "test_codex_session.py",
             "test_codex_session_http.py",
             "test_authenticated_web_app.py",
+            "test_web_e2e.py",
             "test_distribution.py",
         }
     )
@@ -427,7 +428,7 @@ class PublicCheckoutUnitDiscoveryTests(unittest.TestCase):
     def test_public_test_set_equals_expected_after_gitignore_exclusions(self) -> None:
         """Derive the public test module set as (all test_*.py on disk) minus
         (the exact per-file .gitignore exclusions), and assert it equals the
-        expected eleven modules exactly, so an accidental extra public test
+        expected twelve modules exactly, so an accidental extra public test
         file fails this contract rather than passing silently.
         """
         self.assertEqual(_public_test_modules(), self.EXPECTED_PUBLIC_TEST_MODULES)
