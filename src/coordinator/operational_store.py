@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-LATEST_SCHEMA_VERSION = 2
+LATEST_SCHEMA_VERSION = 3
 IDENTIFIER_NAMESPACE = uuid.UUID("f3288cb2-d2d3-4b2f-a0c5-dc5d15d76b7f")
 
 
@@ -269,6 +269,32 @@ class OperationalStore:
                     PRAGMA user_version = 2;
                     """
                 )
+                version = 2
+            if version < 3:
+                connection.executescript(
+                    """
+                    CREATE TABLE process_instances (
+                        process_id TEXT PRIMARY KEY,
+                        run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+                        provider TEXT NOT NULL,
+                        pid INTEGER NOT NULL,
+                        process_group INTEGER,
+                        status TEXT NOT NULL,
+                        started_at REAL,
+                        ended_at REAL,
+                        UNIQUE(run_id, provider, pid)
+                    );
+                    CREATE TABLE failure_signatures (
+                        run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+                        signature TEXT NOT NULL,
+                        occurrences INTEGER NOT NULL,
+                        first_seen_at REAL NOT NULL,
+                        last_seen_at REAL NOT NULL,
+                        PRIMARY KEY(run_id, signature)
+                    );
+                    PRAGMA user_version = 3;
+                    """
+                )
         self.path.chmod(0o600)
         file_stat = self.path.stat()
         if file_stat.st_uid != os.geteuid() or stat.S_IMODE(file_stat.st_mode) & 0o077:
@@ -422,6 +448,7 @@ class OperationalStore:
             )
             self._sync_objectives(connection, ids["run_id"], projection)
             self._sync_agents(connection, ids["run_id"], projection)
+            self._sync_processes(connection, ids["run_id"], projection, current)
             if changed:
                 event_type = "run_discovered" if previous is None else "state_changed"
                 event_uid = stable_id("event", ids["run_id"], digest)
@@ -520,6 +547,49 @@ class OperationalStore:
                 ),
             )
 
+    def _sync_processes(
+        self,
+        connection: sqlite3.Connection,
+        run_id: str,
+        projection: dict[str, object],
+        current: float,
+    ) -> None:
+        for provider, key in (("watcher", "managed_watcher"), ("codex", "codex_session")):
+            value = projection.get(key)
+            if not isinstance(value, dict):
+                continue
+            pid = value.get("pid")
+            if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+                continue
+            running = bool(value.get("running") or value.get("active"))
+            status = str(value.get("state") or ("running" if running else "stopped"))
+            started_at = value.get("started_at_epoch") or value.get("started_at")
+            group = value.get("process_group") or value.get("group")
+            connection.execute(
+                """
+                INSERT INTO process_instances(
+                    process_id, run_id, provider, pid, process_group, status,
+                    started_at, ended_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id, provider, pid) DO UPDATE SET
+                    process_group = excluded.process_group,
+                    status = excluded.status,
+                    ended_at = excluded.ended_at
+                """,
+                (
+                    stable_id("process", run_id, provider, pid),
+                    run_id,
+                    provider,
+                    pid,
+                    group if isinstance(group, int) and not isinstance(group, bool) else None,
+                    status,
+                    float(started_at)
+                    if isinstance(started_at, (int, float)) and not isinstance(started_at, bool)
+                    else None,
+                    None if running else current,
+                ),
+            )
+
     def set_policy(self, run_id: str, policy: GuardrailPolicy) -> bool:
         encoded = json.dumps(policy.as_dict(), separators=(",", ":"), sort_keys=True)
         with self._connect() as connection:
@@ -587,6 +657,48 @@ class OperationalStore:
                     (stable_id("event", run_id, "interrupted", current), run_id, current),
                 )
         return len(rows)
+
+    def record_failure(
+        self,
+        run_id: str,
+        signature: str,
+        *,
+        stop_after: int = 3,
+        now: float | None = None,
+    ) -> dict[str, object]:
+        """Count identical failures and pause after a bounded repeat threshold."""
+
+        if not signature.strip() or len(signature) > 500:
+            raise ValueError("failure signature must contain 1-500 characters")
+        if stop_after <= 0:
+            raise ValueError("stop_after must be positive")
+        current = time.time() if now is None else now
+        digest = hashlib.sha256(signature.strip().encode("utf-8")).hexdigest()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO failure_signatures(
+                    run_id, signature, occurrences, first_seen_at, last_seen_at
+                ) VALUES (?, ?, 1, ?, ?)
+                ON CONFLICT(run_id, signature) DO UPDATE SET
+                    occurrences = failure_signatures.occurrences + 1,
+                    last_seen_at = excluded.last_seen_at
+                """,
+                (run_id, digest, current, current),
+            )
+            row = connection.execute(
+                "SELECT occurrences FROM failure_signatures WHERE run_id = ? AND signature = ?",
+                (run_id, digest),
+            ).fetchone()
+            occurrences = int(row["occurrences"])
+        paused = False
+        if occurrences >= stop_after:
+            paused = self.pause(
+                run_id,
+                f"identical failure repeated {occurrences} times: {signature.strip()[:200]}",
+                now=current,
+            )
+        return {"occurrences": occurrences, "paused": paused, "signature": digest}
 
     def list_runs(self, limit: int = 100) -> list[dict[str, object]]:
         with self._connect() as connection:

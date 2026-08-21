@@ -589,6 +589,52 @@ class LocalAppTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(response.json()["outcome"], "resumed")
 
+    def test_hard_guardrail_stops_and_requires_explicit_resume(self) -> None:
+        coordination = self.repo / ".coordination"
+        (coordination / "planner").mkdir(parents=True)
+        (coordination / "coder").mkdir()
+        (coordination / "reviews").mkdir()
+        (coordination / "runtime").mkdir()
+        (coordination / "README.md").write_text("# Coordination\n", encoding="utf-8")
+        (coordination / "planner" / "goal.md").write_text(
+            "# Goal\n\n- Goal ID: `bounded`\n- State: `active`\n"
+            "- Starting ref: `abc`\n",
+            encoding="utf-8",
+        )
+        (coordination / "planner" / "current-task.md").write_text(
+            "# Task\n\n- Task ID: `task-1`\n- State: `ready`\n"
+            "- Review round: `0`\n",
+            encoding="utf-8",
+        )
+        (coordination / "runtime" / "claude-progress.json").write_text(
+            json.dumps(
+                {
+                    "task_id": "task-1",
+                    "state": "running",
+                    "usage": {"output_tokens": 100},
+                }
+            ),
+            encoding="utf-8",
+        )
+        with TestClient(self.app, base_url="http://127.0.0.1") as client:
+            initial = client.get("/api/state").json()
+            run_id = initial["run"]["run_id"]
+            csrf = initial["security"]["csrf_token"]
+            response = client.post(
+                f"/api/runs/{run_id}/policy",
+                json={"generated_tokens": 100},
+                headers=self.headers(csrf),
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+
+            stopped = client.get("/api/state").json()
+            self.assertEqual(stopped["guardrails"]["status"], "paused")
+            self.assertEqual(
+                stopped["guardrails"]["findings"][0]["severity"], "stop"
+            )
+            self.assertTrue(stopped["run"]["resume_required"])
+            self.assertIn("generated_tokens", stopped["run"]["pause_reason"])
+
     def test_terminal_websocket_uses_session_csrf_handshake(self) -> None:
         with TestClient(self.app, base_url="http://127.0.0.1") as client:
             csrf = client.get("/api/state").json()["security"]["csrf_token"]

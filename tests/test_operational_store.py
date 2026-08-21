@@ -132,6 +132,17 @@ class OperationalStoreTests(unittest.TestCase):
         self.assertEqual(run["status"], "interrupted")
         self.assertTrue(run["resume_required"])
 
+    def test_repeated_identical_failure_pauses_at_configured_threshold(self):
+        details = self.store.sync_snapshot(self.repo, snapshot())
+        first = self.store.record_failure(details["run_id"], "same failing test", now=10)
+        second = self.store.record_failure(details["run_id"], "same failing test", now=20)
+        third = self.store.record_failure(details["run_id"], "same failing test", now=30)
+        self.assertEqual(first["occurrences"], 1)
+        self.assertEqual(second["occurrences"], 2)
+        self.assertEqual(third["occurrences"], 3)
+        self.assertTrue(third["paused"])
+        self.assertTrue(self.store.get_run(details["run_id"])["resume_required"])
+
     def test_preferences_survive_index_rebuild(self):
         self.store.set_preference("theme", {"name": "system"})
         self.store.sync_snapshot(self.repo, snapshot())
@@ -195,7 +206,54 @@ class OperationalStoreTests(unittest.TestCase):
                 )
             }
         self.assertTrue({"pause_reason", "resume_required", "policy_json"} <= run_columns)
-        self.assertTrue({"preferences", "notifications"} <= tables)
+        self.assertTrue(
+            {"preferences", "notifications", "process_instances", "failure_signatures"}
+            <= tables
+        )
+
+    def test_version_two_database_migrates_to_current_schema(self):
+        legacy = self.root / "legacy-v2"
+        legacy.mkdir(mode=0o700)
+        path = legacy / "operations.sqlite3"
+        with sqlite3.connect(path) as connection:
+            connection.executescript(
+                """
+                CREATE TABLE repositories (
+                    repository_id TEXT PRIMARY KEY,
+                    path TEXT NOT NULL UNIQUE,
+                    display_name TEXT NOT NULL,
+                    last_seen_at REAL NOT NULL
+                );
+                CREATE TABLE runs (
+                    run_id TEXT PRIMARY KEY,
+                    repository_id TEXT NOT NULL REFERENCES repositories(repository_id),
+                    goal_id TEXT NOT NULL,
+                    starting_ref TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    started_at REAL NOT NULL,
+                    ended_at REAL,
+                    last_seen_at REAL NOT NULL,
+                    last_change_at REAL NOT NULL,
+                    state_digest TEXT NOT NULL,
+                    snapshot_json TEXT NOT NULL,
+                    pause_reason TEXT,
+                    resume_required INTEGER NOT NULL DEFAULT 0,
+                    policy_json TEXT NOT NULL DEFAULT '{}'
+                );
+                PRAGMA user_version = 2;
+                """
+            )
+        path.chmod(0o600)
+        migrated = OperationalStore(legacy)
+        self.assertEqual(migrated.schema_version, LATEST_SCHEMA_VERSION)
+        with sqlite3.connect(path) as connection:
+            tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+        self.assertTrue({"process_instances", "failure_signatures"} <= tables)
 
     def test_guardrails_reject_nonpositive_limits_and_bad_warning_ratio(self):
         with self.assertRaisesRegex(ValueError, "positive"):

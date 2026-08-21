@@ -27,6 +27,7 @@ class CoordinatorCLITests(unittest.TestCase):
         self.assertIn("serve", output)
         self.assertIn("doctor", output)
         self.assertIn("init", output)
+        self.assertIn("data", output)
 
         result, output, error = self.invoke(["--version"])
         self.assertEqual(result, 0, error)
@@ -62,3 +63,21 @@ class CoordinatorCLITests(unittest.TestCase):
             )
             self.assertEqual(second, 0, error)
             self.assertIn("already current", output)
+
+    def test_data_command_backs_up_and_verifies_operational_index(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "state"
+            backup = root / "backup.sqlite3"
+            result, output, error = self.invoke(
+                ["data", "--state-dir", str(state), "backup", str(backup)]
+            )
+            self.assertEqual(result, 0, error)
+            self.assertEqual(json.loads(output)["action"], "backup")
+            self.assertTrue(backup.is_file())
+
+            result, output, error = self.invoke(
+                ["data", "--state-dir", str(state), "verify", str(backup)]
+            )
+            self.assertEqual(result, 0, error)
+            self.assertTrue(json.loads(output)["ok"])

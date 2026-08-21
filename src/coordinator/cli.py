@@ -8,7 +8,7 @@ import sys
 from . import __version__
 
 
-COMMANDS = ("serve", "doctor", "init")
+COMMANDS = ("serve", "doctor", "init", "data")
 
 
 def _help() -> argparse.ArgumentParser:
@@ -44,5 +44,9 @@ def main(argv: list[str] | None = None) -> int:
         from .init_project import main as initialize
 
         return initialize(rest)
+    if command == "data":
+        from .maintenance import main as maintain
+
+        return maintain(rest)
     parser.error(f"unknown command: {command}")
     return 2

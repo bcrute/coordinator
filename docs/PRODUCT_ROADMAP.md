@@ -99,7 +99,7 @@ Exit gate:
 
 ## Phase 2 - Durable runs, recovery, and resource guardrails
 
-**Status: in progress.**
+**Status: complete.**
 
 Progress:
 
@@ -110,6 +110,19 @@ Progress:
 - Run history, detail, event, policy, and resume endpoints are integrated into the
   authenticated application; observable limits warn and stop managed processes
   without estimating telemetry the provider did not expose.
+- Process identities and repeated failure signatures are persisted, three identical
+  failures stop a run by default, and `coordinator data` exposes verified backup,
+  restore, verification, rebuild, and retention operations.
+
+Exit evidence:
+
+- Migration tests exercise empty, version 1, version 2, current, and unknown-future
+  databases; active runs become interrupted after restart and require explicit resume.
+- Guardrail tests cover warnings, every observable policy dimension, a real state-API
+  hard stop, repeated identical failures, and explicit resume without launching a
+  provider CLI.
+- Backup/restore integrity and delete-and-rebuild behavior are covered while
+  preferences and the authoritative coordination files remain intact.
 
 Deliverables:
 
@@ -136,7 +149,7 @@ Exit gate:
 
 ## Phase 3 - Daily-driver workspace and run experience
 
-**Status: planned.**
+**Status: in progress.**
 
 Deliverables:
 
