@@ -1139,6 +1139,70 @@ class LocalAppTests(unittest.TestCase):
                 else:
                     self.fail("terminal reconnect did not replay buffered output")
 
+    def test_terminal_websocket_bounds_large_replay_frames(self) -> None:
+        output_chars = TERMINAL_OUTPUT_CHUNK_CHARS * 2 + 17
+        settings = LocalSettings(
+            external_url="http://127.0.0.1:8765",
+            state_dir=self.base / "large-replay-state",
+        )
+        app = create_authenticated_app(
+            self.repo,
+            settings,
+            repositories_root=self.base,
+            codex_command_for_repo=lambda repo: [
+                sys.executable,
+                "-c",
+                (
+                    "import sys,time; "
+                    f"sys.stdout.write('x' * {output_chars}); "
+                    "sys.stdout.flush(); time.sleep(60)"
+                ),
+            ],
+        )
+
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            csrf = client.get("/api/state").json()["security"]["csrf_token"]
+            response = client.post("/api/codex/start", headers=self.headers(csrf))
+            self.assertEqual(response.status_code, 200, response.text)
+
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                session = client.get("/api/state").json()["codex_session"]
+                if session["buffer_next_cursor"] >= output_chars:
+                    break
+                time.sleep(0.01)
+            else:
+                self.fail("fake terminal did not produce the large replay fixture")
+
+            with client.websocket_connect(
+                "ws://127.0.0.1/ws/terminal",
+                headers={"Origin": "http://127.0.0.1"},
+            ) as replay:
+                replay.send_json(
+                    {
+                        "type": "hello",
+                        "protocol": "terminal.v1",
+                        "csrf_token": csrf,
+                        "cursor": None,
+                    }
+                )
+                frames = []
+                while sum(len(frame["text"]) for frame in frames) < output_chars:
+                    message = replay.receive_json()
+                    if message["type"] != "output":
+                        continue
+                    frame = message["output"]
+                    self.assertLessEqual(
+                        len(frame["text"]), TERMINAL_OUTPUT_CHUNK_CHARS
+                    )
+                    self.assertEqual(message["sequence"], frame["next_cursor"])
+                    frames.append(frame)
+
+            self.assertEqual(len(frames), 3)
+            self.assertEqual("".join(frame["text"] for frame in frames), "x" * output_chars)
+            self.assertTrue(frames[0]["reset"])
+            self.assertTrue(all(frame["reset"] is False for frame in frames[1:]))
+
     def test_terminal_clear_removes_reconnect_replay_without_stopping(self) -> None:
         marker = "terminal-clear-marker"
         with TestClient(self.app, base_url="http://127.0.0.1") as client:
