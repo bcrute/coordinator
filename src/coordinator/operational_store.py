@@ -801,6 +801,25 @@ class OperationalStore:
             for row in rows
         ]
 
+    def latest_event_id(self, run_id: str) -> int:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT COALESCE(MAX(event_id), 0) FROM events WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+        return int(row[0])
+
+    def statistics(self) -> dict[str, int]:
+        with self._connect() as connection:
+            runs = int(connection.execute("SELECT COUNT(*) FROM runs").fetchone()[0])
+            events = int(connection.execute("SELECT COUNT(*) FROM events").fetchone()[0])
+            paused = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM runs WHERE resume_required = 1"
+                ).fetchone()[0]
+            )
+        return {"runs": runs, "events": events, "paused_runs": paused}
+
     def set_preference(self, key: str, value: object) -> None:
         if not key or len(key) > 100:
             raise ValueError("preference key must contain 1-100 characters")

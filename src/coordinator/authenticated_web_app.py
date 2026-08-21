@@ -63,6 +63,7 @@ from .security import (
     OIDCSettings,
     SQLiteSecurityStore,
     SecurityHeadersMiddleware,
+    RequestContextMiddleware,
     ServerSideSessionMiddleware,
     _audit_user,
     _authorized,
@@ -139,6 +140,43 @@ def create_authenticated_app(
 
     async def health(request: Request):
         return JSONResponse({"status": "ok"})
+
+    async def ready(request: Request):
+        checks = {
+            "repository": context.catalog().get("active") is not None,
+            "operational_index": operational.schema_version > 0,
+            "security_state": store.path.is_file(),
+        }
+        return JSONResponse(
+            {"status": "ready" if all(checks.values()) else "not_ready", "checks": checks},
+            status_code=200 if all(checks.values()) else 503,
+        )
+
+    async def metrics(request: Request):
+        values = await run_in_threadpool(operational.statistics)
+        body = "".join(
+            f"coordinator_{name} {value}\n" for name, value in values.items()
+        )
+        return PlainTextResponse(body, media_type="text/plain; version=0.0.4")
+
+    async def openapi(request: Request):
+        paths = {
+            "/api/v1/state": {"get": {"summary": "Current workspace state"}},
+            "/api/v1/events": {"get": {"summary": "Resumable SSE state and transition stream"}},
+            "/api/v1/runs": {"get": {"summary": "Durable run history"}},
+            "/api/v1/runs/{run_id}": {"get": {"summary": "Durable run detail"}},
+            "/api/v1/preferences": {
+                "get": {"summary": "Non-secret preferences"},
+                "post": {"summary": "Update non-secret preferences"},
+            },
+        }
+        return JSONResponse(
+            {
+                "openapi": "3.1.0",
+                "info": {"title": "Coordinator API", "version": "1.0.0"},
+                "paths": paths,
+            }
+        )
 
     async def login(request: Request):
         if not isinstance(settings, OIDCSettings) or oidc_client is None:
@@ -338,6 +376,7 @@ def create_authenticated_app(
                 )
             }
             payload["guardrails"] = guardrails
+            payload["api_version"] = "v1"
         if isinstance(settings, OIDCSettings):
             user = dict(session["user"])
             payload["security"] = {
@@ -369,9 +408,17 @@ def create_authenticated_app(
         if not isinstance(request.session.get("csrf_token"), str):
             request.session["csrf_token"] = secrets.token_urlsafe(32)
         session = dict(request.session)
+        raw_cursor = request.headers.get("last-event-id", "0").strip() or "0"
+        if not raw_cursor.isdigit():
+            return JSONResponse(
+                {"ok": False, "error": {"code": "invalid_cursor", "message": "Last-Event-ID must be an integer"}},
+                status_code=400,
+            )
+        starting_cursor = int(raw_cursor)
 
         async def events():
-            last_digest = ""
+            cursor = starting_cursor
+            state_cursor = starting_cursor
             last_emit = 0.0
             while not await request.is_disconnected():
                 session_id = request.scope.get("coordinator.session_id")
@@ -380,12 +427,23 @@ def create_authenticated_app(
                 ):
                     return
                 payload = await run_in_threadpool(state_snapshot, session)
+                run_id = str(record.get("run_id") if (record := payload.get("run")) else "")
+                transitions = await run_in_threadpool(
+                    operational.list_events, run_id, cursor
+                )
+                for transition in transitions:
+                    cursor = int(transition["event_id"])
+                    encoded_transition = json.dumps(
+                        transition, separators=(",", ":"), sort_keys=True
+                    )
+                    yield f"id: {cursor}\nevent: transition\ndata: {encoded_transition}\n\n"
                 encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True)
-                digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
                 current = time.monotonic()
-                if digest != last_digest:
-                    yield f"event: state\ndata: {encoded}\n\n"
-                    last_digest = digest
+                latest = await run_in_threadpool(operational.latest_event_id, run_id)
+                if latest > state_cursor or last_emit == 0.0:
+                    cursor = max(cursor, latest)
+                    yield f"id: {cursor}\nevent: state\ndata: {encoded}\n\n"
+                    state_cursor = latest
                     last_emit = current
                 elif current - last_emit >= STATE_HEARTBEAT_SECONDS:
                     yield ": keepalive\n\n"
@@ -1180,22 +1238,32 @@ def create_authenticated_app(
 
     routes = [
         Route("/healthz", health, methods=["GET", "HEAD"]),
+        Route("/readyz", ready, methods=["GET", "HEAD"]),
+        Route("/metrics", metrics, methods=["GET"]),
+        Route("/api/v1/openapi.json", openapi, methods=["GET"]),
         Route("/auth/login", login, methods=["GET"]),
         Route("/auth/callback", callback, methods=["GET"]),
         Route("/auth/logout", logout, methods=["POST"]),
         Route("/api/state", state, methods=["GET"]),
+        Route("/api/v1/state", state, methods=["GET"]),
         Route("/api/events", state_events, methods=["GET"]),
+        Route("/api/v1/events", state_events, methods=["GET"]),
         Route("/api/activity", audit_events, methods=["GET"]),
         Route("/api/sessions", sessions, methods=["GET"]),
         Route("/api/runs", run_history, methods=["GET"]),
+        Route("/api/v1/runs", run_history, methods=["GET"]),
         Route("/api/runs/{run_id:str}", run_detail, methods=["GET"]),
+        Route("/api/v1/runs/{run_id:str}", run_detail, methods=["GET"]),
         Route("/api/runs/{run_id:str}/events", run_events, methods=["GET"]),
+        Route("/api/v1/runs/{run_id:str}/events", run_events, methods=["GET"]),
         Route("/api/runs/{run_id:str}/resume", run_resume, methods=["POST"]),
         Route("/api/runs/{run_id:str}/policy", run_policy, methods=["POST"]),
         Route("/api/runs/{run_id:str}/{action:str}", run_archive, methods=["POST"]),
         Route("/api/repository/diff", repository_diff, methods=["GET"]),
         Route("/api/preferences", preferences_get, methods=["GET"]),
         Route("/api/preferences", preferences_update, methods=["POST"]),
+        Route("/api/v1/preferences", preferences_get, methods=["GET"]),
+        Route("/api/v1/preferences", preferences_update, methods=["POST"]),
         Route("/api/sessions/revoke", session_revoke, methods=["POST"]),
         Route(
             "/api/sessions/revoke-others",
@@ -1219,6 +1287,7 @@ def create_authenticated_app(
         Route("/{path:path}", asset, methods=["GET", "HEAD"]),
     ]
     middleware = [
+        Middleware(RequestContextMiddleware),
         Middleware(SecurityHeadersMiddleware),
         Middleware(
             TrustedHostMiddleware,

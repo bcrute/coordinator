@@ -27,7 +27,7 @@ from starlette.responses import JSONResponse, RedirectResponse
 from starlette.websockets import WebSocket
 
 LOG = logging.getLogger("coordinator.auth")
-PUBLIC_PATHS = frozenset({"/healthz", "/auth/login", "/auth/callback"})
+PUBLIC_PATHS = frozenset({"/healthz", "/readyz", "/auth/login", "/auth/callback"})
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 SESSION_COOKIE = "__Host-coordinator_session"
 DEV_SESSION_COOKIE = "coordinator_session"
@@ -669,6 +669,32 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
         )
         response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        return response
+
+
+class RequestContextMiddleware(BaseHTTPMiddleware):
+    """Attach a correlation identifier and emit one bounded structured access event."""
+
+    async def dispatch(self, request: Request, call_next: Callable[..., Any]):
+        request_id = secrets.token_hex(12)
+        request.state.request_id = request_id
+        started = time.monotonic()
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        LOG.info(
+            json.dumps(
+                {
+                    "event": "http_request",
+                    "request_id": request_id,
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status": response.status_code,
+                    "duration_ms": round((time.monotonic() - started) * 1000, 3),
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
         return response
 
 

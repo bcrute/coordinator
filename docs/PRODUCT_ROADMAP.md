@@ -202,6 +202,16 @@ Exit gate:
 
 **Status: in progress.**
 
+Progress:
+
+- `/api/v1` state, event, run, and preference contracts are available alongside the
+  compatibility paths with a machine-readable OpenAPI 3.1 entry point.
+- SSE transitions use durable monotonically increasing SQLite event IDs, honor
+  `Last-Event-ID`, replay retained transitions, emit current state snapshots, and
+  retain heartbeat behavior.
+- Cheap liveness, dependency-aware readiness, Prometheus text metrics, structured
+  request logs, and response correlation IDs are available.
+
 Deliverables:
 
 1. Introduce typed, versioned `/api/v1` request/response and event schemas with one
