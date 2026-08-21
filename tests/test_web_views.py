@@ -101,6 +101,35 @@ class RouteAndHashTests(unittest.TestCase):
         self.assertIn("applyRoute()", body)
 
 
+class ProviderUsageHeaderTests(unittest.TestCase):
+    def setUp(self):
+        self.js = read(WEB_DIR / "app.js")
+        self.html = read(WEB_DIR / "index.html")
+
+    def test_header_has_compact_codex_and_claude_usage_values(self):
+        for provider in ("codex", "claude"):
+            self.assertIn('id="usage-%s"' % provider, self.html)
+            self.assertIn('id="usage-%s-value"' % provider, self.html)
+        self.assertIn('id="usage-refresh"', self.html)
+
+    def test_usage_reads_cache_and_manual_refresh_uses_post(self):
+        self.assertIn('var PROVIDER_USAGE_URL = "/api/provider-usage"', self.js)
+        self.assertIn(
+            'var PROVIDER_USAGE_REFRESH_URL = "/api/provider-usage/refresh"',
+            self.js,
+        )
+        refresh = re.search(r"function refreshProviderUsage\([\s\S]*?\n}\n", self.js)
+        self.assertIsNotNone(refresh)
+        self.assertIn('method: "POST"', refresh.group(0))
+        self.assertIn('"X-CSRF-Token": csrfToken', refresh.group(0))
+
+    def test_usage_is_rendered_as_remaining_not_consumed(self):
+        renderer = re.search(r"function renderProviderUsage\([\s\S]*?\n}\n", self.js)
+        self.assertIsNotNone(renderer)
+        self.assertIn("remaining_percent", renderer.group(0))
+        self.assertIn("remaining", renderer.group(0))
+
+
 class PanelGroupingTests(unittest.TestCase):
     def setUp(self):
         self.html = read(WEB_DIR / "index.html")

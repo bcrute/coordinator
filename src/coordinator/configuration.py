@@ -14,6 +14,7 @@ CONFIG_KEYS = {
     "host",
     "port",
     "relay_log_lines",
+    "usage_refresh_seconds",
     "quiet",
     "auth_mode",
     "oidc_issuer",
@@ -104,6 +105,12 @@ def load_config(path: Path) -> dict[str, object]:
         if value < 0:
             raise ValueError("--config relay_log_lines must not be negative")
         settings["relay_log_lines"] = value
+
+    if "usage_refresh_seconds" in data:
+        value = data["usage_refresh_seconds"]
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ValueError("--config usage_refresh_seconds must be a positive integer")
+        settings["usage_refresh_seconds"] = value
 
     if "quiet" in data:
         value = data["quiet"]
@@ -210,6 +217,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         f"{RELAY_LOG_LINES}, unless --config supplies relay_log_lines)",
     )
     parser.add_argument(
+        "--usage-refresh-seconds",
+        type=int,
+        default=None,
+        help="provider usage refresh interval (default: 3600 seconds, unless --config "
+        "supplies usage_refresh_seconds)",
+    )
+    parser.add_argument(
         "--quiet",
         action=argparse.BooleanOptionalAction,
         default=None,
@@ -287,6 +301,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args.host = resolved("host", args.host, "127.0.0.1")
     args.port = resolved("port", args.port, 8765)
     args.relay_log_lines = resolved("relay_log_lines", args.relay_log_lines, RELAY_LOG_LINES)
+    args.usage_refresh_seconds = resolved(
+        "usage_refresh_seconds", args.usage_refresh_seconds, 3600
+    )
     args.quiet = bool(resolved("quiet", args.quiet, False))
     args.auth_mode = resolved("auth_mode", args.auth_mode, "local")
     args.oidc_issuer = resolved("oidc_issuer", args.oidc_issuer, "")
@@ -335,6 +352,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--port must be between 0 and 65535")
     if args.relay_log_lines < 0:
         parser.error("--relay-log-lines must not be negative")
+    if args.usage_refresh_seconds <= 0:
+        parser.error("--usage-refresh-seconds must be positive")
     if not str(args.host).strip():
         parser.error("--host must not be empty")
     if args.auth_mode not in {"local", "oidc"}:

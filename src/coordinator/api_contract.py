@@ -71,6 +71,12 @@ def openapi_document() -> dict[str, Any]:
     }
     paths: dict[str, Any] = {
         "/api/v1/state": {"get": _operation("Current workspace state", "State")},
+        "/api/v1/provider-usage": {
+            "get": _operation("Cached Codex and Claude usage", "ProviderUsage")
+        },
+        "/api/v1/provider-usage/refresh": {
+            "post": _operation("Refresh Codex and Claude usage", "ProviderUsage")
+        },
         "/api/v1/events": {
             "get": {
                 "summary": "Resumable state and transition stream",
@@ -189,6 +195,26 @@ def openapi_document() -> dict[str, Any]:
                 "security": object_schema,
             },
             "additionalProperties": True,
+        },
+        "ProviderUsage": {
+            "type": "object",
+            "required": [
+                "ok",
+                "generated_at",
+                "next_refresh_at",
+                "refresh_interval_seconds",
+                "refreshing",
+                "providers",
+            ],
+            "properties": {
+                "ok": {"const": True},
+                "generated_at": {"type": ["string", "null"], "format": "date-time"},
+                "next_refresh_at": {"type": ["string", "null"], "format": "date-time"},
+                "refresh_interval_seconds": {"type": "integer", "minimum": 1},
+                "refreshing": {"type": "boolean"},
+                "providers": {"type": "array", "items": object_schema},
+            },
+            "additionalProperties": False,
         },
         "RunList": {
             "type": "object",

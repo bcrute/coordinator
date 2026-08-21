@@ -31,6 +31,7 @@ class DefaultsTests(unittest.TestCase):
         self.assertEqual(args.host, "127.0.0.1")
         self.assertEqual(args.port, 8765)
         self.assertEqual(args.relay_log_lines, RELAY_LOG_LINES)
+        self.assertEqual(args.usage_refresh_seconds, 3600)
         self.assertFalse(args.quiet)
 
     def test_local_mode_refuses_a_routable_bind(self) -> None:
@@ -54,6 +55,7 @@ class ConfigValuesTests(unittest.TestCase):
                 host = "0.0.0.0"
                 port = 9090
                 relay_log_lines = 50
+                usage_refresh_seconds = 1800
                 quiet = true
                 """,
             )
@@ -63,6 +65,7 @@ class ConfigValuesTests(unittest.TestCase):
             self.assertEqual(args.host, "0.0.0.0")
             self.assertEqual(args.port, 9090)
             self.assertEqual(args.relay_log_lines, 50)
+            self.assertEqual(args.usage_refresh_seconds, 1800)
             self.assertTrue(args.quiet)
 
     def test_absolute_config_paths_are_kept_as_is(self) -> None:
@@ -301,6 +304,11 @@ class MalformedConfigTests(unittest.TestCase):
     def test_bool_as_int_relay_log_lines_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = write(Path(tmp) / "workflow.toml", "relay_log_lines = false\n")
+            self.assert_fails(["--config", str(config)])
+
+    def test_non_positive_usage_refresh_seconds_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = write(Path(tmp) / "workflow.toml", "usage_refresh_seconds = 0\n")
             self.assert_fails(["--config", str(config)])
 
     def test_quiet_wrong_type_fails(self) -> None:

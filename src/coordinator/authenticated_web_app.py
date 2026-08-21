@@ -30,6 +30,7 @@ from typing import Any
 from . import web_app
 from .api_contract import openapi_document
 from .operational_store import GuardrailPolicy, OperationalStore, evaluate_guardrails
+from .provider_usage import DEFAULT_REFRESH_SECONDS, ProviderUsageService
 from authlib.integrations.base_client.errors import OAuthError
 from authlib.integrations.starlette_client import OAuth
 from joserfc import jwt
@@ -98,6 +99,8 @@ def create_authenticated_app(
     oidc_client: Any | None = None,
     stop_timeout: float = web_app.STOP_TIMEOUT_SECONDS,
     start_grace: float = web_app.START_GRACE_SECONDS,
+    usage_refresh_seconds: int = DEFAULT_REFRESH_SECONDS,
+    provider_usage_service: ProviderUsageService | None = None,
 ) -> Starlette:
     """Build the default-deny authenticated ASGI application."""
 
@@ -129,6 +132,9 @@ def create_authenticated_app(
     operational = OperationalStore(settings.state_dir)
     operational.recover_interrupted()
     rate_limiter = SlidingWindowRateLimiter()
+    usage_service = provider_usage_service or ProviderUsageService(
+        usage_refresh_seconds
+    )
     terminal_attachment_lock = threading.Lock()
     terminal_attachment_owner: list[str | None] = [None]
     state_cache_lock = threading.Lock()
@@ -612,6 +618,15 @@ def create_authenticated_app(
         return JSONResponse(
             await run_in_threadpool(state_snapshot, dict(request.session))
         )
+
+    async def provider_usage(request: Request):
+        usage_service.start()
+        return JSONResponse({"ok": True, **usage_service.snapshot()})
+
+    async def provider_usage_refresh(request: Request):
+        payload = await run_in_threadpool(usage_service.refresh)
+        usage_service.start()
+        return JSONResponse({"ok": True, **payload})
 
     async def state_events(request: Request):
         if not isinstance(request.session.get("csrf_token"), str):
@@ -1661,8 +1676,11 @@ def create_authenticated_app(
 
     @asynccontextmanager
     async def lifespan(app: Starlette):
-        yield
-        await run_in_threadpool(context.shutdown)
+        try:
+            yield
+        finally:
+            await run_in_threadpool(usage_service.shutdown)
+            await run_in_threadpool(context.shutdown)
 
     routes = [
         Route("/healthz", health, methods=["GET", "HEAD"]),
@@ -1675,6 +1693,14 @@ def create_authenticated_app(
         Route("/auth/logout", logout, methods=["POST"]),
         Route("/api/state", state, methods=["GET"]),
         Route("/api/v1/state", versioned(state), methods=["GET"]),
+        Route("/api/provider-usage", provider_usage, methods=["GET"]),
+        Route("/api/v1/provider-usage", versioned(provider_usage), methods=["GET"]),
+        Route("/api/provider-usage/refresh", provider_usage_refresh, methods=["POST"]),
+        Route(
+            "/api/v1/provider-usage/refresh",
+            versioned(provider_usage_refresh),
+            methods=["POST"],
+        ),
         Route("/api/events", state_events, methods=["GET"]),
         Route("/api/v1/events", versioned(state_events), methods=["GET"]),
         Route("/api/activity", audit_events, methods=["GET"]),
@@ -1734,6 +1760,7 @@ def create_authenticated_app(
         Route("/api/watcher/{action:str}", post_only, methods=["GET", "HEAD"]),
         Route("/api/codex/{action:str}", post_only, methods=["GET", "HEAD"]),
         Route("/api/repository/select", post_only, methods=["GET", "HEAD"]),
+        Route("/api/provider-usage/refresh", post_only, methods=["GET", "HEAD"]),
         WebSocketRoute("/ws/terminal", terminal_socket),
         Route("/{path:path}", asset, methods=["GET", "HEAD"]),
     ]
@@ -1758,6 +1785,7 @@ def create_authenticated_app(
     app.state.context = context
     app.state.security_store = store
     app.state.operational_store = operational
+    app.state.provider_usage = usage_service
     app.state.settings = settings
     return app
 
@@ -1871,6 +1899,7 @@ def serve_application(args: Any) -> int:
             settings,
             repositories_root=args.repositories_root,
             relay_log_lines=args.relay_log_lines,
+            usage_refresh_seconds=int(args.usage_refresh_seconds),
         )
     except ValueError as error:
         print(f"error: {error}", file=os.sys.stderr)

@@ -128,6 +128,7 @@ command-line flag always overrides the matching config value.
 | `host`               | `127.0.0.1`                          | Bind address. Keep this at loopback unless you provide an authenticated boundary yourself (see warning below). |
 | `port`               | `8765`                               | TCP port; `0` picks a free port. |
 | `relay_log_lines`    | `200`                                | Number of `runtime/relay.log` lines returned by `/api/state`. |
+| `usage_refresh_seconds` | `3600`                            | Server-side refresh interval for cached Codex and Claude rolling-limit usage. Collection does not create model turns. |
 | `quiet`              | `false`                              | Suppress Uvicorn lifecycle messages; request access logging is disabled in both modes. |
 | `auth_mode`          | `local`                              | Both modes use the ASGI runtime; `local` enforces loopback, while `oidc` enables authentication. |
 | `oidc_issuer`        | none                                 | Exact Authentik issuer URL. Required in OIDC mode. |
@@ -152,6 +153,22 @@ and `..` for the repository paths for exactly this reason.
 **Precedence:** every explicit command-line flag wins over its corresponding value
 from `--config`, which in turn wins over the built-in default. See
 `workflow.example.toml` for a fully commented starting point.
+
+### Provider usage indicators
+
+The topbar shows compact **Codex** and **Claude** remaining percentages. Hover a
+value to see each reported rolling window and reset time, or use the adjacent
+refresh button for an immediate update. The server performs one shared refresh
+per `usage_refresh_seconds` (one hour by default), regardless of the number of
+open browser tabs.
+
+These checks do not create model turns: Codex is queried through its local app
+server's account-rate-limit method; Claude Code's non-interactive authentication
+status is checked before its authenticated subscription-usage endpoint is read.
+Claude subscription limits are unavailable for API-key-only logins, and either
+provider displays an unavailable state instead of estimating a quota from local
+token history. Credentials and access tokens are never returned to the browser
+or persisted by Coordinator.
 
 ## Authenticated OIDC mode
 

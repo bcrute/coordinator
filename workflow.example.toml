@@ -29,6 +29,10 @@ port = 8765
 # Number of relay-log lines returned by /api/state.
 relay_log_lines = 200
 
+# Codex and Claude usage is refreshed without creating model turns. The server
+# keeps one shared snapshot, so extra browser tabs do not multiply provider calls.
+usage_refresh_seconds = 3600
+
 # Suppress Uvicorn lifecycle messages. Request access logs stay disabled.
 quiet = false
 

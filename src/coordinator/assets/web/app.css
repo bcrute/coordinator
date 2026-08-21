@@ -110,6 +110,68 @@ a {
   gap: 0.35rem 1rem;
 }
 
+.provider-usage {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+}
+
+.usage-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid var(--edge-solid);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.usage-chip strong {
+  color: var(--text);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.usage-chip[data-tone="warn"] {
+  border-color: color-mix(in srgb, var(--warn) 65%, var(--edge-solid));
+}
+
+.usage-chip[data-tone="warn"] strong {
+  color: var(--warn);
+}
+
+.usage-chip[data-tone="bad"] {
+  border-color: color-mix(in srgb, var(--bad) 70%, var(--edge-solid));
+}
+
+.usage-chip[data-tone="bad"] strong {
+  color: var(--bad);
+}
+
+.usage-refresh {
+  width: 1.65rem;
+  height: 1.65rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.usage-refresh:hover {
+  border-color: var(--edge-solid);
+  color: var(--text);
+}
+
+.usage-refresh:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
 .topbar-links {
   margin: 0;
   font-size: 0.78rem;
@@ -1016,6 +1078,10 @@ kbd { padding: 0.08rem 0.35rem; border: 1px solid var(--edge-solid); border-radi
 
   .topbar {
     padding: 0.6rem 0.75rem;
+  }
+
+  .provider-usage {
+    order: 3;
   }
 
   .repo-picker-select {

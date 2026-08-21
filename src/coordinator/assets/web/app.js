@@ -8,6 +8,8 @@
 
 var STATE_URL = "/api/state";
 var STATE_EVENTS_URL = "/api/events";
+var PROVIDER_USAGE_URL = "/api/provider-usage";
+var PROVIDER_USAGE_REFRESH_URL = "/api/provider-usage/refresh";
 var TERMINAL_SOCKET_URL = "/ws/terminal";
 var REPOSITORY_SELECT_URL = "/api/repository/select";
 var REPOSITORY_SELECT_TIMEOUT_MS = 30000;
@@ -26,6 +28,7 @@ var NOT_RECORDED = "not recorded";
 var nodes = Object.create(null);
 var counts = new Intl.NumberFormat();
 var tickTimer = null;
+var usageTimer = null;
 var stateSource = null;
 var lastSuccessAt = null;
 var failures = 0;
@@ -1424,6 +1427,108 @@ function render(state) {
   }
 }
 
+/* Provider limits -------------------------------------------------------- */
+
+function usageTone(remaining) {
+  if (typeof remaining !== "number") return "neutral";
+  if (remaining <= 5) return "bad";
+  if (remaining <= 20) return "warn";
+  return "ok";
+}
+
+function usagePercent(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  return Math.round(value) + "%";
+}
+
+function usageReset(value) {
+  if (typeof value !== "string" || value === "") return "reset unknown";
+  var parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "reset unknown";
+  return "resets " + parsed.toLocaleString();
+}
+
+function renderProviderUsage(payload) {
+  var providers = list(record(payload).providers);
+  [
+    { id: "codex", chip: el("usage-codex"), value: el("usage-codex-value") },
+    { id: "claude", chip: el("usage-claude"), value: el("usage-claude-value") },
+  ].forEach(function (target) {
+    var provider = providers.find(function (candidate) {
+      return text(record(candidate).id) === target.id;
+    });
+    var details = record(provider);
+    var remaining = details.remaining_percent;
+    var chip = target.chip;
+    var value = target.value;
+    if (!chip || !value) return;
+    value.textContent = usagePercent(remaining);
+    chip.dataset.tone = usageTone(remaining);
+    var title = text(details.name, target.id === "codex" ? "Codex" : "Claude");
+    var plan = text(details.plan);
+    if (plan) title += " " + plan;
+    var windows = list(details.windows);
+    if (windows.length) {
+      title += " — " + windows.map(function (windowValue) {
+        var windowDetails = record(windowValue);
+        return text(windowDetails.label, "rolling") + ": " +
+          usagePercent(windowDetails.remaining_percent) + " remaining, " +
+          usageReset(windowDetails.resets_at);
+      }).join("; ");
+    } else {
+      title += " — " + text(details.message, "Usage unavailable");
+    }
+    chip.title = title;
+  });
+  var refresh = el("usage-refresh");
+  if (refresh) refresh.disabled = record(payload).refreshing === true;
+}
+
+function loadProviderUsage() {
+  return fetch(PROVIDER_USAGE_URL, {
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+  }).then(answer).then(function (result) {
+    if (!result.response.ok) {
+      throw new Error(text(result.payload.message, "usage request failed"));
+    }
+    renderProviderUsage(result.payload);
+  }).catch(function () {
+    renderProviderUsage({
+      providers: [
+        { id: "codex", message: "Usage service unavailable" },
+        { id: "claude", message: "Usage service unavailable" },
+      ],
+    });
+  });
+}
+
+function refreshProviderUsage() {
+  var refresh = el("usage-refresh");
+  if (!refresh || refresh.disabled || csrfToken === "") return;
+  refresh.disabled = true;
+  fetch(PROVIDER_USAGE_REFRESH_URL, {
+    method: "POST",
+    cache: "no-store",
+    headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+  }).then(answer).then(function (result) {
+    if (!result.response.ok) {
+      throw new Error(text(result.payload.message, "usage refresh failed"));
+    }
+    renderProviderUsage(result.payload);
+  }).catch(function () {
+    refresh.disabled = false;
+  });
+}
+
+function wireProviderUsage() {
+  var refresh = el("usage-refresh");
+  if (refresh) refresh.addEventListener("click", refreshProviderUsage);
+  loadProviderUsage();
+  window.setTimeout(loadProviderUsage, 1500);
+  usageTimer = window.setInterval(loadProviderUsage, 60 * 1000);
+}
+
 /* Workspace and durable runs --------------------------------------------- */
 
 function renderOwnerAction(state) {
@@ -2239,6 +2344,7 @@ function start() {
   wireAdministration();
   wireDailyDriver();
   wireShortcuts();
+  wireProviderUsage();
   paintConnection();
   startStateFeed();
   tickTimer = window.setInterval(paintConnection, POLL_INTERVAL_MS);
@@ -2253,6 +2359,7 @@ function start() {
   window.addEventListener("pagehide", function () {
     stopStateFeed();
     window.clearInterval(tickTimer);
+    window.clearInterval(usageTimer);
     teardownCodexTerminal();
   });
 }

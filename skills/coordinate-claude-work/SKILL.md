@@ -252,6 +252,13 @@ watcher's lock untouched), binds new managers to the selected repository,
 resets the browser's terminal attachment, and refreshes every view to the new
 repository's state, all without restarting the server.
 
+The same topbar shows compact Codex and Claude remaining-usage indicators. The
+server shares one provider snapshot across all browser tabs, refreshes it hourly
+by default (configurable with `usage_refresh_seconds`), and exposes an explicit
+manual refresh button. Collection uses provider account/status interfaces and
+never creates an agent turn; unavailable subscription data is reported as such
+rather than inferred from the workflow token counters.
+
 The "Codex session" panel is a real, interactive terminal (xterm.js, vendored
 by the application under `src/coordinator/assets/web/vendor/`) — an actual
 PTY-backed frontend, not a log viewer —

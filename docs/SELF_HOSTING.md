@@ -104,6 +104,15 @@ starting the server, then restart the server so the new process inherits the
 updated environment. The same applies to Claude Code's own authentication for
 automatic-watcher and native-team turns.
 
+**A provider usage indicator shows unavailable.** Usage collection runs as the
+same operating-system account as Coordinator. Codex requires a current Codex
+CLI login and an app-server version that supports account rate limits. Claude
+requires a `claude.ai` subscription login; API-key-only Claude authentication
+does not expose subscription windows. Re-authenticate the affected CLI as the
+service account, restart Coordinator if its environment changed, then use the
+topbar refresh button. The hourly collector does not create model turns and
+does not expose provider credentials through the HTTP API.
+
 **A sibling repository does not show up in the repository picker.** The
 picker only lists direct children of `repositories_root` that have a `.git`
 file or directory directly inside them (a non-recursive scan). Confirm the

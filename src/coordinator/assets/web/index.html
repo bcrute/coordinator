@@ -32,6 +32,21 @@
         </p>
         <p class="repo-picker-root" id="repository-catalog-root">Catalog root: not recorded</p>
       </div>
+      <div class="provider-usage" aria-label="Provider usage">
+        <span class="usage-chip" id="usage-codex" data-tone="neutral" title="Waiting for Codex usage">
+          <span>Codex</span><strong id="usage-codex-value">…</strong>
+        </span>
+        <span class="usage-chip" id="usage-claude" data-tone="neutral" title="Waiting for Claude usage">
+          <span>Claude</span><strong id="usage-claude-value">…</strong>
+        </span>
+        <button
+          type="button"
+          class="usage-refresh"
+          id="usage-refresh"
+          aria-label="Refresh provider usage"
+          title="Refresh provider usage now"
+        >↻</button>
+      </div>
       <div class="topbar-status">
         <p class="connection" id="connection" data-connection="connecting" role="status" aria-live="polite">
           <span class="connection-dot" aria-hidden="true"></span>

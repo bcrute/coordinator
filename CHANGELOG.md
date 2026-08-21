@@ -17,6 +17,8 @@ interface with migration notes.
   configurable rate limits, RP logout, and signed back-channel logout.
 - Locked dependency graph and tag-driven build, SBOM, checksum, provenance, and release
   automation.
+- Compact Codex and Claude remaining-usage indicators backed by an hourly shared cache,
+  provider reset details, and a manual refresh control that never creates model turns.
 
 ### Changed
 
