@@ -147,6 +147,7 @@ class OperationalStore:
     def __init__(self, state_dir: Path) -> None:
         self.state_dir = state_dir.resolve()
         self.path = self.state_dir / "operations.sqlite3"
+        self._revision = 0
         self.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.state_dir.chmod(0o700)
         directory_stat = self.state_dir.stat()
@@ -158,6 +159,13 @@ class OperationalStore:
         if self.path.is_symlink():
             raise ValueError("operational database path must not be a symbolic link")
         self._migrate()
+
+    @property
+    def revision(self) -> int:
+        return self._revision
+
+    def _changed(self) -> None:
+        self._revision += 1
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=10.0)
@@ -604,6 +612,8 @@ class OperationalStore:
             cursor = connection.execute(
                 "UPDATE runs SET policy_json = ? WHERE run_id = ?", (encoded, run_id)
             )
+        if cursor.rowcount:
+            self._changed()
         return cursor.rowcount == 1
 
     def pause(self, run_id: str, reason: str, now: float | None = None) -> bool:
@@ -625,6 +635,8 @@ class OperationalStore:
                         json.dumps({"reason": reason[:500]}, separators=(",", ":")),
                     ),
                 )
+        if cursor.rowcount:
+            self._changed()
         return cursor.rowcount == 1
 
     def resume(self, run_id: str, now: float | None = None) -> bool:
@@ -641,6 +653,8 @@ class OperationalStore:
                     "VALUES (?, ?, ?, 'run_resumed', '{}')",
                     (stable_id("event", run_id, "resume", current), run_id, current),
                 )
+        if cursor.rowcount:
+            self._changed()
         return cursor.rowcount == 1
 
     def archive(self, run_id: str, now: float | None = None) -> bool:
@@ -650,6 +664,8 @@ class OperationalStore:
                 "UPDATE runs SET archived_at = ? WHERE run_id = ? AND archived_at IS NULL",
                 (current, run_id),
             )
+        if cursor.rowcount:
+            self._changed()
         return cursor.rowcount == 1
 
     def reopen(self, run_id: str) -> bool:
@@ -658,6 +674,8 @@ class OperationalStore:
                 "UPDATE runs SET archived_at = NULL WHERE run_id = ? AND archived_at IS NOT NULL",
                 (run_id,),
             )
+        if cursor.rowcount:
+            self._changed()
         return cursor.rowcount == 1
 
     def recover_interrupted(self, now: float | None = None) -> int:
@@ -831,6 +849,7 @@ class OperationalStore:
                 "value_json = excluded.value_json, updated_at = excluded.updated_at",
                 (key, encoded, time.time()),
             )
+        self._changed()
 
     def preferences(self) -> dict[str, object]:
         with self._connect() as connection:

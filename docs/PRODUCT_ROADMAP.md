@@ -209,6 +209,13 @@ Progress:
 - SSE transitions use durable monotonically increasing SQLite event IDs, honor
   `Last-Event-ID`, replay retained transitions, emit current state snapshots, and
   retain heartbeat behavior.
+- The terminal WebSocket advertises `terminal.v1`, assigns output/session sequence
+  numbers, accepts replay cursors on reconnect, bounds its existing server buffer,
+  and preserves one explicit input owner with read-only observers.
+- Dashboard clients now share a short-lived reconstructed state snapshot. Repository,
+  coordination-file, process, and operational-index fingerprints invalidate the
+  snapshot immediately, so the one-second UI cadence does not multiply filesystem
+  parsing by the number of connected browsers.
 - Cheap liveness, dependency-aware readiness, Prometheus text metrics, structured
   request logs, and response correlation IDs are available.
 

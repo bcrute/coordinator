@@ -63,6 +63,7 @@ var codexSocket = null;
 var codexSocketTimer = null;
 var codexOnDataDisposable = null;
 var codexTerminalWritable = false;
+var codexTerminalCursor = null;
 
 var codexResizeTimer = null;
 var codexLastSentRows = null;
@@ -655,6 +656,7 @@ function resetTerminalClientStateForSwitch() {
   }
   codexLastSentRows = null;
   codexLastSentCols = null;
+  codexTerminalCursor = null;
   renderedLog = null;
 }
 
@@ -1062,6 +1064,7 @@ function applyCodexOutput(output) {
   var payload = output && typeof output === "object" ? output : {};
   var chunk = typeof payload.text === "string" ? payload.text : "";
   var reset = payload.reset === true;
+  if (Number.isInteger(payload.next_cursor)) codexTerminalCursor = payload.next_cursor;
   if (reset) {
     codexTerminal.reset();
     if (chunk !== "") {
@@ -1093,7 +1096,12 @@ function connectCodexSocket() {
     if (socket !== codexSocket) {
       return;
     }
-    socket.send(JSON.stringify({ type: "hello", csrf_token: csrfToken }));
+    socket.send(JSON.stringify({
+      type: "hello",
+      protocol: "terminal.v1",
+      csrf_token: csrfToken,
+      cursor: codexTerminalCursor,
+    }));
     codexTerminalWritable = false;
     codexReport("Terminal connected through the live socket.", "ok");
     scheduleCodexFitAndResize();

@@ -121,6 +121,58 @@ def create_authenticated_app(
     operational.recover_interrupted()
     terminal_attachment_lock = threading.Lock()
     terminal_attachment_owner: list[str | None] = [None]
+    state_cache_lock = threading.Lock()
+    state_cache: list[object] = [0.0, None, -1, None]
+
+    def coordination_fingerprint(
+        active: web_app.RepositoryContext,
+    ) -> tuple[object, ...]:
+        """Return the cheap inputs which can change a rendered state snapshot."""
+
+        coordination = active.repo / ".coordination"
+        paths = [
+            coordination / "README.md",
+            coordination / "planner" / "goal.md",
+            coordination / "planner" / "roadmap.md",
+            coordination / "planner" / "current-task.md",
+            coordination / "coder" / "status.md",
+            coordination / "reviews" / "latest.md",
+            coordination / "reviews" / "completion.md",
+            coordination / "runtime" / "claude-progress.json",
+            coordination / "runtime" / "goal-timing.json",
+            coordination / "runtime" / "relay.log",
+        ]
+        runtime = coordination / "runtime"
+        if runtime.is_dir():
+            paths.extend(sorted(runtime.glob("watcher-*-status.json")))
+            paths.extend(sorted(runtime.glob("*.lock")))
+        files: list[tuple[str, int, int]] = []
+        for path in paths:
+            try:
+                details = path.stat()
+                files.append(
+                    (
+                        str(path.relative_to(active.repo)),
+                        details.st_mtime_ns,
+                        details.st_size,
+                    )
+                )
+            except (FileNotFoundError, OSError):
+                files.append((str(path.relative_to(active.repo)), 0, 0))
+        watcher = active.watcher.snapshot()
+        codex = active.codex_session.snapshot()
+        return (
+            str(active.repo),
+            watcher.get("state"),
+            watcher.get("pid"),
+            watcher.get("lock_present"),
+            watcher.get("can_start"),
+            codex.get("state"),
+            codex.get("pid"),
+            codex.get("buffer_base_cursor"),
+            codex.get("buffer_next_cursor"),
+            tuple(files),
+        )
 
     if isinstance(settings, OIDCSettings) and oidc_client is None:
         oauth = OAuth()
@@ -320,7 +372,7 @@ def create_authenticated_app(
             )
         return JSONResponse({"ok": True, "redirect": redirect})
 
-    def state_snapshot(session: Mapping[str, Any]) -> dict[str, object]:
+    def fresh_state_snapshot(session: Mapping[str, Any]) -> dict[str, object]:
         with context.lease() as active:
             payload = web_app.build_state(
                 active.repo,
@@ -396,6 +448,52 @@ def create_authenticated_app(
                 "csrf_token": session["csrf_token"],
             }
         return payload
+
+    def state_snapshot(session: Mapping[str, Any]) -> dict[str, object]:
+        """Share one short-lived filesystem reconstruction across connected clients."""
+
+        current = time.monotonic()
+        with context.lease() as active:
+            fingerprint = coordination_fingerprint(active)
+            with state_cache_lock:
+                cached = state_cache[1]
+                if (
+                    isinstance(cached, dict)
+                    and cached.get("repo") == str(active.repo)
+                    and current - float(state_cache[0]) < 0.75
+                    and state_cache[2] == operational.revision
+                    and state_cache[3] == fingerprint
+                ):
+                    payload = json.loads(json.dumps(cached))
+                    if isinstance(settings, OIDCSettings):
+                        user = dict(session["user"])
+                        payload["security"] = {
+                            "mode": "oidc",
+                            "authenticated": True,
+                            "user": {
+                                "display": user.get("display"),
+                                "sub": user.get("sub"),
+                            },
+                            "csrf_token": session["csrf_token"],
+                        }
+                    else:
+                        payload["security"] = {
+                            "mode": "local",
+                            "authenticated": False,
+                            "user": None,
+                            "csrf_token": session["csrf_token"],
+                        }
+                    return payload
+                payload = fresh_state_snapshot(session)
+                reusable = json.loads(json.dumps(payload))
+                reusable.pop("security", None)
+                state_cache[:] = [
+                    current,
+                    reusable,
+                    operational.revision,
+                    coordination_fingerprint(active),
+                ]
+                return payload
 
     async def state(request: Request):
         if not isinstance(request.session.get("csrf_token"), str):
@@ -1096,6 +1194,7 @@ def create_authenticated_app(
             if (
                 not isinstance(hello, dict)
                 or hello.get("type") != "hello"
+                or hello.get("protocol", "terminal.v1") != "terminal.v1"
                 or not isinstance(hello.get("csrf_token"), str)
                 or not isinstance(expected_csrf, str)
                 or not hmac.compare_digest(hello["csrf_token"], expected_csrf)
@@ -1114,9 +1213,12 @@ def create_authenticated_app(
         with context.lease() as active:
             repository = str(active.repo)
             manager = active.codex_session
+        requested_cursor = hello.get("cursor")
+        if not isinstance(requested_cursor, int) or isinstance(requested_cursor, bool):
+            requested_cursor = None
 
         async def send_output() -> None:
-            cursor: int | None = None
+            cursor: int | None = requested_cursor
             while True:
                 if not await run_in_threadpool(store.is_active, supplied_id):
                     await websocket.close(code=1008, reason="session expired")
@@ -1132,13 +1234,27 @@ def create_authenticated_app(
                 if isinstance(cursor_value, int):
                     cursor = cursor_value
                 if output.get("text") or output.get("reset"):
-                    await websocket.send_json({"type": "output", "output": output})
+                    await websocket.send_json(
+                        {
+                            "protocol": "terminal.v1",
+                            "sequence": output.get("next_cursor", 0),
+                            "type": "output",
+                            "output": output,
+                        }
+                    )
                 session = manager.snapshot()
                 session["attachment"] = {
                     "mode": "read_write" if writable else "read_only",
                     "owned_by_this_connection": writable,
                 }
-                await websocket.send_json({"type": "session", "session": session})
+                await websocket.send_json(
+                    {
+                        "protocol": "terminal.v1",
+                        "sequence": session.get("buffer_next_cursor", 0),
+                        "type": "session",
+                        "session": session,
+                    }
+                )
 
         async def receive_input() -> None:
             while True:

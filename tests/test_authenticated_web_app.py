@@ -552,6 +552,22 @@ class LocalAppTests(unittest.TestCase):
                 any(event["event"] == "repository_initialize" for event in activity)
             )
 
+    def test_versioned_contract_readiness_metrics_and_correlation(self) -> None:
+        with TestClient(self.app, base_url="http://127.0.0.1") as client:
+            ready = client.get("/readyz")
+            self.assertEqual(ready.status_code, 200, ready.text)
+            self.assertEqual(ready.json()["status"], "ready")
+            state = client.get("/api/v1/state")
+            self.assertEqual(state.status_code, 200, state.text)
+            self.assertEqual(state.json()["api_version"], "v1")
+            self.assertEqual(len(state.headers["x-request-id"]), 24)
+            self.assertEqual(client.get("/api/v1/runs").status_code, 200)
+            document = client.get("/api/v1/openapi.json").json()
+            self.assertEqual(document["openapi"], "3.1.0")
+            metrics = client.get("/metrics")
+            self.assertEqual(metrics.status_code, 200)
+            self.assertIn("coordinator_runs", metrics.text)
+
     def test_run_history_policy_events_and_explicit_resume(self) -> None:
         with TestClient(self.app, base_url="http://127.0.0.1") as client:
             state = client.get("/api/state").json()
@@ -679,11 +695,23 @@ class LocalAppTests(unittest.TestCase):
                 "ws://127.0.0.1/ws/terminal",
                 headers={"Origin": "http://127.0.0.1"},
             ) as socket:
-                socket.send_json({"type": "hello", "csrf_token": csrf})
+                socket.send_json(
+                    {
+                        "type": "hello",
+                        "protocol": "terminal.v1",
+                        "csrf_token": csrf,
+                        "cursor": 0,
+                    }
+                )
                 message = socket.receive_json()
                 self.assertIn(message["type"], {"output", "session"})
+                self.assertEqual(message["protocol"], "terminal.v1")
+                self.assertIsInstance(message["sequence"], int)
                 if message["type"] == "output":
-                    self.assertEqual(socket.receive_json()["type"], "session")
+                    session = socket.receive_json()
+                    self.assertEqual(session["type"], "session")
+                    self.assertEqual(session["protocol"], "terminal.v1")
+                    self.assertIsInstance(session["sequence"], int)
                 socket.send_json({"type": "input", "data": "socket-roundtrip\n"})
                 chunks = []
                 for _ in range(10):
