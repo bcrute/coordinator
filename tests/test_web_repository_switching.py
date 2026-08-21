@@ -552,9 +552,9 @@ class RepositorySwitchingTests(unittest.TestCase):
         fresh_codex = FakeManager()
 
         with mock.patch(
-            "web_app.WatcherManager", side_effect=[old_watcher, fresh_watcher]
+            "coordinator.web_app.WatcherManager", side_effect=[old_watcher, fresh_watcher]
         ), mock.patch(
-            "web_app.CodexSessionManager", side_effect=[old_codex, fresh_codex]
+            "coordinator.web_app.CodexSessionManager", side_effect=[old_codex, fresh_codex]
         ):
             context = ApplicationContext(
                 repo_a.resolve(),

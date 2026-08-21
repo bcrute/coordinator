@@ -149,23 +149,22 @@ status and locks live in `.coordination/runtime/` and remain untracked.
 ## Serve the local web app
 
 The owner can watch and drive the automatic relay from a browser. Run the
-installed skill; never copy the web assets into the target project. The
+installed Coordinator application; never copy the web assets into the target project. The
 initial `--repo` may be an uninitialized Git repository or a compatible
 already-initialized non-Git repository. Either pass flags directly:
 
 ```bash
-python3 <skill-directory>/scripts/web_app.py \
+coordinator serve \
   --repo <path-to-project> --repositories-root <path-to-projects-parent-dir>
 ```
 
 or point at a portable TOML settings file (recommended for repeated use — see
 the repository root's `workflow.example.toml` and `README.md` for the full
 key reference and precedence rules). The default `auth_mode = "local"` remains
-loopback-only; `auth_mode = "oidc"` requires the repository's
-`requirements.txt` and selects the authenticated ASGI runtime:
+loopback-only; `auth_mode = "oidc"` selects the authenticated ASGI runtime:
 
 ```bash
-python3 <skill-directory>/scripts/web_app.py --config workflow.toml
+coordinator serve --config workflow.toml
 ```
 
 `--repo` defaults to the current directory and accepts either an absolute path or
@@ -254,7 +253,8 @@ resets the browser's terminal attachment, and refreshes every view to the new
 repository's state, all without restarting the server.
 
 The "Codex session" panel is a real, interactive terminal (xterm.js, vendored
-under `assets/web/vendor/`) — an actual PTY-backed frontend, not a log viewer —
+by the application under `src/coordinator/assets/web/vendor/`) — an actual
+PTY-backed frontend, not a log viewer —
 attached to one fixed, non-configurable command, `codex -C <repo>`, where
 `<repo>` is whichever repository is currently active. There is no request
 surface for choosing a different program, argument, or working directory; only

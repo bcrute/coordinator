@@ -23,7 +23,8 @@ EXAMPLE_CONFIG = ROOT / "workflow.example.toml"
 EXAMPLE_SERVICE = ROOT / "deploy" / "workflow-web.service.example"
 OIDC_SERVICE = ROOT / "deploy" / "workflow-web-oidc.service.example"
 LICENSE_PATH = ROOT / "LICENSE"
-VENDOR_DIR = SKILL / "assets" / "web" / "vendor"
+PACKAGE = ROOT / "src" / "coordinator"
+VENDOR_DIR = PACKAGE / "assets" / "web" / "vendor"
 
 FORBIDDEN_PATH_FRAGMENT = "/home/" + "ben"
 
@@ -101,8 +102,17 @@ def _first_party_public_files() -> list[Path]:
         ROOT / ".gitignore",
         ROOT / "AGENTS.md",
         ROOT / "CLAUDE.md",
+        ROOT / "pyproject.toml",
     ]
     for path in sorted(SKILL.rglob("*")):
+        if not path.is_file():
+            continue
+        if VENDOR_DIR in path.parents or "__pycache__" in path.parts:
+            continue
+        if path.suffix.lower() in NON_TEXT_SUFFIXES:
+            continue
+        paths.append(path)
+    for path in sorted(PACKAGE.rglob("*")):
         if not path.is_file():
             continue
         if VENDOR_DIR in path.parents or "__pycache__" in path.parts:
@@ -124,6 +134,7 @@ class RequiredFilesExistTests(unittest.TestCase):
             ROOT / "CLAUDE.md",
             ROOT / "requirements.txt",
             ROOT / "requirements-dev.txt",
+            ROOT / "pyproject.toml",
             EXAMPLE_CONFIG,
             EXAMPLE_SERVICE,
             OIDC_SERVICE,
@@ -133,16 +144,39 @@ class RequiredFilesExistTests(unittest.TestCase):
             SKILL / "SKILL.md",
             SKILL / "scripts" / "web_app.py",
             SKILL / "scripts" / "authenticated_web_app.py",
+            PACKAGE / "cli.py",
+            PACKAGE / "web_app.py",
+            PACKAGE / "authenticated_web_app.py",
         ]
         for path in required:
             with self.subTest(path=path):
                 self.assertTrue(path.is_file(), f"missing required file: {path}")
 
     def test_vendor_license_exists(self) -> None:
-        vendor_license = SKILL / "assets" / "web" / "vendor" / "LICENSE.txt"
+        vendor_license = VENDOR_DIR / "LICENSE.txt"
         self.assertTrue(vendor_license.is_file())
         text = vendor_license.read_text(encoding="utf-8")
         self.assertTrue(text.strip(), "vendor LICENSE.txt must not be empty")
+
+
+class PackageMetadataTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    def test_console_command_and_package_layout_are_declared(self) -> None:
+        project = self.data["project"]
+        self.assertEqual(project["scripts"]["coordinator"], "coordinator.cli:main")
+        self.assertEqual(self.data["tool"]["setuptools"]["package-dir"][""], "src")
+        self.assertEqual(project["requires-python"], ">=3.11")
+
+    def test_application_dependency_pins_match_requirements_file(self) -> None:
+        metadata = set(self.data["project"]["dependencies"])
+        requirements = {
+            line.strip()
+            for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+        self.assertEqual(metadata, requirements)
 
 
 class NoPrivatePathLeakTests(unittest.TestCase):
@@ -296,7 +330,7 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertRegex(self.text, r"package-manager-cache:\s*false")
 
     def test_installs_declared_dependencies_without_provider_agent_launch(self) -> None:
-        self.assertIn("pip install --requirement requirements-dev.txt", self.text)
+        self.assertIn("pip install --editable . --requirement requirements-dev.txt", self.text)
         forbidden_terms = [
             "npm install",
             "npm ci",
@@ -318,7 +352,7 @@ class CiWorkflowTests(unittest.TestCase):
 
     def test_required_commands_present(self) -> None:
         self.assertIn("python -m pip_audit --requirement requirements.txt", self.text)
-        self.assertIn("python -m compileall -q skills tests", self.text)
+        self.assertIn("python -m compileall -q src skills tests", self.text)
         self.assertIn("python -m unittest discover -s tests", self.text)
         self.assertIn("node --check", self.text)
 
@@ -356,7 +390,7 @@ class ReleaseChecklistTests(unittest.TestCase):
         lowered = self.text.lower()
         for topic in (
             "unittest discover -s tests",
-            "compileall -q skills tests",
+            "compileall -q src skills tests",
             ".gitignore",
             "git status",
             "secret",
@@ -400,6 +434,7 @@ class PublicCheckoutUnitDiscoveryTests(unittest.TestCase):
             "test_authenticated_web_app.py",
             "test_web_e2e.py",
             "test_distribution.py",
+            "test_coordinator_cli.py",
         }
     )
 
@@ -428,7 +463,7 @@ class PublicCheckoutUnitDiscoveryTests(unittest.TestCase):
     def test_public_test_set_equals_expected_after_gitignore_exclusions(self) -> None:
         """Derive the public test module set as (all test_*.py on disk) minus
         (the exact per-file .gitignore exclusions), and assert it equals the
-        expected twelve modules exactly, so an accidental extra public test
+        expected public modules exactly, so an accidental extra public test
         file fails this contract rather than passing silently.
         """
         self.assertEqual(_public_test_modules(), self.EXPECTED_PUBLIC_TEST_MODULES)

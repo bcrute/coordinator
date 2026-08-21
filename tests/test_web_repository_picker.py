@@ -1,7 +1,7 @@
 """Focused contract tests for the browser repository picker source.
 
 These tests only read the checked-in HTML/JS source under
-``skills/coordinate-claude-work/assets/web``; they never launch a real
+``src/coordinator/assets/web``; they never launch a real
 browser, watcher, Codex, or Claude process.
 """
 
@@ -9,13 +9,7 @@ import re
 import unittest
 from pathlib import Path
 
-WEB_DIR = (
-    Path(__file__).resolve().parent.parent
-    / "skills"
-    / "coordinate-claude-work"
-    / "assets"
-    / "web"
-)
+WEB_DIR = Path(__file__).resolve().parent.parent / "src" / "coordinator" / "assets" / "web"
 
 ROUTES = [
     "monitor",

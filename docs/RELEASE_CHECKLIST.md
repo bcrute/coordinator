@@ -9,7 +9,7 @@ performs those actions automatically.
 - [ ] Install `requirements-dev.txt` in a clean virtual environment.
 - [ ] Run the full local suite:
       `.venv/bin/python -m unittest discover -s tests -v`.
-- [ ] Run `.venv/bin/python -m compileall -q skills tests` to catch syntax
+- [ ] Run `.venv/bin/python -m compileall -q src skills tests` to catch syntax
       errors.
 - [ ] Run `python -m pip_audit --requirement requirements.txt` and resolve or
       explicitly document every finding.
@@ -45,7 +45,7 @@ performs those actions automatically.
 
 ## 5. Vendored attribution
 
-- [ ] Confirm `skills/coordinate-claude-work/assets/web/vendor/LICENSE.txt`
+- [ ] Confirm `src/coordinator/assets/web/vendor/LICENSE.txt`
       (xterm.js and addon-fit) is present and unmodified, and that
       `README.md`'s "Third-party code" section still accurately names what
       is vendored and where.
@@ -53,7 +53,7 @@ performs those actions automatically.
 ## 6. Local smoke test
 
 - [ ] Copy `workflow.example.toml` to `workflow.toml`, run
-      `.venv/bin/python skills/coordinate-claude-work/scripts/web_app.py --config workflow.toml`,
+      `.venv/bin/coordinator serve --config workflow.toml`,
       and confirm the dashboard loads at the printed loopback URL before
       publishing.
 
@@ -73,7 +73,7 @@ about to publish still says so.
 - [ ] Confirm every first-party file that mentions licensing points at the
       root MIT license rather than at a choice the owner has yet to make.
       (The vendored third-party notices under
-      `skills/coordinate-claude-work/assets/web/vendor/` carry their own
+      `src/coordinator/assets/web/vendor/` carry their own
       upstream copyright lines and are correct as they stand; do not edit
       them to match the root license.)
 

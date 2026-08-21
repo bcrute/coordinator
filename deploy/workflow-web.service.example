@@ -28,7 +28,7 @@ WorkingDirectory=/path/to/your/clone/of/workflow
 # and add the directory/directories containing those executables here,
 # alongside standard system locations. Do not put API keys or tokens here.
 Environment=PATH=/usr/local/bin:/usr/bin:/bin:/path/to/dir/containing/codex/and/claude
-ExecStart=/usr/bin/python3 /path/to/your/clone/of/workflow/skills/coordinate-claude-work/scripts/web_app.py --config /path/to/your/clone/of/workflow/workflow.toml
+ExecStart=/path/to/your/clone/of/workflow/.venv/bin/coordinator serve --config /path/to/your/clone/of/workflow/workflow.toml
 Restart=on-failure
 RestartSec=5
 

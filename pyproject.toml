@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coordinator-workflow"
+version = "0.2.0"
+description = "Local run control for file-backed Codex and Claude coding workflows"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Benjamin Crute" }]
+dependencies = [
+  "Authlib==1.7.2",
+  "httpx==0.28.1",
+  "starlette==1.4.0",
+  "uvicorn==0.52.1",
+  "websockets==17.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx2==2.9.1",
+  "pip-audit==2.10.1",
+  "playwright==1.62.0",
+]
+
+[project.scripts]
+coordinator = "coordinator.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+coordinator = [
+  "assets/web/*",
+  "assets/web/vendor/*",
+  "assets/project-template/*.md",
+  "assets/project-template/.coordination/*.md",
+  "assets/project-template/.coordination/coder/*.md",
+  "assets/project-template/.coordination/history/.gitkeep",
+  "assets/project-template/.coordination/planner/*.md",
+  "assets/project-template/.coordination/reviews/*.md",
+  "assets/project-template/.coordination/runtime/.gitignore",
+]

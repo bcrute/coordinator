@@ -47,11 +47,11 @@ Run these from the directory where you cloned this repository:
 
    ```bash
    uv venv
-   uv pip install --python .venv/bin/python --requirement requirements.txt
+   uv pip install --python .venv/bin/python --editable .
    ```
 
    If you do not use `uv`, the equivalent is `python3 -m venv .venv` followed
-   by `.venv/bin/python -m pip install --requirement requirements.txt` (your OS
+   by `.venv/bin/python -m pip install --editable .` (your OS
    may package Python's `venv` support separately).
 
 2. **Install the skill and global defaults** (once per machine):
@@ -79,8 +79,11 @@ Run these from the directory where you cloned this repository:
 4. **Run the web app** against your settings file:
 
    ```bash
-   .venv/bin/python skills/coordinate-claude-work/scripts/web_app.py --config workflow.toml
+   .venv/bin/coordinator serve --config workflow.toml
    ```
+
+   Run `.venv/bin/coordinator doctor --config workflow.toml` for a read-only
+   installation, CLI, repository, and coordination preflight.
 
 5. **Open the dashboard** at the loopback URL printed on startup (default
    `http://127.0.0.1:8765`).
@@ -282,7 +285,7 @@ in the third-party material described below.
 ## Third-party code
 
 The browser terminal vendors [xterm.js and addon-fit](https://github.com/xtermjs/xterm.js)
-under `skills/coordinate-claude-work/assets/web/vendor/`. See that project for
+under `src/coordinator/assets/web/vendor/`. See that project for
 its own license and attribution.
 
 ## Why both a skill and repository files?

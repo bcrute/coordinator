@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills" / "coordinate-claude-work"
-WEB_ASSETS = SKILL / "assets" / "web"
+WEB_ASSETS = ROOT / "src" / "coordinator" / "assets" / "web"
 INIT = SKILL / "scripts" / "init_project.py"
 RUN = SKILL / "scripts" / "run_claude_turn.py"
 REVIEW = SKILL / "scripts" / "run_codex_review.py"

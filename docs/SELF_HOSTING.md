@@ -1,6 +1,6 @@
 # Self-hosting the coordination dashboard
 
-`web_app.py` is a **dynamic service**, not a static site: it has to keep
+Coordinator is a **dynamic service**, not a static site: it has to keep
 running for the dashboard event stream and browser Codex WebSocket terminal to
 work. There is no front-end build step and nothing to deploy to a CDN or static
 host. Both runtime modes use Starlette/Uvicorn:
@@ -17,7 +17,7 @@ confirmed the app runs in the foreground).
 ## Running in the foreground
 
 ```bash
-.venv/bin/python skills/coordinate-claude-work/scripts/web_app.py --config workflow.toml
+.venv/bin/coordinator serve --config workflow.toml
 ```
 
 - The process logs to standard output/error and serves until you stop it.
@@ -33,7 +33,7 @@ confirmed the app runs in the foreground).
   stderr yourself if you want one, for example:
 
   ```bash
-  .venv/bin/python skills/coordinate-claude-work/scripts/web_app.py --config workflow.toml \
+  .venv/bin/coordinator serve --config workflow.toml \
     >> ~/workflow-web.log 2>&1
   ```
 
@@ -59,7 +59,7 @@ git pull
 Refresh pinned Python dependencies after a pull, then restart the service:
 
 ```bash
-uv pip install --python .venv/bin/python --requirement requirements.txt
+uv pip install --python .venv/bin/python --editable .
 ```
 
 If you are also updating the machine-level skill symlink and
@@ -82,7 +82,7 @@ systemctl --user restart workflow-web
 one:
 
 ```bash
-.venv/bin/python skills/coordinate-claude-work/scripts/web_app.py --config workflow.toml --port 0
+.venv/bin/coordinator serve --config workflow.toml --port 0
 ```
 
 The chosen port is printed on startup. You can also set `port = 0` (or any
@@ -97,7 +97,7 @@ and initialize coordination for the active repository.
 
 **Codex or Claude CLI authentication errors in the browser terminal.** The
 browser's "Codex session" terminal runs `codex -C <repo>` using whatever
-Codex login already exists for the account running `web_app.py`; it does not
+Codex login already exists for the account running Coordinator; it does not
 prompt for or store credentials itself. Run `codex login` (or set the
 appropriate API key in your shell environment) for that same account before
 starting the server, then restart the server so the new process inherits the

@@ -1,7 +1,7 @@
 """Focused contract tests for the browser Codex terminal source.
 
 These tests only read the checked-in HTML/JS/CSS/vendor source under
-``skills/coordinate-claude-work/assets/web``; they never launch a real
+``src/coordinator/assets/web``; they never launch a real
 browser, a real Codex session, or a watcher process.
 """
 
@@ -9,13 +9,7 @@ import re
 import unittest
 from pathlib import Path
 
-WEB_DIR = (
-    Path(__file__).resolve().parent.parent
-    / "skills"
-    / "coordinate-claude-work"
-    / "assets"
-    / "web"
-)
+WEB_DIR = Path(__file__).resolve().parent.parent / "src" / "coordinator" / "assets" / "web"
 VENDOR_DIR = WEB_DIR / "vendor"
 
 
