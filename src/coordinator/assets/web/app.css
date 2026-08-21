@@ -112,12 +112,13 @@ a {
 
 .provider-usage {
   display: grid;
-  grid-template-columns: repeat(2, minmax(12rem, 1fr)) auto;
+  grid-template-columns: repeat(2, minmax(20rem, 1fr)) minmax(14rem, 0.8fr) auto;
   align-items: stretch;
   gap: 0;
 }
 
-.usage-provider {
+.usage-provider,
+.usage-forecast {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -135,6 +136,10 @@ a {
   padding-right: 0;
 }
 
+.usage-forecast {
+  padding-right: 0.75rem;
+}
+
 .usage-provider-label {
   color: var(--muted);
   font-size: 0.72rem;
@@ -149,14 +154,15 @@ a {
   text-transform: capitalize;
 }
 
-.usage-window-list {
+.usage-window-list,
+.usage-forecast-list {
   display: grid;
   gap: 0.12rem;
 }
 
 .usage-chip {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) 7.4rem auto;
   align-items: baseline;
   gap: 0.65rem;
   min-width: 0;
@@ -170,6 +176,13 @@ a {
 .usage-chip span {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-window-reset {
+  color: var(--dim);
+  font-size: 0.68rem;
+  font-weight: 400;
   white-space: nowrap;
 }
 
@@ -192,6 +205,36 @@ a {
 }
 
 .usage-chip[data-tone="bad"] strong {
+  color: var(--bad);
+}
+
+.usage-forecast-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  min-width: 0;
+  padding: 0.08rem 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.usage-forecast-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-forecast-row strong {
+  color: var(--text);
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.usage-forecast-row[data-tone="warn"] strong {
+  color: var(--warn);
+}
+
+.usage-forecast-row[data-tone="bad"] strong {
   color: var(--bad);
 }
 
@@ -1135,7 +1178,8 @@ kbd { padding: 0.08rem 0.35rem; border: 1px solid var(--edge-solid); border-radi
 
   .usage-provider,
   .usage-provider:first-child,
-  .usage-provider:last-child {
+  .usage-provider:last-child,
+  .usage-forecast {
     padding: 0;
     border-left: 0;
   }

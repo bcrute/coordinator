@@ -110,6 +110,10 @@ class CollectorTests(unittest.TestCase):
                 ("GPT-5.3-Codex-Spark · Weekly (7d)", 97.0),
             ],
         )
+        self.assertEqual(
+            [window["duration_minutes"] for window in payload["windows"]],
+            [300, 10080, 300, 10080],
+        )
 
     @mock.patch("coordinator.provider_usage._read_claude_usage")
     @mock.patch("coordinator.provider_usage.subprocess.run")
@@ -181,6 +185,10 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(
             [(window["label"], window["remaining_percent"]) for window in payload["windows"]],
             [("Session", 80.0), ("Weekly", 83.0), ("Fable", 100.0)],
+        )
+        self.assertEqual(
+            [window["duration_minutes"] for window in payload["windows"]],
+            [300, 10080, 10080],
         )
         self.assertNotIn("test-secret-token", json.dumps(payload))
 

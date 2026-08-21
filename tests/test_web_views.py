@@ -116,11 +116,26 @@ class ProviderUsageHeaderTests(unittest.TestCase):
 
     def test_usage_is_grouped_into_provider_columns(self):
         self.assertIn(
-            "grid-template-columns: repeat(2, minmax(12rem, 1fr)) auto",
+            "grid-template-columns: repeat(2, minmax(20rem, 1fr)) "
+            "minmax(14rem, 0.8fr) auto",
             self.css,
         )
         self.assertIn(".usage-provider:first-child", self.css)
-        self.assertIn("grid-template-columns: minmax(0, 1fr) auto", self.css)
+        self.assertIn('id="usage-forecast-list"', self.html)
+
+    def test_weekly_reset_and_linear_pace_forecast_are_rendered(self):
+        for function in (
+            "usageResetShort",
+            "isWeeklyUsage",
+            "usagePaceForecast",
+            "renderUsageForecast",
+        ):
+            self.assertIn(f"function {function}", self.js)
+        self.assertIn('label: "Run out"', self.js)
+        self.assertIn('label: "Close"', self.js)
+        self.assertIn('label: "Nowhere near"', self.js)
+        self.assertIn("projected >= 100", self.js)
+        self.assertIn("projected >= 80", self.js)
 
     def test_usage_reads_cache_and_manual_refresh_uses_post(self):
         self.assertIn('var PROVIDER_USAGE_URL = "/api/provider-usage"', self.js)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import subprocess
@@ -10,6 +11,7 @@ import tempfile
 import time
 import unittest
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -68,44 +70,124 @@ class DashboardBrowserTests(unittest.TestCase):
                             else None
                         ),
                     )
+                    now = datetime.now(timezone.utc)
+                    weekly = timedelta(days=7)
+                    session = timedelta(hours=5)
+
+                    def reset_after(duration: timedelta, elapsed: timedelta) -> str:
+                        return (now + duration - elapsed).isoformat()
+
+                    usage_payload = {
+                        "ok": True,
+                        "generated_at": now.isoformat(),
+                        "next_refresh_at": (now + timedelta(hours=1)).isoformat(),
+                        "refresh_interval_seconds": 3600,
+                        "refreshing": False,
+                        "providers": [
+                            {
+                                "id": "codex",
+                                "name": "Codex",
+                                "status": "available",
+                                "plan": "pro",
+                                "remaining_percent": 70,
+                                "windows": [
+                                    {
+                                        "id": "codex:primary",
+                                        "label": "Weekly (7d)",
+                                        "remaining_percent": 70,
+                                        "used_percent": 30,
+                                        "duration_minutes": 10080,
+                                        "resets_at": reset_after(weekly, timedelta(days=1)),
+                                    },
+                                    {
+                                        "id": "spark:primary",
+                                        "label": "Spark · Session (5h)",
+                                        "remaining_percent": 100,
+                                        "used_percent": 0,
+                                        "duration_minutes": 300,
+                                        "resets_at": reset_after(session, timedelta(hours=1)),
+                                    },
+                                    {
+                                        "id": "spark:secondary",
+                                        "label": "Spark · Weekly (7d)",
+                                        "scope": "Spark",
+                                        "remaining_percent": 90,
+                                        "used_percent": 10,
+                                        "duration_minutes": 10080,
+                                        "resets_at": reset_after(weekly, timedelta(days=4)),
+                                    },
+                                ],
+                            },
+                            {
+                                "id": "claude",
+                                "name": "Claude",
+                                "status": "available",
+                                "plan": "max",
+                                "remaining_percent": 55,
+                                "windows": [
+                                    {
+                                        "id": "session:0",
+                                        "label": "Session",
+                                        "remaining_percent": 80,
+                                        "used_percent": 20,
+                                        "duration_minutes": 300,
+                                        "resets_at": reset_after(session, timedelta(hours=2)),
+                                    },
+                                    {
+                                        "id": "weekly:1",
+                                        "label": "Weekly",
+                                        "group": "weekly",
+                                        "remaining_percent": 55,
+                                        "used_percent": 45,
+                                        "duration_minutes": 10080,
+                                        "resets_at": reset_after(
+                                            weekly, timedelta(days=3, hours=12)
+                                        ),
+                                    },
+                                    {
+                                        "id": "weekly:2",
+                                        "label": "Fable",
+                                        "group": "weekly",
+                                        "scope": {
+                                            "model": {"display_name": "Fable"}
+                                        },
+                                        "remaining_percent": 100,
+                                        "used_percent": 0,
+                                        "duration_minutes": 10080,
+                                        "resets_at": None,
+                                    },
+                                ],
+                            },
+                        ],
+                    }
                     page.route(
                         "**/api/provider-usage",
                         lambda route: route.fulfill(
                             status=200,
                             content_type="application/json",
-                            body='{"ok":true,"generated_at":"2026-08-21T13:00:00Z",'
-                            '"next_refresh_at":"2026-08-21T14:00:00Z",'
-                            '"refresh_interval_seconds":3600,"refreshing":false,'
-                            '"providers":[{"id":"codex","name":"Codex",'
-                            '"status":"available","plan":"pro",'
-                            '"remaining_percent":70,"windows":['
-                            '{"id":"codex:primary","label":"Weekly (7d)",'
-                            '"remaining_percent":70,"resets_at":"2026-08-27T03:00:00Z"},'
-                            '{"id":"spark:primary","label":"Spark · Session (5h)",'
-                            '"remaining_percent":100,"resets_at":"2026-08-21T14:00:00Z"}]},'
-                            '{"id":"claude","name":"Claude","status":"available",'
-                            '"plan":"max","remaining_percent":80,"windows":['
-                            '{"id":"session:0","label":"Session","remaining_percent":80},'
-                            '{"id":"weekly:1","label":"Weekly","remaining_percent":83},'
-                            '{"id":"weekly:2","label":"Fable","remaining_percent":100}]}]}',
+                            body=json.dumps(usage_payload),
                         ),
                     )
                     page.goto(url, wait_until="domcontentloaded")
                     page.locator("#usage-codex-value").filter(has_text="70%").wait_for(
                         timeout=10_000
                     )
-                    page.locator("#usage-claude-value").filter(has_text="80%").wait_for(
+                    page.locator("#usage-claude-value").filter(has_text="55%").wait_for(
                         timeout=10_000
                     )
                     page.locator("#usage-codex-value").filter(
                         has_text="Spark · Session (5h)"
                     ).wait_for(timeout=10_000)
-                    page.locator("#usage-claude-value").filter(
-                        has_text="Weekly83%"
-                    ).wait_for(timeout=10_000)
-                    page.locator("#usage-claude-value").filter(
-                        has_text="Fable100%"
-                    ).wait_for(timeout=10_000)
+                    page.locator("#usage-claude-value").filter(has_text="Weekly").wait_for(
+                        timeout=10_000
+                    )
+                    page.locator("#usage-claude-value .usage-chip").filter(
+                        has_text="Fable"
+                    ).filter(has_text="100%").wait_for(timeout=10_000)
+                    for forecast in ("Run out", "Close", "Nowhere near", "Unknown"):
+                        page.locator("#usage-forecast-list").filter(
+                            has_text=forecast
+                        ).wait_for(timeout=10_000)
                     page.locator("#connection-label").filter(
                         has_text="state feed"
                     ).wait_for(timeout=10_000)

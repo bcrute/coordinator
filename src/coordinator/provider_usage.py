@@ -99,12 +99,14 @@ def _codex_windows(result: Mapping[str, object]) -> list[dict[str, object]]:
             if remaining is None:
                 continue
             period = _window_label(raw_window.get("windowDurationMins"))
+            duration = raw_window.get("windowDurationMins")
             windows.append(
                 {
                     "id": f"{stable_id}:{key}",
                     "label": f"{scope} · {period}" if scope else period,
                     "scope": scope or None,
                     "kind": key,
+                    "duration_minutes": duration if isinstance(duration, int) else None,
                     "remaining_percent": remaining,
                     "used_percent": round(100.0 - remaining, 1),
                     "resets_at": _iso_timestamp(raw_window.get("resetsAt")),
@@ -122,6 +124,7 @@ def _codex_windows(result: Mapping[str, object]) -> list[dict[str, object]]:
                         "label": label,
                         "scope": scope or None,
                         "kind": "spend",
+                        "duration_minutes": None,
                         "remaining_percent": bounded,
                         "used_percent": round(100.0 - bounded, 1),
                         "resets_at": _iso_timestamp(individual.get("resetsAt")),
@@ -167,6 +170,9 @@ def _claude_windows(payload: Mapping[str, object]) -> list[dict[str, object]]:
                 continue
             kind = candidate.get("kind")
             group = candidate.get("group")
+            duration = (
+                300 if kind == "session" else 10080 if group == "weekly" else None
+            )
             windows.append(
                 {
                     "id": f"{kind if isinstance(kind, str) else 'limit'}:{index}",
@@ -176,6 +182,7 @@ def _claude_windows(payload: Mapping[str, object]) -> list[dict[str, object]]:
                     "group": group,
                     "active": candidate.get("is_active") is True,
                     "severity": candidate.get("severity"),
+                    "duration_minutes": duration,
                     "remaining_percent": remaining,
                     "used_percent": round(100.0 - remaining, 1),
                     "resets_at": _iso_timestamp(candidate.get("resets_at")),
@@ -203,6 +210,7 @@ def _claude_windows(payload: Mapping[str, object]) -> list[dict[str, object]]:
                 "label": label,
                 "scope": None,
                 "kind": key,
+                "duration_minutes": 300 if key == "five_hour" else 10080,
                 "remaining_percent": remaining,
                 "used_percent": round(100.0 - remaining, 1),
                 "resets_at": _iso_timestamp(raw_window.get("resets_at")),
