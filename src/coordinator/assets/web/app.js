@@ -1448,27 +1448,59 @@ function usageReset(value) {
   return "resets " + parsed.toLocaleString();
 }
 
+function usageWindowChip(windowValue) {
+  var details = record(windowValue);
+  var remaining = details.remaining_percent;
+  var chip = document.createElement("span");
+  var label = document.createElement("span");
+  var value = document.createElement("strong");
+  chip.className = "usage-chip";
+  chip.dataset.tone = usageTone(remaining);
+  label.textContent = text(details.label, "Usage");
+  value.textContent = usagePercent(remaining);
+  chip.append(label, value);
+  chip.title = label.textContent + ": " + value.textContent + " remaining, " +
+    usageReset(details.resets_at);
+  return chip;
+}
+
 function renderProviderUsage(payload) {
   var providers = list(record(payload).providers);
   [
-    { id: "codex", chip: el("usage-codex"), value: el("usage-codex-value") },
-    { id: "claude", chip: el("usage-claude"), value: el("usage-claude-value") },
+    {
+      id: "codex",
+      provider: el("usage-codex"),
+      value: el("usage-codex-value"),
+      plan: el("usage-codex-plan"),
+    },
+    {
+      id: "claude",
+      provider: el("usage-claude"),
+      value: el("usage-claude-value"),
+      plan: el("usage-claude-plan"),
+    },
   ].forEach(function (target) {
     var provider = providers.find(function (candidate) {
       return text(record(candidate).id) === target.id;
     });
     var details = record(provider);
     var remaining = details.remaining_percent;
-    var chip = target.chip;
+    var providerElement = target.provider;
     var value = target.value;
-    if (!chip || !value) return;
-    value.textContent = usagePercent(remaining);
-    chip.dataset.tone = usageTone(remaining);
+    if (!providerElement || !value) return;
     var title = text(details.name, target.id === "codex" ? "Codex" : "Claude");
     var plan = text(details.plan);
+    if (target.plan) target.plan.textContent = plan ? plan : "";
     if (plan) title += " " + plan;
     var windows = list(details.windows);
+    if (!windows.length && typeof remaining === "number") {
+      windows = [{ label: "Remaining", remaining_percent: remaining }];
+    }
+    value.replaceChildren();
     if (windows.length) {
+      windows.forEach(function (windowValue) {
+        value.append(usageWindowChip(windowValue));
+      });
       title += " — " + windows.map(function (windowValue) {
         var windowDetails = record(windowValue);
         return text(windowDetails.label, "rolling") + ": " +
@@ -1476,9 +1508,15 @@ function renderProviderUsage(payload) {
           usageReset(windowDetails.resets_at);
       }).join("; ");
     } else {
+      var unavailable = usageWindowChip({
+        label: "Unavailable",
+        remaining_percent: null,
+      });
+      unavailable.title = text(details.message, "Usage unavailable");
+      value.append(unavailable);
       title += " — " + text(details.message, "Usage unavailable");
     }
-    chip.title = title;
+    providerElement.title = title;
   });
   var refresh = el("usage-refresh");
   if (refresh) refresh.disabled = record(payload).refreshing === true;

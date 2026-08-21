@@ -110,6 +110,7 @@ class ProviderUsageHeaderTests(unittest.TestCase):
         for provider in ("codex", "claude"):
             self.assertIn('id="usage-%s"' % provider, self.html)
             self.assertIn('id="usage-%s-value"' % provider, self.html)
+            self.assertIn('id="usage-%s-plan"' % provider, self.html)
         self.assertIn('id="usage-refresh"', self.html)
 
     def test_usage_reads_cache_and_manual_refresh_uses_post(self):
@@ -130,6 +131,8 @@ class ProviderUsageHeaderTests(unittest.TestCase):
         self.assertIsNotNone(renderer)
         self.assertIn("remaining_percent", renderer.group(0))
         self.assertIn("remaining", renderer.group(0))
+        self.assertIn("windows.forEach", renderer.group(0))
+        self.assertIn("usageWindowChip", renderer.group(0))
 
 
 class PanelGroupingTests(unittest.TestCase):

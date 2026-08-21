@@ -78,9 +78,16 @@ class DashboardBrowserTests(unittest.TestCase):
                             '"refresh_interval_seconds":3600,"refreshing":false,'
                             '"providers":[{"id":"codex","name":"Codex",'
                             '"status":"available","plan":"pro",'
-                            '"remaining_percent":70,"windows":[]},'
+                            '"remaining_percent":70,"windows":['
+                            '{"id":"codex:primary","label":"Weekly (7d)",'
+                            '"remaining_percent":70,"resets_at":"2026-08-27T03:00:00Z"},'
+                            '{"id":"spark:primary","label":"Spark · Session (5h)",'
+                            '"remaining_percent":100,"resets_at":"2026-08-21T14:00:00Z"}]},'
                             '{"id":"claude","name":"Claude","status":"available",'
-                            '"plan":"max","remaining_percent":80,"windows":[]}]}',
+                            '"plan":"max","remaining_percent":80,"windows":['
+                            '{"id":"session:0","label":"Session","remaining_percent":80},'
+                            '{"id":"weekly:1","label":"Weekly","remaining_percent":83},'
+                            '{"id":"weekly:2","label":"Fable","remaining_percent":100}]}]}',
                         ),
                     )
                     page.goto(url, wait_until="domcontentloaded")
@@ -90,6 +97,15 @@ class DashboardBrowserTests(unittest.TestCase):
                     page.locator("#usage-claude-value").filter(has_text="80%").wait_for(
                         timeout=10_000
                     )
+                    page.locator("#usage-codex-value").filter(
+                        has_text="Spark · Session (5h)"
+                    ).wait_for(timeout=10_000)
+                    page.locator("#usage-claude-value").filter(
+                        has_text="Weekly83%"
+                    ).wait_for(timeout=10_000)
+                    page.locator("#usage-claude-value").filter(
+                        has_text="Fable100%"
+                    ).wait_for(timeout=10_000)
                     page.locator("#connection-label").filter(
                         has_text="state feed"
                     ).wait_for(timeout=10_000)

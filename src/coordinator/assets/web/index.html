@@ -33,11 +33,17 @@
         <p class="repo-picker-root" id="repository-catalog-root">Catalog root: not recorded</p>
       </div>
       <div class="provider-usage" aria-label="Provider usage">
-        <span class="usage-chip" id="usage-codex" data-tone="neutral" title="Waiting for Codex usage">
-          <span>Codex</span><strong id="usage-codex-value">…</strong>
+        <span class="usage-provider" id="usage-codex" title="Waiting for Codex usage">
+          <span class="usage-provider-label">Codex <small id="usage-codex-plan"></small></span>
+          <span class="usage-window-list" id="usage-codex-value" aria-live="polite">
+            <span class="usage-chip" data-tone="neutral"><span>Checking</span><strong>…</strong></span>
+          </span>
         </span>
-        <span class="usage-chip" id="usage-claude" data-tone="neutral" title="Waiting for Claude usage">
-          <span>Claude</span><strong id="usage-claude-value">…</strong>
+        <span class="usage-provider" id="usage-claude" title="Waiting for Claude usage">
+          <span class="usage-provider-label">Claude <small id="usage-claude-plan"></small></span>
+          <span class="usage-window-list" id="usage-claude-value" aria-live="polite">
+            <span class="usage-chip" data-tone="neutral"><span>Checking</span><strong>…</strong></span>
+          </span>
         </span>
         <button
           type="button"

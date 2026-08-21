@@ -156,11 +156,13 @@ from `--config`, which in turn wins over the built-in default. See
 
 ### Provider usage indicators
 
-The topbar shows compact **Codex** and **Claude** remaining percentages. Hover a
-value to see each reported rolling window and reset time, or use the adjacent
-refresh button for an immediate update. The server performs one shared refresh
-per `usage_refresh_seconds` (one hour by default), regardless of the number of
-open browser tabs.
+The topbar shows every percentage-based allowance reported by **Codex** and
+**Claude**, along with the account plan. This includes session and weekly windows
+plus named model-specific limits such as Spark or Fable when the provider returns
+them. Hover a value to see its reset time, or use the adjacent refresh button for
+an immediate update. The server performs one shared refresh per
+`usage_refresh_seconds` (one hour by default), regardless of the number of open
+browser tabs.
 
 These checks do not create model turns: Codex is queried through its local app
 server's account-rate-limit method; Claude Code's non-interactive authentication

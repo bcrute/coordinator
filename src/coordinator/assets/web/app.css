@@ -113,8 +113,35 @@ a {
 .provider-usage {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.35rem;
+}
+
+.usage-provider,
+.usage-window-list {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.usage-provider {
+  padding-left: 0.35rem;
+  border-left: 1px solid var(--edge-solid);
+}
+
+.usage-provider-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
   white-space: nowrap;
+}
+
+.usage-provider-label small {
+  color: var(--dim);
+  font: inherit;
+  font-weight: 400;
+  text-transform: capitalize;
 }
 
 .usage-chip {
@@ -1082,6 +1109,11 @@ kbd { padding: 0.08rem 0.35rem; border: 1px solid var(--edge-solid); border-radi
 
   .provider-usage {
     order: 3;
+    width: 100%;
+  }
+
+  .usage-provider {
+    flex-basis: 100%;
   }
 
   .repo-picker-select {

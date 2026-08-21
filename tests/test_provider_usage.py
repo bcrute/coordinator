@@ -25,13 +25,53 @@ from coordinator.security import LocalSettings
 class FakeCodexProcess:
     def __init__(self) -> None:
         self.stdin = io.StringIO()
+        default = {
+            "limitId": "codex",
+            "planType": "pro",
+            "primary": {
+                "usedPercent": 27,
+                "windowDurationMins": 300,
+                "resetsAt": 1787334983,
+            },
+            "secondary": {
+                "usedPercent": 41,
+                "windowDurationMins": 10080,
+                "resetsAt": 1787921783,
+            },
+        }
+        special = {
+            "limitId": "codex_special",
+            "limitName": "GPT-5.3-Codex-Spark",
+            "planType": "pro",
+            "primary": {
+                "usedPercent": 2,
+                "windowDurationMins": 300,
+                "resetsAt": 1787335983,
+            },
+            "secondary": {
+                "usedPercent": 3,
+                "windowDurationMins": 10080,
+                "resetsAt": 1787922783,
+            },
+        }
         self.stdout = io.StringIO(
-            '{"id":1,"result":{"userAgent":"test"}}\n'
-            '{"method":"ignored","params":{}}\n'
-            '{"id":2,"result":{"rateLimits":{"planType":"pro",'
-            '"primary":{"usedPercent":27,"windowDurationMins":300,'
-            '"resetsAt":1787334983},"secondary":{"usedPercent":41,'
-            '"windowDurationMins":10080,"resetsAt":1787921783}}}}\n'
+            json.dumps({"id": 1, "result": {"userAgent": "test"}})
+            + "\n"
+            + json.dumps({"method": "ignored", "params": {}})
+            + "\n"
+            + json.dumps(
+                {
+                    "id": 2,
+                    "result": {
+                        "rateLimits": default,
+                        "rateLimitsByLimitId": {
+                            "codex": default,
+                            "codex_special": special,
+                        },
+                    },
+                }
+            )
+            + "\n"
         )
         self.terminated = False
 
@@ -63,7 +103,12 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(payload["remaining_percent"], 59.0)
         self.assertEqual(
             [(window["label"], window["remaining_percent"]) for window in payload["windows"]],
-            [("5-hour", 73.0), ("7-day", 59.0)],
+            [
+                ("Session (5h)", 73.0),
+                ("Weekly (7d)", 59.0),
+                ("GPT-5.3-Codex-Spark · Session (5h)", 98.0),
+                ("GPT-5.3-Codex-Spark · Weekly (7d)", 97.0),
+            ],
         )
 
     @mock.patch("coordinator.provider_usage._read_claude_usage")
@@ -82,6 +127,35 @@ class CollectorTests(unittest.TestCase):
         read_usage.return_value = {
             "five_hour": {"utilization": 20, "resets_at": "2026-08-21T14:00:00Z"},
             "seven_day": {"utilization": 17, "resets_at": "2026-08-27T21:00:00Z"},
+            "limits": [
+                {
+                    "group": "session",
+                    "kind": "session",
+                    "percent": 20,
+                    "resets_at": "2026-08-21T14:00:00Z",
+                    "is_active": True,
+                    "severity": "normal",
+                    "scope": None,
+                },
+                {
+                    "group": "weekly",
+                    "kind": "weekly_all",
+                    "percent": 17,
+                    "resets_at": "2026-08-27T21:00:00Z",
+                    "is_active": False,
+                    "severity": "normal",
+                    "scope": None,
+                },
+                {
+                    "group": "weekly",
+                    "kind": "weekly_scoped",
+                    "percent": 0,
+                    "resets_at": None,
+                    "is_active": False,
+                    "severity": "normal",
+                    "scope": {"model": {"display_name": "Fable", "id": None}},
+                },
+            ],
         }
         with tempfile.TemporaryDirectory() as temporary:
             credential_file = Path(temporary) / ".credentials.json"
@@ -104,7 +178,44 @@ class CollectorTests(unittest.TestCase):
         read_usage.assert_called_once_with("test-secret-token", 10.0)
         self.assertEqual(payload["remaining_percent"], 80.0)
         self.assertEqual(payload["plan"], "max")
+        self.assertEqual(
+            [(window["label"], window["remaining_percent"]) for window in payload["windows"]],
+            [("Session", 80.0), ("Weekly", 83.0), ("Fable", 100.0)],
+        )
         self.assertNotIn("test-secret-token", json.dumps(payload))
+
+    @mock.patch("coordinator.provider_usage._read_claude_usage")
+    @mock.patch("coordinator.provider_usage.subprocess.run")
+    def test_claude_legacy_windows_include_named_model_limits(
+        self, run, read_usage
+    ) -> None:
+        run.return_value = subprocess.CompletedProcess(
+            ["claude", "auth", "status", "--json"],
+            0,
+            stdout=json.dumps(
+                {"loggedIn": True, "authMethod": "claude.ai", "subscriptionType": "pro"}
+            ),
+            stderr="",
+        )
+        read_usage.return_value = {
+            "five_hour": {"utilization": 10},
+            "seven_day": {"utilization": 20},
+            "seven_day_opus": {"utilization": 30},
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            credential_file = Path(temporary) / ".credentials.json"
+            credential_file.write_text(
+                json.dumps({"claudeAiOauth": {"accessToken": "test-secret-token"}}),
+                encoding="utf-8",
+            )
+            payload = collect_claude_usage(
+                command="/usr/bin/claude-test", credentials_path=credential_file
+            )
+
+        self.assertEqual(
+            [(window["label"], window["remaining_percent"]) for window in payload["windows"]],
+            [("Session", 90.0), ("Weekly", 80.0), ("Opus", 70.0)],
+        )
 
     @mock.patch("coordinator.provider_usage.subprocess.run")
     def test_claude_api_key_login_reports_subscription_usage_unavailable(self, run) -> None:

@@ -53,9 +53,9 @@ def _remaining_percent(used: object) -> float | None:
 
 def _window_label(minutes: object) -> str:
     if minutes == 300:
-        return "5-hour"
+        return "Session (5h)"
     if minutes == 10080:
-        return "7-day"
+        return "Weekly (7d)"
     if isinstance(minutes, int) and minutes > 0:
         if minutes % 1440 == 0:
             return f"{minutes // 1440}-day"
@@ -63,6 +63,152 @@ def _window_label(minutes: object) -> str:
             return f"{minutes // 60}-hour"
         return f"{minutes}-minute"
     return "rolling"
+
+
+def _codex_windows(result: Mapping[str, object]) -> list[dict[str, object]]:
+    """Flatten every default and named Codex rate-limit snapshot."""
+
+    default = result.get("rateLimits")
+    snapshots: list[Mapping[str, object]] = []
+    seen_ids: set[str] = set()
+    if isinstance(default, Mapping):
+        snapshots.append(default)
+        default_id = default.get("limitId")
+        if isinstance(default_id, str):
+            seen_ids.add(default_id)
+    by_limit_id = result.get("rateLimitsByLimitId")
+    if isinstance(by_limit_id, Mapping):
+        for limit_id, candidate in by_limit_id.items():
+            if not isinstance(candidate, Mapping) or limit_id in seen_ids:
+                continue
+            snapshots.append(candidate)
+            if isinstance(limit_id, str):
+                seen_ids.add(limit_id)
+
+    windows: list[dict[str, object]] = []
+    for snapshot_index, snapshot in enumerate(snapshots):
+        limit_id = snapshot.get("limitId")
+        stable_id = limit_id if isinstance(limit_id, str) else f"limit-{snapshot_index}"
+        limit_name = snapshot.get("limitName")
+        scope = limit_name.strip() if isinstance(limit_name, str) else ""
+        for key in ("primary", "secondary"):
+            raw_window = snapshot.get(key)
+            if not isinstance(raw_window, Mapping):
+                continue
+            remaining = _remaining_percent(raw_window.get("usedPercent"))
+            if remaining is None:
+                continue
+            period = _window_label(raw_window.get("windowDurationMins"))
+            windows.append(
+                {
+                    "id": f"{stable_id}:{key}",
+                    "label": f"{scope} · {period}" if scope else period,
+                    "scope": scope or None,
+                    "kind": key,
+                    "remaining_percent": remaining,
+                    "used_percent": round(100.0 - remaining, 1),
+                    "resets_at": _iso_timestamp(raw_window.get("resetsAt")),
+                }
+            )
+        individual = snapshot.get("individualLimit")
+        if isinstance(individual, Mapping):
+            remaining = individual.get("remainingPercent")
+            if isinstance(remaining, (int, float)) and not isinstance(remaining, bool):
+                bounded = round(max(0.0, min(100.0, float(remaining))), 1)
+                label = f"{scope} · Spend" if scope else "Spend allowance"
+                windows.append(
+                    {
+                        "id": f"{stable_id}:spend",
+                        "label": label,
+                        "scope": scope or None,
+                        "kind": "spend",
+                        "remaining_percent": bounded,
+                        "used_percent": round(100.0 - bounded, 1),
+                        "resets_at": _iso_timestamp(individual.get("resetsAt")),
+                    }
+                )
+    return windows
+
+
+def _claude_limit_label(limit: Mapping[str, object]) -> str:
+    scope = limit.get("scope")
+    if isinstance(scope, Mapping):
+        model = scope.get("model")
+        if isinstance(model, Mapping):
+            display_name = model.get("display_name")
+            if isinstance(display_name, str) and display_name.strip():
+                return display_name.strip()
+        surface = scope.get("surface")
+        if isinstance(surface, str) and surface.strip():
+            return surface.replace("_", " ").title()
+    kind = limit.get("kind")
+    labels = {
+        "session": "Session",
+        "weekly_all": "Weekly",
+        "weekly_scoped": "Weekly scoped",
+    }
+    if isinstance(kind, str):
+        return labels.get(kind, kind.replace("_", " ").title())
+    group = limit.get("group")
+    return group.replace("_", " ").title() if isinstance(group, str) else "Usage"
+
+
+def _claude_windows(payload: Mapping[str, object]) -> list[dict[str, object]]:
+    """Prefer Claude's complete limit list, including named scoped limits."""
+
+    windows: list[dict[str, object]] = []
+    limits = payload.get("limits")
+    if isinstance(limits, list):
+        for index, candidate in enumerate(limits):
+            if not isinstance(candidate, Mapping):
+                continue
+            remaining = _remaining_percent(candidate.get("percent"))
+            if remaining is None:
+                continue
+            kind = candidate.get("kind")
+            group = candidate.get("group")
+            windows.append(
+                {
+                    "id": f"{kind if isinstance(kind, str) else 'limit'}:{index}",
+                    "label": _claude_limit_label(candidate),
+                    "scope": candidate.get("scope"),
+                    "kind": kind,
+                    "group": group,
+                    "active": candidate.get("is_active") is True,
+                    "severity": candidate.get("severity"),
+                    "remaining_percent": remaining,
+                    "used_percent": round(100.0 - remaining, 1),
+                    "resets_at": _iso_timestamp(candidate.get("resets_at")),
+                }
+            )
+    if windows:
+        return windows
+
+    fallback_keys = [("five_hour", "Session"), ("seven_day", "Weekly")]
+    fallback_keys.extend(
+        (key, key.removeprefix("seven_day_").replace("_", " ").title())
+        for key in payload
+        if isinstance(key, str) and key.startswith("seven_day_")
+    )
+    for key, label in fallback_keys:
+        raw_window = payload.get(key)
+        if not isinstance(raw_window, Mapping):
+            continue
+        remaining = _remaining_percent(raw_window.get("utilization"))
+        if remaining is None:
+            continue
+        windows.append(
+            {
+                "id": key,
+                "label": label,
+                "scope": None,
+                "kind": key,
+                "remaining_percent": remaining,
+                "used_percent": round(100.0 - remaining, 1),
+                "resets_at": _iso_timestamp(raw_window.get("resets_at")),
+            }
+        )
+    return windows
 
 
 def _provider_result(
@@ -198,23 +344,7 @@ def collect_codex_usage(
     raw_limits = result.get("rateLimits")
     if not isinstance(raw_limits, dict):
         raise ProviderUsageError("Codex did not return account rate limits.")
-    windows: list[dict[str, object]] = []
-    for key in ("primary", "secondary"):
-        raw_window = raw_limits.get(key)
-        if not isinstance(raw_window, dict):
-            continue
-        remaining = _remaining_percent(raw_window.get("usedPercent"))
-        if remaining is None:
-            continue
-        windows.append(
-            {
-                "id": key,
-                "label": _window_label(raw_window.get("windowDurationMins")),
-                "remaining_percent": remaining,
-                "used_percent": round(100.0 - remaining, 1),
-                "resets_at": _iso_timestamp(raw_window.get("resetsAt")),
-            }
-        )
+    windows = _codex_windows(result)
     plan = raw_limits.get("planType")
     return _provider_result(
         "codex",
@@ -311,23 +441,7 @@ def collect_claude_usage(
         raise ProviderUsageError("Claude's local OAuth access token is unavailable.")
 
     payload = _read_claude_usage(token, timeout)
-    windows: list[dict[str, object]] = []
-    for key, label in (("five_hour", "5-hour"), ("seven_day", "7-day")):
-        raw_window = payload.get(key)
-        if not isinstance(raw_window, dict):
-            continue
-        remaining = _remaining_percent(raw_window.get("utilization"))
-        if remaining is None:
-            continue
-        windows.append(
-            {
-                "id": key,
-                "label": label,
-                "remaining_percent": remaining,
-                "used_percent": round(100.0 - remaining, 1),
-                "resets_at": _iso_timestamp(raw_window.get("resets_at")),
-            }
-        )
+    windows = _claude_windows(payload)
     plan = auth.get("subscriptionType")
     return _provider_result(
         "claude",
