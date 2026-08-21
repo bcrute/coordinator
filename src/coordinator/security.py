@@ -15,9 +15,11 @@ import sqlite3
 import stat
 import time
 import urllib.parse
+from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+import threading
 from typing import Any
 
 from starlette.concurrency import run_in_threadpool
@@ -52,6 +54,10 @@ class LocalSettings:
     session_absolute_seconds: int = 43200
     secure_cookie: bool = False
     trusted_hosts: tuple[str, ...] = ("127.0.0.1", "localhost", "::1")
+    rate_limit_window_seconds: int = 60
+    rate_limit_auth_attempts: int = 30
+    rate_limit_control_attempts: int = 120
+    rate_limit_terminal_connections: int = 30
 
     def __post_init__(self) -> None:
         external = self.external_url.rstrip("/")
@@ -71,6 +77,7 @@ class LocalSettings:
             raise ValueError("session idle lifetime must not exceed absolute lifetime")
         if any("*" in host for host in self.trusted_hosts):
             raise ValueError("trusted_hosts must not contain wildcards")
+        _validate_rate_limits(self)
 
     @property
     def origin(self) -> str:
@@ -108,6 +115,10 @@ class OIDCSettings:
     secure_cookie: bool = True
     trusted_hosts: tuple[str, ...] = ()
     id_token_algorithms: tuple[str, ...] = ("RS256",)
+    rate_limit_window_seconds: int = 60
+    rate_limit_auth_attempts: int = 30
+    rate_limit_control_attempts: int = 120
+    rate_limit_terminal_connections: int = 30
 
     def __post_init__(self) -> None:
         issuer = self.issuer.strip()
@@ -167,6 +178,7 @@ class OIDCSettings:
             raise ValueError("trusted_hosts must not contain wildcards")
         if parsed_external.hostname not in self.hosts:
             raise ValueError("trusted_hosts must include the external URL hostname")
+        _validate_rate_limits(self)
 
     @property
     def origin(self) -> str:
@@ -192,6 +204,56 @@ class OIDCSettings:
     @property
     def auth_mode(self) -> str:
         return "oidc"
+
+
+def _validate_rate_limits(settings: OIDCSettings | LocalSettings) -> None:
+    values = (
+        settings.rate_limit_window_seconds,
+        settings.rate_limit_auth_attempts,
+        settings.rate_limit_control_attempts,
+        settings.rate_limit_terminal_connections,
+    )
+    if any(
+        not isinstance(value, int) or isinstance(value, bool) or value <= 0
+        for value in values
+    ):
+        raise ValueError("rate-limit settings must be positive integers")
+
+
+class SlidingWindowRateLimiter:
+    """Small bounded in-process limiter for an owner-operated deployment."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._buckets: dict[str, deque[float]] = {}
+
+    def allow(
+        self,
+        bucket: str,
+        limit: int,
+        window_seconds: int,
+        now: float | None = None,
+    ) -> tuple[bool, int, int]:
+        current = time.monotonic() if now is None else now
+        cutoff = current - window_seconds
+        with self._lock:
+            entries = self._buckets.setdefault(bucket, deque())
+            while entries and entries[0] <= cutoff:
+                entries.popleft()
+            if len(entries) >= limit:
+                retry_after = max(1, int(entries[0] + window_seconds - current) + 1)
+                return False, 0, retry_after
+            entries.append(current)
+            remaining = max(0, limit - len(entries))
+            if len(self._buckets) > 4096:
+                stale = [
+                    key
+                    for key, values in self._buckets.items()
+                    if not values or values[-1] <= cutoff
+                ]
+                for key in stale[:1024]:
+                    self._buckets.pop(key, None)
+            return True, remaining, 0
 
 
 @dataclass
@@ -651,6 +713,83 @@ class AccessControlMiddleware(BaseHTTPMiddleware):
                 await self.audit_denial(request, "csrf", "missing or mismatched token")
                 return _forbidden("a valid CSRF token is required")
         return await call_next(request)
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Bound authentication and high-impact control requests per source/session."""
+
+    def __init__(
+        self,
+        app: Any,
+        *,
+        settings: OIDCSettings | LocalSettings,
+        store: SQLiteSecurityStore,
+        limiter: SlidingWindowRateLimiter,
+    ) -> None:
+        super().__init__(app)
+        self.settings = settings
+        self.store = store
+        self.limiter = limiter
+
+    @staticmethod
+    def group(request: Request) -> str | None:
+        path = request.url.path
+        if path in {"/auth/login", "/auth/callback"}:
+            return "auth"
+        if request.method.upper() in UNSAFE_METHODS and (
+            path.startswith("/api/") or path == "/auth/logout"
+        ):
+            return "control"
+        return None
+
+    async def dispatch(self, request: Request, call_next: Callable[..., Any]):
+        group = self.group(request)
+        if group is None:
+            return await call_next(request)
+        source = _client_source(request) or "unknown"
+        session_id = request.scope.get("coordinator.session_id")
+        identity = str(session_id) if session_id else source
+        limit = (
+            self.settings.rate_limit_auth_attempts
+            if group == "auth"
+            else self.settings.rate_limit_control_attempts
+        )
+        allowed, remaining, retry_after = self.limiter.allow(
+            f"http:{group}:{identity}",
+            limit,
+            self.settings.rate_limit_window_seconds,
+        )
+        headers = {
+            "X-RateLimit-Limit": str(limit),
+            "X-RateLimit-Remaining": str(remaining),
+        }
+        if not allowed:
+            headers["Retry-After"] = str(retry_after)
+            await run_in_threadpool(
+                self.store.audit,
+                "rate_limit",
+                "denied",
+                source=source,
+                detail=f"{group} request limit reached",
+            )
+            if request.url.path.startswith("/api/v1/"):
+                payload = {
+                    "ok": False,
+                    "error": {
+                        "code": "rate_limited",
+                        "message": "too many requests; retry later",
+                    },
+                }
+            else:
+                payload = {
+                    "ok": False,
+                    "outcome": "rate_limited",
+                    "message": "too many requests; retry later",
+                }
+            return JSONResponse(payload, status_code=429, headers=headers)
+        response = await call_next(request)
+        response.headers.update(headers)
+        return response
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):

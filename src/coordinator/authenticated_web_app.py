@@ -65,7 +65,9 @@ from .security import (
     SQLiteSecurityStore,
     SecurityHeadersMiddleware,
     RequestContextMiddleware,
+    RateLimitMiddleware,
     ServerSideSessionMiddleware,
+    SlidingWindowRateLimiter,
     _audit_user,
     _authorized,
     _bounded_body,
@@ -120,6 +122,7 @@ def create_authenticated_app(
     )
     operational = OperationalStore(settings.state_dir)
     operational.recover_interrupted()
+    rate_limiter = SlidingWindowRateLimiter()
     terminal_attachment_lock = threading.Lock()
     terminal_attachment_owner: list[str | None] = [None]
     state_cache_lock = threading.Lock()
@@ -1253,6 +1256,22 @@ def create_authenticated_app(
     async def terminal_socket(websocket: WebSocket):
         attachment_id = secrets.token_urlsafe(18)
         writable = False
+        source = websocket.client.host if websocket.client else "unknown"
+        allowed, _, retry_after = rate_limiter.allow(
+            f"terminal:{source}",
+            settings.rate_limit_terminal_connections,
+            settings.rate_limit_window_seconds,
+        )
+        if not allowed:
+            await run_in_threadpool(
+                store.audit,
+                "terminal_rate_limit",
+                "denied",
+                source=source,
+                detail=f"retry after {retry_after}s",
+            )
+            await websocket.close(code=1013, reason="terminal connection limit reached")
+            return
         origin = (websocket.headers.get("origin") or "").strip().lower()
         if not origin or origin != _websocket_origin(websocket, settings).lower():
             await websocket.close(code=1008, reason="origin refused")
@@ -1564,6 +1583,12 @@ def create_authenticated_app(
             www_redirect=False,
         ),
         Middleware(ServerSideSessionMiddleware, store=store, settings=settings),
+        Middleware(
+            RateLimitMiddleware,
+            settings=settings,
+            store=store,
+            limiter=rate_limiter,
+        ),
         Middleware(AccessControlMiddleware, settings=settings, store=store),
     ]
     app = Starlette(routes=routes, middleware=middleware, lifespan=lifespan)
@@ -1596,6 +1621,10 @@ def settings_from_args(args: Any) -> OIDCSettings:
         state_dir=state_dir,
         session_idle_seconds=int(args.session_idle_seconds),
         session_absolute_seconds=int(args.session_absolute_seconds),
+        rate_limit_window_seconds=int(args.rate_limit_window_seconds),
+        rate_limit_auth_attempts=int(args.rate_limit_auth_attempts),
+        rate_limit_control_attempts=int(args.rate_limit_control_attempts),
+        rate_limit_terminal_connections=int(args.rate_limit_terminal_connections),
         secure_cookie=not bool(args.insecure_oidc_http),
         trusted_hosts=tuple(args.trusted_host or ()),
     )
@@ -1617,6 +1646,10 @@ def local_settings_from_args(args: Any, port: int | None = None) -> LocalSetting
         state_dir=Path(args.state_dir).expanduser(),
         session_idle_seconds=int(args.session_idle_seconds),
         session_absolute_seconds=int(args.session_absolute_seconds),
+        rate_limit_window_seconds=int(args.rate_limit_window_seconds),
+        rate_limit_auth_attempts=int(args.rate_limit_auth_attempts),
+        rate_limit_control_attempts=int(args.rate_limit_control_attempts),
+        rate_limit_terminal_connections=int(args.rate_limit_terminal_connections),
         trusted_hosts=hosts,
     )
 

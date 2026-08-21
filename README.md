@@ -138,6 +138,8 @@ command-line flag always overrides the matching config value.
 | `groups_claim`       | `groups`                             | ID-token claim containing Authentik groups. |
 | `state_dir`          | `$XDG_STATE_HOME/coordinator`, or `~/.local/state/coordinator` | Owner-only SQLite session and audit directory. |
 | `session_idle_seconds` / `session_absolute_seconds` | `3600` / `43200` | Server-enforced session lifetimes. |
+| `rate_limit_window_seconds` | `60` | Sliding-window duration for in-process abuse controls. |
+| `rate_limit_auth_attempts` / `rate_limit_control_attempts` / `rate_limit_terminal_connections` | `30` / `120` / `30` | Per-source/session limits for sign-in, state-changing controls, and terminal attachments. |
 | `trusted_hosts`      | external URL hostname               | Exact accepted HTTP hostnames; wildcards are refused. |
 | `forwarded_allow_ips` | `127.0.0.1`                         | Proxy IP/CIDR values Uvicorn may trust for forwarded scheme/client data; `*` is refused. |
 

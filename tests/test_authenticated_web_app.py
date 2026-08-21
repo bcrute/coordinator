@@ -617,6 +617,37 @@ class LocalAppTests(unittest.TestCase):
             self.assertEqual(metrics.status_code, 200)
             self.assertIn("coordinator_runs", metrics.text)
 
+    def test_control_rate_limit_uses_versioned_error_and_retry_header(self) -> None:
+        settings = LocalSettings(
+            external_url="http://127.0.0.1",
+            state_dir=self.base / "limited-state",
+            secure_cookie=False,
+            trusted_hosts=("127.0.0.1",),
+            rate_limit_control_attempts=2,
+        )
+        app = create_authenticated_app(
+            self.repo,
+            settings,
+            repositories_root=self.base,
+            codex_command_for_repo=lambda repo: [sys.executable, "-c", "pass"],
+        )
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            csrf = client.get("/api/v1/state").json()["security"]["csrf_token"]
+            for _ in range(2):
+                response = client.post(
+                    "/api/v1/codex/invalid", headers=self.headers(csrf)
+                )
+                self.assertEqual(response.status_code, 404, response.text)
+            limited = client.post(
+                "/api/v1/codex/invalid", headers=self.headers(csrf)
+            )
+            self.assertEqual(limited.status_code, 429, limited.text)
+            self.assertEqual(limited.json()["error"]["code"], "rate_limited")
+            self.assertGreaterEqual(int(limited.headers["retry-after"]), 1)
+            self.assertEqual(limited.headers["x-ratelimit-remaining"], "0")
+            activity = client.get("/api/activity").json()["events"]
+            self.assertTrue(any(item["event"] == "rate_limit" for item in activity))
+
     def test_run_history_policy_events_and_explicit_resume(self) -> None:
         with TestClient(self.app, base_url="http://127.0.0.1") as client:
             state = client.get("/api/state").json()

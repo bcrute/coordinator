@@ -58,6 +58,14 @@ auth_mode = "local"
 # session_idle_seconds = 3600
 # session_absolute_seconds = 43200
 
+# Sliding-window abuse controls. Authentication starts, state-changing API
+# controls, and terminal socket attachments use separate per-source/session
+# budgets within this window.
+# rate_limit_window_seconds = 60
+# rate_limit_auth_attempts = 30
+# rate_limit_control_attempts = 120
+# rate_limit_terminal_connections = 30
+
 # The external hostname accepted by the application and the proxy addresses
 # whose X-Forwarded-For/X-Forwarded-Proto values Uvicorn may trust.
 # trusted_hosts = ["coordinator.example.com"]

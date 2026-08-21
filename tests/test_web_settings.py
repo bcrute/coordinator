@@ -104,6 +104,10 @@ class ConfigValuesTests(unittest.TestCase):
                 state_dir = "state"
                 session_idle_seconds = 900
                 session_absolute_seconds = 7200
+                rate_limit_window_seconds = 90
+                rate_limit_auth_attempts = 12
+                rate_limit_control_attempts = 80
+                rate_limit_terminal_connections = 8
                 trusted_hosts = ["coordinator.example"]
                 forwarded_allow_ips = "127.0.0.1"
                 insecure_oidc_http = false
@@ -116,6 +120,10 @@ class ConfigValuesTests(unittest.TestCase):
             self.assertEqual(args.state_dir, base / "state")
             self.assertEqual(args.session_idle_seconds, 900)
             self.assertEqual(args.session_absolute_seconds, 7200)
+            self.assertEqual(args.rate_limit_window_seconds, 90)
+            self.assertEqual(args.rate_limit_auth_attempts, 12)
+            self.assertEqual(args.rate_limit_control_attempts, 80)
+            self.assertEqual(args.rate_limit_terminal_connections, 8)
             self.assertEqual(args.trusted_host, ["coordinator.example"])
 
 

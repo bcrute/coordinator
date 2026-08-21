@@ -250,7 +250,14 @@ Exit gate:
 
 ## Phase 5 - Network and release readiness
 
-**Status: planned.**
+**Status: in progress.**
+
+Progress:
+
+- Configurable in-process sliding-window limits now bound authentication starts,
+  state-changing controls, and terminal attachments per source/session. Rejections
+  include `Retry-After`, remaining-budget headers, a redacted audit event, and the
+  standard `/api/v1` error envelope.
 
 Deliverables:
 

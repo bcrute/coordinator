@@ -26,6 +26,10 @@ CONFIG_KEYS = {
     "state_dir",
     "session_idle_seconds",
     "session_absolute_seconds",
+    "rate_limit_window_seconds",
+    "rate_limit_auth_attempts",
+    "rate_limit_control_attempts",
+    "rate_limit_terminal_connections",
     "trusted_hosts",
     "forwarded_allow_ips",
     "insecure_oidc_http",
@@ -133,7 +137,14 @@ def load_config(path: Path) -> dict[str, object]:
             raise ValueError(f"--config {key} must be an array of non-empty strings")
         settings[key] = list(value)
 
-    for key in ("session_idle_seconds", "session_absolute_seconds"):
+    for key in (
+        "session_idle_seconds",
+        "session_absolute_seconds",
+        "rate_limit_window_seconds",
+        "rate_limit_auth_attempts",
+        "rate_limit_control_attempts",
+        "rate_limit_terminal_connections",
+    ):
         if key not in data:
             continue
         value = data[key]
@@ -229,6 +240,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--session-idle-seconds", type=int, default=None)
     parser.add_argument("--session-absolute-seconds", type=int, default=None)
+    parser.add_argument("--rate-limit-window-seconds", type=int, default=None)
+    parser.add_argument("--rate-limit-auth-attempts", type=int, default=None)
+    parser.add_argument("--rate-limit-control-attempts", type=int, default=None)
+    parser.add_argument("--rate-limit-terminal-connections", type=int, default=None)
     parser.add_argument(
         "--trusted-host", action="append", default=None, help="accepted Host value; repeatable"
     )
@@ -285,6 +300,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args.session_absolute_seconds = resolved(
         "session_absolute_seconds", args.session_absolute_seconds, 43200
     )
+    args.rate_limit_window_seconds = resolved(
+        "rate_limit_window_seconds", args.rate_limit_window_seconds, 60
+    )
+    args.rate_limit_auth_attempts = resolved(
+        "rate_limit_auth_attempts", args.rate_limit_auth_attempts, 30
+    )
+    args.rate_limit_control_attempts = resolved(
+        "rate_limit_control_attempts", args.rate_limit_control_attempts, 120
+    )
+    args.rate_limit_terminal_connections = resolved(
+        "rate_limit_terminal_connections", args.rate_limit_terminal_connections, 30
+    )
     args.trusted_host = resolved("trusted_hosts", args.trusted_host, [])
     args.forwarded_allow_ips = resolved(
         "forwarded_allow_ips", args.forwarded_allow_ips, "127.0.0.1"
@@ -303,5 +330,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--auth-mode must be local or oidc")
     if args.session_idle_seconds <= 0 or args.session_absolute_seconds <= 0:
         parser.error("session lifetimes must be positive")
+    if any(
+        value <= 0
+        for value in (
+            args.rate_limit_window_seconds,
+            args.rate_limit_auth_attempts,
+            args.rate_limit_control_attempts,
+            args.rate_limit_terminal_connections,
+        )
+    ):
+        parser.error("rate-limit settings must be positive")
     return args
-
