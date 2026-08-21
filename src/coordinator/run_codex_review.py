@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.14
 """Run exactly one Codex review for a completed Claude handoff."""
 
 from __future__ import annotations

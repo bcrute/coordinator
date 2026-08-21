@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.14
 """Thread-safe PTY manager for one fixed interactive Codex CLI process.
 
 `CodexSessionManager` owns a single Unix pseudo-terminal bound to one fixed

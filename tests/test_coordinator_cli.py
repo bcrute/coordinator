@@ -5,11 +5,13 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from coordinator import __version__
+from coordinator import MINIMUM_PYTHON, __version__
 from coordinator.cli import main
 
 
@@ -22,6 +24,7 @@ class CoordinatorCLITests(unittest.TestCase):
         return result, stdout.getvalue(), stderr.getvalue()
 
     def test_help_and_version(self) -> None:
+        self.assertEqual(MINIMUM_PYTHON, (3, 14))
         result, output, error = self.invoke(["--help"])
         self.assertEqual(result, 0, error)
         self.assertIn("serve", output)
@@ -32,6 +35,13 @@ class CoordinatorCLITests(unittest.TestCase):
         result, output, error = self.invoke(["--version"])
         self.assertEqual(result, 0, error)
         self.assertEqual(output.strip(), f"coordinator {__version__}")
+
+    def test_import_refuses_an_older_interpreter(self) -> None:
+        source = (Path(__file__).parents[1] / "src" / "coordinator" / "__init__.py")
+        unsupported = (MINIMUM_PYTHON[0], MINIMUM_PYTHON[1] - 1)
+        with mock.patch.object(sys, "version_info", unsupported):
+            with self.assertRaisesRegex(RuntimeError, "requires Python 3.14"):
+                exec(compile(source.read_bytes(), str(source), "exec"), {})
 
     def test_doctor_reports_machine_readable_preflight(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

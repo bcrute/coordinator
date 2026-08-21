@@ -185,7 +185,10 @@ class PackageMetadataTests(unittest.TestCase):
         project = self.data["project"]
         self.assertEqual(project["scripts"]["coordinator"], "coordinator.cli:main")
         self.assertEqual(self.data["tool"]["setuptools"]["package-dir"][""], "src")
-        self.assertEqual(project["requires-python"], ">=3.11")
+        self.assertEqual(project["requires-python"], ">=3.14")
+        self.assertEqual(
+            (ROOT / ".python-version").read_text(encoding="utf-8").strip(), "3.14"
+        )
         self.assertEqual(project["dynamic"], ["version"])
         self.assertEqual(
             self.data["tool"]["setuptools"]["dynamic"]["version"]["attr"],
@@ -278,10 +281,9 @@ class ReadmeLinkTests(unittest.TestCase):
             with self.subTest(rel=rel):
                 self.assertTrue((ROOT / rel).is_file(), f"documented script missing: {rel}")
 
-    def test_mentions_ci_matrix_and_release_checklist(self) -> None:
-        self.assertIn("3.11", self.text)
-        self.assertIn("3.12", self.text)
-        self.assertIn("3.13", self.text)
+    def test_mentions_supported_python_and_release_checklist(self) -> None:
+        self.assertIn("Python 3.14", self.text)
+        self.assertNotRegex(self.text, r"Python 3\.1[123]")
         self.assertIn("RELEASE_CHECKLIST.md", self.text)
 
     def test_declares_mit_license_under_personal_name(self) -> None:
@@ -351,10 +353,10 @@ class CiWorkflowTests(unittest.TestCase):
     def test_permissions_are_read_only(self) -> None:
         self.assertRegex(self.text, r"permissions:\s*\n\s*contents:\s*read")
 
-    def test_python_version_matrix(self) -> None:
-        for version in ("3.11", "3.12", "3.13"):
-            with self.subTest(version=version):
-                self.assertIn(f'"{version}"', self.text)
+    def test_python_314_is_the_only_runtime(self) -> None:
+        self.assertIn('python-version: "3.14"', self.text)
+        self.assertNotRegex(self.text, r'python-version:\s*"3\.1[123]"')
+        self.assertNotIn("matrix:", self.text)
 
     def test_current_major_action_versions(self) -> None:
         self.assertIn("actions/checkout@v7", self.text)
@@ -412,6 +414,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, self.text)
+        self.assertIn('python-version: "3.14"', self.text)
+        self.assertNotRegex(self.text, r'python-version:\s*"3\.1[123]"')
 
     def test_release_has_sbom_checksums_and_attestations(self) -> None:
         for contract in (

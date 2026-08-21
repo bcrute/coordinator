@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.14
 """Compatibility launcher for a native Claude team."""
 
 from pathlib import Path

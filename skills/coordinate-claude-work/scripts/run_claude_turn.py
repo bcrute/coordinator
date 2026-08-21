@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.14
 """Compatibility launcher for a Coordinator Claude handoff."""
 
 from pathlib import Path

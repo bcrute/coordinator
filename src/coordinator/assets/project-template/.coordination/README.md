@@ -65,7 +65,7 @@ rather than recreating Claude's team task list or mailbox here.
 The installed skill ships a localhost dashboard for this coordination directory:
 
 ```bash
-python3 ~/.codex/skills/coordinate-claude-work/scripts/web_app.py --repo .
+coordinator serve --repo .
 ```
 
 Run it from any initialized project; nothing is copied into the project. `--repo`

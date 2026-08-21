@@ -286,10 +286,10 @@ Progress:
 - Dedicated-service and Caddy examples keep the upstream on a proxy-only socket,
   preserve SSE/WebSocket behavior, remove unused identity headers, bound service
   resources, and document the terminal's command-execution consequence.
-- Python 3.11 through 3.14 are covered by the locked CI matrix. A clean committed-tree
-  export installs, runs the public suite, builds both distributions, and reports the
-  intended version; the dependency and public-tree scans are recorded in
-  `docs/RELEASE_EVIDENCE.md`.
+- Python 3.14 is the sole supported runtime and is covered by locked CI. A clean
+  committed-tree export installs, runs the public suite, builds both distributions,
+  and reports the intended version; the dependency and public-tree scans are recorded
+  in `docs/RELEASE_EVIDENCE.md`.
 
 Remaining acceptance work requires the target host and identity provider: live
 Authentik negative-token/claim tests, proof that the TLS proxy is the only upstream

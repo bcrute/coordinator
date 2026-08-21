@@ -23,6 +23,8 @@ interface with migration notes.
 - Starlette/Uvicorn is the sole web runtime; terminal traffic uses a WebSocket and live
   dashboard state uses Server-Sent Events.
 - Session persistence no longer recreates records revoked during an in-flight request.
+- Python 3.14 is the sole supported interpreter; package metadata, the lock, CI, and
+  release builds reject or omit older runtimes.
 
 ### Migration
 

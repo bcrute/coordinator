@@ -8,20 +8,20 @@ not a release announcement and no version tag was created.
 
 ### Automated and clean-tree evidence
 
-- The committed public suite contains 322 tests. A clean `git archive` export was
+- The committed public suite contains 323 tests. A clean `git archive` export was
   installed with `uv sync --locked --extra dev`, passed that suite, built the wheel
   and source distribution, and reported `coordinator 0.3.0` on Python 3.14.7.
 - The development workspace additionally ran 100 ignored local corpus tests. The
-  combined 422-test suite passed with one intentional opt-in browser skip.
+  combined 423-test suite passed with one intentional opt-in browser skip.
 - The focused SQLite/security/web suites passed on Python 3.14 with
   `ResourceWarning` promoted to an error after connection ownership was made
   explicit.
 - Python byte compilation and the Node syntax check for the dashboard client passed.
 - The dependency audit reported no known vulnerabilities. The local project itself
   is reported as unauditable because it is not a third-party PyPI dependency.
-- CI exercises Python 3.11, 3.12, 3.13, and 3.14 plus a separate Chromium journey.
-  The four-version and Chromium checkpoint passed in
-  [GitHub Actions run 32451251914](https://github.com/bcrute/coordinator/actions/runs/32451251914).
+- Python 3.14 is the sole supported runtime. CI exercises the application and a
+  separate Chromium journey on 3.14; compatibility with older interpreters is not a
+  product goal.
 
 ### Public-tree review
 

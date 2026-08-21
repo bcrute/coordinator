@@ -10,7 +10,7 @@ affiliation with, OpenAI or Anthropic. It wraps their
 separately installed and separately authenticated CLIs; you are responsible
 for your own Codex and Claude Code accounts, credentials, and usage.
 
-Tested on Linux/Unix-like systems with Python 3.11+. It has not been tested
+Tested on Linux/Unix-like systems with Python 3.14. It has not been tested
 on Windows.
 
 ## Prerequisites
@@ -19,7 +19,7 @@ Install and authenticate each of these yourself, independently of this
 repository:
 
 - **Git**
-- **Python 3.11 or newer**
+- **Python 3.14**
 - **Codex CLI**, logged in (`codex login` or an API key in the environment)
 - **Claude Code CLI**, logged in
 
@@ -46,18 +46,18 @@ Run these from the directory where you cloned this repository:
 1. **Create an environment and install the application dependencies:**
 
    ```bash
-   uv venv
+   uv venv --python 3.14
    uv pip install --python .venv/bin/python --editable .
    ```
 
-   If you do not use `uv`, the equivalent is `python3 -m venv .venv` followed
+   If you do not use `uv`, the equivalent is `python3.14 -m venv .venv` followed
    by `.venv/bin/python -m pip install --editable .` (your OS
    may package Python's `venv` support separately).
 
 2. **Install the skill and global defaults** (once per machine):
 
    ```bash
-   python3 skills/coordinate-claude-work/scripts/install_user.py
+   .venv/bin/python skills/coordinate-claude-work/scripts/install_user.py
    ```
 
    This symlinks the versioned skill into `~/.codex/skills` and adds small
@@ -228,7 +228,7 @@ Or run a focused subset relevant to the web app and settings:
 
 `.github/workflows/ci.yml` runs the full test suite and a compile check on
 every push and pull request, on `ubuntu-latest` with read-only permissions,
-across a Python 3.11 / 3.12 / 3.13 / 3.14 matrix. It installs the pinned application
+on Python 3.14. It installs the pinned application
 and test dependencies, audits the application dependency set for known
 vulnerabilities, uses Node 24 for a syntax check, and runs a separate Playwright
 Chromium workflow through the local server. The tests launch no external identity

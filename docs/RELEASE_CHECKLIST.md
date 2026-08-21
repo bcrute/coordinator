@@ -14,8 +14,8 @@ performs those actions automatically.
       errors.
 - [ ] Run `python -m pip_audit --requirement requirements.txt` and resolve or
       explicitly document every finding.
-- [ ] Confirm CI (`.github/workflows/ci.yml`) is green on Python 3.11, 3.12,
-      3.13, and 3.14 for the commit you intend to push.
+- [ ] Confirm CI (`.github/workflows/ci.yml`) is green on Python 3.14 for the
+      commit you intend to push.
 - [ ] Build wheel and sdist with `uv run python -m build`, install the wheel in
       a fresh environment, and verify its reported version matches the intended
       `v<version>` tag.

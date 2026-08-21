@@ -67,7 +67,7 @@ If you are also updating the machine-level skill symlink and
 marked blocks and does not reset your project's live coordination state:
 
 ```bash
-python3 skills/coordinate-claude-work/scripts/install_user.py
+.venv/bin/python skills/coordinate-claude-work/scripts/install_user.py
 ```
 
 If you are also managing a systemd user service, restart it after pulling:

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.14
 """Serve the coordination dashboard in local or authenticated OIDC mode."""
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.14
 """Relay goal-driven handoffs between Claude and Codex through coordination files."""
 
 from __future__ import annotations

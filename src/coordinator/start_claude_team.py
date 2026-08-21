@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.14
 """Start one native interactive Claude agent-team handoff for the active task."""
 
 from __future__ import annotations

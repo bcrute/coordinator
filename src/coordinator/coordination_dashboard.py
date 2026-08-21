@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.14
 """Render the coordination mailbox as a compact terminal dashboard."""
 
 from __future__ import annotations

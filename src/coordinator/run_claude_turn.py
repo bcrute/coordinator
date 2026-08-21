@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.14
 """Run exactly one Claude Code implementation handoff for the active task."""
 
 from __future__ import annotations

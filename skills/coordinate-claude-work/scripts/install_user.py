@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.14
 """Install the skill and small global instruction blocks for one user."""
 
 from __future__ import annotations
@@ -7,6 +7,9 @@ import argparse
 import os
 import sys
 from pathlib import Path
+
+if sys.version_info < (3, 14):
+    raise SystemExit("coordinate-claude-work requires Python 3.14 or newer")
 
 
 START = "<!-- coordinate-claude-work-global:start -->"

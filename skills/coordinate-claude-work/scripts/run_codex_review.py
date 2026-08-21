@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.14
 """Compatibility launcher for a Coordinator Codex review."""
 
 from pathlib import Path

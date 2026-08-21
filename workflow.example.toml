@@ -3,7 +3,7 @@
 # Copy this file (for example to workflow.toml, which stays untracked) and
 # adjust the values, then run:
 #
-#   python3 skills/coordinate-claude-work/scripts/web_app.py --config workflow.toml
+#   .venv/bin/coordinator serve --config workflow.toml
 #
 # Every key here is optional; anything you omit falls back to the program's
 # built-in default. Command-line flags such as --port always override the

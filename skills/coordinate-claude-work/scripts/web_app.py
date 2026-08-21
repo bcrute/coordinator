@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.14
 """Compatibility launcher for the installed Coordinator application."""
 
 from pathlib import Path

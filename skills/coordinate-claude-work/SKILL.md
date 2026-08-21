@@ -13,7 +13,7 @@ reviewer; make Claude Code the sole product-code writer.
 If `.coordination/README.md` is absent, run:
 
 ```bash
-python3 <skill-directory>/scripts/init_project.py . --project-name "<name>"
+python3.14 <skill-directory>/scripts/init_project.py . --project-name "<name>"
 ```
 
 The initializer preserves existing `AGENTS.md` and `CLAUDE.md` content and adds
@@ -50,7 +50,7 @@ by inspection and record them there.
 3. Run exactly one Claude handoff:
 
    ```bash
-   python3 <skill-directory>/scripts/run_claude_turn.py --repo .
+   python3.14 <skill-directory>/scripts/run_claude_turn.py --repo .
    ```
 
    The script is a thin adapter around Claude Code print mode and safe `auto`
@@ -93,7 +93,7 @@ After writing an active overall goal and the first subgoal, run both relays in t
 current Codex turn:
 
 ```bash
-python3 <skill-directory>/scripts/watch_coordination.py --repo . --role both
+python3.14 <skill-directory>/scripts/watch_coordination.py --repo . --role both
 ```
 
 Keep the process attached. It launches Claude for a ready subgoal, launches a
@@ -123,8 +123,8 @@ task where teammates need to communicate or share Claude's native task list, run
 the Codex review watcher in one terminal and the native team launcher in another:
 
 ```bash
-python3 <skill-directory>/scripts/watch_coordination.py --repo . --role codex
-python3 <skill-directory>/scripts/start_claude_team.py --repo .
+python3.14 <skill-directory>/scripts/watch_coordination.py --repo . --role codex
+python3.14 <skill-directory>/scripts/start_claude_team.py --repo .
 ```
 
 The launcher enables `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, starts an Opus
@@ -138,8 +138,8 @@ should use the automatic native-subagent path.
 To run the two sides independently in separate terminals, use:
 
 ```bash
-python3 <skill-directory>/scripts/watch_coordination.py --repo . --role claude
-python3 <skill-directory>/scripts/watch_coordination.py --repo . --role codex
+python3.14 <skill-directory>/scripts/watch_coordination.py --repo . --role claude
+python3.14 <skill-directory>/scripts/watch_coordination.py --repo . --role codex
 ```
 
 Do not mix a `both` watcher with side-specific watchers. Watchers only relay file
@@ -283,7 +283,7 @@ from the browser.
 Run the browser terminal's focused contract tests with:
 
 ```bash
-python3 -m unittest tests.test_web_terminal_contract tests.test_web_views \
+python3.14 -m unittest tests.test_web_terminal_contract tests.test_web_views \
   tests.test_web_repository_picker tests.test_web_repository_switching -v
 ```
 

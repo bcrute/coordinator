@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.14
 """Install the coordination workflow into a project without clobbering state."""
 
 from __future__ import annotations
