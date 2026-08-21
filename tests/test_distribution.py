@@ -522,6 +522,7 @@ class PublicCheckoutUnitDiscoveryTests(unittest.TestCase):
             "test_distribution.py",
             "test_coordinator_cli.py",
             "test_operational_store.py",
+            "test_process_activity.py",
             "test_provider_usage.py",
             "test_executor_adapters.py",
         }

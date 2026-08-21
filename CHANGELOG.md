@@ -14,6 +14,8 @@ interface with migration notes.
   adapter diagnostics while retaining Claude as the default executor.
 - Risk-based testing guidance, branch/subprocess coverage reporting, and executor
   lifecycle, ownership, validation, replay, failure, and secret-handling contracts.
+- A live Terminal-page activity panel for agents, reported models, and background
+  terminals, scoped to the exact process tree of each managed terminal session.
 
 ### Changed
 

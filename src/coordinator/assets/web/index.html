@@ -203,6 +203,25 @@
             <p class="note" id="codex-session-feedback" role="status" aria-live="polite">
               Controls start and stop the Codex terminal session for this repository.
             </p>
+            <section class="terminal-activity" aria-labelledby="terminal-activity-heading">
+              <header class="terminal-activity-head">
+                <h4 id="terminal-activity-heading">Session activity</h4>
+                <p class="badge" id="terminal-activity-summary">0 agents · 0 background</p>
+              </header>
+              <p class="note" id="terminal-activity-detail">
+                No managed terminal session is running.
+              </p>
+              <div class="terminal-activity-grid">
+                <section aria-labelledby="terminal-agents-heading">
+                  <h5 id="terminal-agents-heading">Agents and models</h5>
+                  <ul class="records records-compact" id="terminal-agents"></ul>
+                </section>
+                <section aria-labelledby="background-terminals-heading">
+                  <h5 id="background-terminals-heading">Background terminals</h5>
+                  <ul class="records records-compact" id="background-terminals"></ul>
+                </section>
+              </div>
+            </section>
             <div
               id="codex-terminal"
               class="terminal-viewport"

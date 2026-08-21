@@ -167,6 +167,24 @@ and `..` for the repository paths for exactly this reason.
 from `--config`, which in turn wins over the built-in default. See
 `workflow.example.toml` for a fully commented starting point.
 
+### Managed terminal activity
+
+The Terminal page shows live agents, safely reported models, and background terminals
+inside the exact process tree launched by that managed browser-terminal session. Each
+start receives a distinct session identifier, so unrelated Codex and Claude instances
+running elsewhere on the workstation are never merged into the display. Process names,
+PIDs, elapsed time, and OS state come from bounded Linux procfs reads. Models come only
+from known model flags, allowlisted model environment values, or the exact Codex thread
+record associated with an open rollout file; prompts, arbitrary arguments, and general
+environment values are not returned to the browser.
+
+This is observation, not agent configuration. Reusable agent profiles do not yet have a
+dashboard editor: provider executables, API endpoints, executor adapters, and model
+defaults remain TOML/CLI settings. Process presence also does not claim to know an
+agent's internal wait reason; a visible background terminal confirms that the managed
+session owns the work, while semantic messages such as “awaiting background terminal”
+remain provider-owned until exposed as structured events.
+
 ### Provider usage indicators
 
 The topbar shows every percentage-based allowance reported by **Codex** and

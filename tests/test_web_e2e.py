@@ -293,6 +293,13 @@ class DashboardBrowserTests(unittest.TestCase):
                     page.locator("#codex-session-feedback").filter(
                         has_text="input ownership"
                     ).wait_for(timeout=10_000)
+                    page.locator("#terminal-activity-heading").filter(
+                        has_text="Session activity"
+                    ).wait_for(timeout=10_000)
+                    self.assertTrue(page.locator("#terminal-agents").is_visible())
+                    self.assertTrue(
+                        page.locator("#background-terminals").is_visible()
+                    )
                     page.evaluate(
                         """() => new Promise((resolve) => {
                           codexTerminal.write('clipboard-marker', resolve);

@@ -1305,6 +1305,104 @@ function codexSizeText(session) {
   return rows === null || cols === null ? NOT_RECORDED : rows + " x " + cols;
 }
 
+function renderTerminalProcessActivity(session) {
+  var activity = record(session.process_activity);
+  var agents = list(activity.agents).filter(function (entry) {
+    return entry && typeof entry === "object";
+  });
+  var terminals = list(activity.background_terminals).filter(function (entry) {
+    return entry && typeof entry === "object";
+  });
+  var agentNode = el("terminal-agents");
+  var terminalNode = el("background-terminals");
+
+  setText(
+    "terminal-activity-summary",
+    agents.length + " agent" + (agents.length === 1 ? "" : "s") +
+      " · " + terminals.length + " background"
+  );
+  setTone(
+    "terminal-activity-summary",
+    activity.supported === false ? "warn" : terminals.length > 0 ? "active" : agents.length > 0 ? "ok" : ""
+  );
+  setText(
+    "terminal-activity-detail",
+    text(activity.detail, "No managed terminal process activity is available.")
+  );
+
+  if (agentNode) {
+    if (agents.length === 0) {
+      agentNode.replaceChildren(item("is-empty", "No agents observed in this session."));
+    } else {
+      agentNode.replaceChildren.apply(
+        agentNode,
+        agents.map(function (entry) {
+          var row = document.createElement("li");
+          var head = document.createElement("p");
+          head.className = "record-head";
+          var badge = span("badge", text(entry.state, "unknown"));
+          var mood = tone(entry.state);
+          if (mood) badge.setAttribute("data-tone", mood);
+          head.appendChild(badge);
+          head.appendChild(
+            span(
+              "record-title",
+              text(entry.label, "Agent") + " · " + text(entry.role, "nested")
+            )
+          );
+          row.appendChild(head);
+
+          var meta = document.createElement("p");
+          meta.className = "record-meta";
+          meta.textContent =
+            text(entry.provider, "provider unknown") +
+            " · model " + text(entry.model, "not reported") +
+            (entry.subagent_model ? " · subagents " + text(entry.subagent_model) : "") +
+            " · pid " + text(entry.pid, "unknown") +
+            " · " + text(entry.os_state, "state unknown") +
+            " · " + clock(entry.elapsed);
+          row.appendChild(meta);
+          return row;
+        })
+      );
+    }
+  }
+
+  if (terminalNode) {
+    if (terminals.length === 0) {
+      terminalNode.replaceChildren(item("is-empty", "No background terminals observed."));
+    } else {
+      terminalNode.replaceChildren.apply(
+        terminalNode,
+        terminals.map(function (entry) {
+          var row = document.createElement("li");
+          var head = document.createElement("p");
+          head.className = "record-head";
+          var badge = span("badge", text(entry.state, "unknown"));
+          var mood = tone(entry.state);
+          if (mood) badge.setAttribute("data-tone", mood);
+          head.appendChild(badge);
+          head.appendChild(span("record-title", text(entry.title, "Background terminal")));
+          row.appendChild(head);
+
+          var meta = document.createElement("p");
+          meta.className = "record-meta";
+          meta.textContent =
+            "pid " + text(entry.pid, "unknown") +
+            " · " + text(entry.os_state, "state unknown") +
+            " · " + clock(entry.elapsed) +
+            " · " + count(entry.agent_count) + " agent" +
+            (entry.agent_count === 1 ? "" : "s") +
+            " · " + count(entry.process_count) + " process" +
+            (entry.process_count === 1 ? "" : "es");
+          row.appendChild(meta);
+          return row;
+        })
+      );
+    }
+  }
+}
+
 function paintCodexControls() {
   var busy = codexPendingControl !== "" || repositorySwitching;
   var startNode = el("codex-session-start");
@@ -1335,6 +1433,7 @@ function applyCodexSession(session) {
   setText("codex-session-pid", codexProcessText(session));
   setText("codex-session-size", codexSizeText(session));
   setText("codex-session-command", commandText(session.command));
+  renderTerminalProcessActivity(session);
   var attachment = record(session.attachment);
   if (attachment.mode) {
     codexTerminalWritable = attachment.owned_by_this_connection === true;

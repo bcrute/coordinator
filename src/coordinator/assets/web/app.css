@@ -1087,6 +1087,57 @@ kbd { padding: 0.08rem 0.35rem; border: 1px solid var(--edge-solid); border-radi
 
 /* Terminal ------------------------------------------------------------------ */
 
+.terminal-activity {
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--edge-solid);
+  border-radius: 6px;
+  background: #0c131d;
+}
+
+.terminal-activity-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem 0.75rem;
+}
+
+.terminal-activity h4,
+.terminal-activity h5 {
+  margin: 0;
+  color: var(--dim);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.terminal-activity > .note {
+  margin: 0.35rem 0 0.5rem;
+}
+
+.terminal-activity-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.terminal-activity-grid > section {
+  min-width: 0;
+}
+
+.terminal-activity-grid h5 {
+  margin-bottom: 0.3rem;
+}
+
+.records-compact {
+  gap: 0.3rem;
+}
+
+.records-compact li {
+  padding: 0.35rem 0.5rem;
+}
+
 .terminal-viewport {
   height: 30rem;
   min-height: 16rem;
@@ -1271,6 +1322,10 @@ kbd { padding: 0.08rem 0.35rem; border: 1px solid var(--edge-solid); border-radi
   .terminal-viewport {
     height: 20rem;
     min-height: 14rem;
+  }
+
+  .terminal-activity-grid {
+    grid-template-columns: 1fr;
   }
 
   .footer {

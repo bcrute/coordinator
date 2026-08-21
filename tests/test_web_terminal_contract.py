@@ -166,6 +166,51 @@ class ClipboardTests(unittest.TestCase):
         )
 
 
+class SessionActivityTests(unittest.TestCase):
+    """Managed-session agents and background terminals stay visible and scoped."""
+
+    def setUp(self):
+        self.js = read(WEB_DIR / "app.js")
+        self.html = read(WEB_DIR / "index.html")
+
+    def test_activity_section_is_immediately_above_terminal(self):
+        for element_id in (
+            "terminal-activity-summary",
+            "terminal-activity-detail",
+            "terminal-agents",
+            "background-terminals",
+        ):
+            self.assertIn(f'id="{element_id}"', self.html)
+        self.assertLess(
+            self.html.index('class="terminal-activity"'),
+            self.html.index('id="codex-terminal"'),
+        )
+
+    def test_renderer_shows_agent_models_and_background_process_counts(self):
+        match = re.search(
+            r"function renderTerminalProcessActivity\([\s\S]*?\n}\n", self.js
+        )
+        self.assertIsNotNone(match, "process activity renderer not found")
+        body = match.group(0)
+        for field in (
+            "process_activity",
+            "background_terminals",
+            "entry.model",
+            "entry.subagent_model",
+            "entry.agent_count",
+            "entry.process_count",
+        ):
+            self.assertIn(field, body)
+        self.assertNotIn("entry.argv", body)
+        self.assertNotIn("entry.environment", body)
+        self.assertNotIn("entry.command", body)
+
+    def test_session_updates_always_refresh_process_activity(self):
+        match = re.search(r"function applyCodexSession\([\s\S]*?\n}\n", self.js)
+        self.assertIsNotNone(match, "session renderer not found")
+        self.assertIn("renderTerminalProcessActivity(session)", match.group(0))
+
+
 class ResizeTests(unittest.TestCase):
     """Resize requests must be debounced and deduplicated."""
 

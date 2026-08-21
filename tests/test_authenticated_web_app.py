@@ -1023,6 +1023,12 @@ class LocalAppTests(unittest.TestCase):
             csrf = client.get("/api/state").json()["security"]["csrf_token"]
             response = client.post("/api/codex/start", headers=self.headers(csrf))
             self.assertEqual(response.status_code, 200, response.text)
+            started = response.json()["codex_session"]
+            self.assertIsInstance(started["session_id"], str)
+            self.assertEqual(
+                started["process_activity"]["session_id"], started["session_id"]
+            )
+            self.assertEqual(started["process_activity"]["root_pid"], started["pid"])
             with client.websocket_connect(
                 "ws://127.0.0.1/ws/terminal",
                 headers={"Origin": "http://127.0.0.1"},

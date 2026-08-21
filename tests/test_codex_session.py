@@ -119,6 +119,23 @@ class CodexSessionManagerTests(unittest.TestCase):
         _wait_until(lambda: manager.snapshot()["running"])
         with self.assertRaises(RuntimeError):
             manager.start()
+
+    def test_each_start_has_a_distinct_process_activity_scope(self) -> None:
+        script = f"import sys, time; sys.stderr.write('{MARKER}\\n'); time.sleep(2)"
+        manager = self._make(script)
+
+        manager.start()
+        first = manager.snapshot()
+        manager.stop()
+        manager.start()
+        second = manager.snapshot()
+
+        self.assertIsInstance(first["session_id"], str)
+        self.assertIsInstance(second["session_id"], str)
+        self.assertNotEqual(first["session_id"], second["session_id"])
+        self.assertEqual(first["process_activity"]["session_id"], first["session_id"])
+        self.assertEqual(second["process_activity"]["session_id"], second["session_id"])
+        self.assertEqual(second["process_activity"]["root_pid"], second["pid"])
         manager.stop()
 
     def test_natural_exit_is_reported_truthfully(self) -> None:

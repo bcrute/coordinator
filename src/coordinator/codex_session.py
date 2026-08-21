@@ -15,6 +15,7 @@ import errno
 import fcntl
 import os
 import pty
+import secrets
 import signal
 import struct
 import subprocess
@@ -22,6 +23,8 @@ import termios
 import threading
 import time
 from typing import Sequence
+
+from .process_activity import ProcessActivityObserver
 
 DEFAULT_MAX_BUFFER_CHARS = 1_000_000
 DEFAULT_MAX_WRITE_BYTES = 64 * 1024
@@ -56,6 +59,7 @@ class CodexSessionManager:
         max_write_bytes: int = DEFAULT_MAX_WRITE_BYTES,
         initial_rows: int = DEFAULT_ROWS,
         initial_cols: int = DEFAULT_COLS,
+        process_observer: ProcessActivityObserver | None = None,
     ) -> None:
         if not command:
             raise ValueError("command must be a non-empty sequence")
@@ -84,6 +88,8 @@ class CodexSessionManager:
         self._detail = "session has not been started"
         self._rows = initial_rows
         self._cols = initial_cols
+        self._process_observer = process_observer or ProcessActivityObserver()
+        self._session_id: str | None = None
 
         self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         self._buffer = ""
@@ -140,6 +146,7 @@ class CodexSessionManager:
 
             self._process = process
             self._pid = process.pid
+            self._session_id = secrets.token_urlsafe(12)
             self._master_fd = master_fd
             self._started_at = time.time()
             self._ended_at = None
@@ -355,9 +362,10 @@ class CodexSessionManager:
                 STATE_ERROR,
             )
             can_stop = running
-            return {
+            payload = {
                 "state": state,
                 "pid": self._pid,
+                "session_id": self._session_id,
                 "running": running,
                 "can_start": can_start,
                 "can_stop": can_stop,
@@ -372,6 +380,12 @@ class CodexSessionManager:
                 "buffer_next_cursor": self._buffer_next_cursor,
                 "detail": self._detail,
             }
+            observed_pid = self._pid if running else None
+            session_id = self._session_id
+        payload["process_activity"] = self._process_observer.snapshot(
+            observed_pid, session_id
+        )
+        return payload
 
     # -- internals ------------------------------------------------------
 
