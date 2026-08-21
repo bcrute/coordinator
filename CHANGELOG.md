@@ -4,6 +4,27 @@ All notable changes are recorded here. Coordinator follows Semantic Versioning w
 its public interfaces mature; pre-1.0 minor releases may intentionally revise an
 interface with migration notes.
 
+## Unreleased
+
+### Added
+
+- Built-in executor adapter seam with an optional, bounded mini-swe-agent runtime for
+  local or API-backed implementation models.
+- Provider-neutral executor telemetry, per-turn mini-swe-agent trajectories, and
+  adapter diagnostics while retaining Claude as the default executor.
+- Risk-based testing guidance, branch/subprocess coverage reporting, and executor
+  lifecycle, ownership, validation, replay, failure, and secret-handling contracts.
+
+### Changed
+
+- Provider usage pace projections now remain in the same percentage-left frame as the
+  header: zero or negative means the current pace exhausts the allowance before reset.
+
+### Fixed
+
+- Clearing the browser terminal now discards its retained server replay buffer, so
+  cleared output does not return after a page refresh while the Codex process continues.
+
 ## [0.3.0] - 2026-08-21
 
 ### Added

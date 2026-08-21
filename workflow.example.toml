@@ -33,6 +33,21 @@ relay_log_lines = 200
 # keeps one shared snapshot, so extra browser tabs do not multiply provider calls.
 usage_refresh_seconds = 3600
 
+# Implementation executor. "claude" preserves the original Claude Code workflow.
+# To use a local or API-backed model through mini-swe-agent, install its `mini`
+# command separately and uncomment the settings below.
+# executor_adapter = "mini-swe-agent"
+# mini_swe_command = "mini"
+# mini_swe_model = "openai/your-local-model"
+# mini_swe_api_base = "http://127.0.0.1:8000/v1"
+# mini_swe_provider = "openai"
+# mini_swe_api_key_env = "OPENAI_API_KEY"
+# mini_swe_step_limit = 12
+# mini_swe_cost_limit = 0.0
+# mini_swe_timeout_seconds = 900
+# Optional base mini-swe-agent YAML; relative paths resolve against this file.
+# mini_swe_config = "mini-local.yaml"
+
 # Suppress Uvicorn lifecycle messages. Request access logs stay disabled.
 quiet = false
 

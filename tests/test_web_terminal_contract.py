@@ -51,6 +51,7 @@ class CodexEndpointTests(unittest.TestCase):
         for literal in (
             '"/api/codex/start"',
             '"/api/codex/stop"',
+            '"/api/codex/clear"',
             '"/ws/terminal"',
         ):
             self.assertIn(literal, self.js, "missing endpoint literal: " + literal)
@@ -97,6 +98,18 @@ class OutputHandlingTests(unittest.TestCase):
         body = match.group(0)
         self.assertIn("codexTerminal.reset()", body)
         self.assertIn("connectCodexSocket()", body)
+
+    def test_clear_uses_server_cursor_before_reconnecting(self):
+        control = re.search(r"function codexControl\([\s\S]*?\n}\n", self.js)
+        clear = re.search(r"function codexClear\([\s\S]*?\n}\n", self.js)
+        self.assertIsNotNone(control, "codexControl function not found")
+        self.assertIsNotNone(clear, "codexClear function not found")
+        body = control.group(0)
+        self.assertIn("payload.cleared_through_cursor", body)
+        self.assertIn("closeCodexSocket()", body)
+        self.assertIn("codexTerminal.reset()", body)
+        self.assertIn("connectCodexSocket()", body)
+        self.assertIn('codexControl("clear")', clear.group(0))
 
 
 class InputSerializationTests(unittest.TestCase):

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import tomllib
 from pathlib import Path
+from urllib.parse import urlsplit
 
 RELAY_LOG_LINES = 200
 CONFIG_KEYS = {
@@ -15,6 +17,16 @@ CONFIG_KEYS = {
     "port",
     "relay_log_lines",
     "usage_refresh_seconds",
+    "executor_adapter",
+    "mini_swe_command",
+    "mini_swe_model",
+    "mini_swe_config",
+    "mini_swe_api_base",
+    "mini_swe_provider",
+    "mini_swe_api_key_env",
+    "mini_swe_step_limit",
+    "mini_swe_cost_limit",
+    "mini_swe_timeout_seconds",
     "quiet",
     "auth_mode",
     "oidc_issuer",
@@ -41,8 +53,9 @@ CONFIG_KEYS = {
 def load_config(path: Path) -> dict[str, object]:
     """Load and validate a portable settings file for one of the supported keys.
 
-    Relative `repo`/`repositories_root` values are resolved against `path`'s
-    own directory (not the launch working directory), so the same config file
+    Relative `repo`, `repositories_root`, `state_dir`, and `mini_swe_config`
+    values are resolved against `path`'s own directory (not the launch working
+    directory), so the same config file
     behaves the same regardless of where it is invoked from. Only the flat,
     documented keys in `CONFIG_KEYS` are accepted; anything else -- an unknown
     key, an unknown section, a wrong TOML type (including bool-as-int), an
@@ -71,7 +84,7 @@ def load_config(path: Path) -> dict[str, object]:
     config_dir = resolved.parent
     settings: dict[str, object] = {}
 
-    for key in ("repo", "repositories_root", "state_dir"):
+    for key in ("repo", "repositories_root", "state_dir", "mini_swe_config"):
         if key not in data:
             continue
         value = data[key]
@@ -119,6 +132,12 @@ def load_config(path: Path) -> dict[str, object]:
         settings["quiet"] = value
 
     string_keys = (
+        "executor_adapter",
+        "mini_swe_command",
+        "mini_swe_model",
+        "mini_swe_api_base",
+        "mini_swe_provider",
+        "mini_swe_api_key_env",
         "auth_mode",
         "oidc_issuer",
         "oidc_client_id",
@@ -146,6 +165,8 @@ def load_config(path: Path) -> dict[str, object]:
         settings[key] = list(value)
 
     for key in (
+        "mini_swe_step_limit",
+        "mini_swe_timeout_seconds",
         "session_idle_seconds",
         "session_absolute_seconds",
         "rate_limit_window_seconds",
@@ -159,6 +180,12 @@ def load_config(path: Path) -> dict[str, object]:
         if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
             raise ValueError(f"--config {key} must be a positive integer")
         settings[key] = value
+
+    if "mini_swe_cost_limit" in data:
+        value = data["mini_swe_cost_limit"]
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+            raise ValueError("--config mini_swe_cost_limit must be a non-negative number")
+        settings["mini_swe_cost_limit"] = float(value)
 
     for key in ("insecure_oidc_http", "terminal_enabled"):
         if key in data:
@@ -224,6 +251,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "supplies usage_refresh_seconds)",
     )
     parser.add_argument(
+        "--executor-adapter",
+        choices=("claude", "mini-swe-agent"),
+        default=None,
+        help="implementation runtime launched by the watcher (default: claude)",
+    )
+    parser.add_argument("--mini-swe-command", default=None)
+    parser.add_argument("--mini-swe-model", default=None)
+    parser.add_argument("--mini-swe-config", type=Path, default=None)
+    parser.add_argument("--mini-swe-api-base", default=None)
+    parser.add_argument("--mini-swe-provider", default=None)
+    parser.add_argument("--mini-swe-api-key-env", default=None)
+    parser.add_argument("--mini-swe-step-limit", type=int, default=None)
+    parser.add_argument("--mini-swe-cost-limit", type=float, default=None)
+    parser.add_argument("--mini-swe-timeout-seconds", type=int, default=None)
+    parser.add_argument(
         "--quiet",
         action=argparse.BooleanOptionalAction,
         default=None,
@@ -252,7 +294,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--groups-claim", default=None, help="OIDC claim containing group names")
     parser.add_argument(
-        "--state-dir", type=Path, default=None, help="owner-only directory for sessions and audit data"
+        "--state-dir",
+        type=Path,
+        default=None,
+        help="owner-only directory for sessions and audit data",
     )
     parser.add_argument("--session-idle-seconds", type=int, default=None)
     parser.add_argument("--session-absolute-seconds", type=int, default=None)
@@ -304,6 +349,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args.usage_refresh_seconds = resolved(
         "usage_refresh_seconds", args.usage_refresh_seconds, 3600
     )
+    args.executor_adapter = resolved("executor_adapter", args.executor_adapter, "claude")
+    args.mini_swe_command = resolved("mini_swe_command", args.mini_swe_command, "mini")
+    args.mini_swe_model = resolved("mini_swe_model", args.mini_swe_model, "")
+    args.mini_swe_config = resolved("mini_swe_config", args.mini_swe_config, None)
+    args.mini_swe_api_base = resolved("mini_swe_api_base", args.mini_swe_api_base, "")
+    args.mini_swe_provider = resolved("mini_swe_provider", args.mini_swe_provider, "openai")
+    args.mini_swe_api_key_env = resolved(
+        "mini_swe_api_key_env", args.mini_swe_api_key_env, "OPENAI_API_KEY"
+    )
+    args.mini_swe_step_limit = resolved(
+        "mini_swe_step_limit", args.mini_swe_step_limit, 12
+    )
+    args.mini_swe_cost_limit = resolved(
+        "mini_swe_cost_limit", args.mini_swe_cost_limit, 0.0
+    )
+    args.mini_swe_timeout_seconds = resolved(
+        "mini_swe_timeout_seconds", args.mini_swe_timeout_seconds, 900
+    )
     args.quiet = bool(resolved("quiet", args.quiet, False))
     args.auth_mode = resolved("auth_mode", args.auth_mode, "local")
     args.oidc_issuer = resolved("oidc_issuer", args.oidc_issuer, "")
@@ -354,6 +417,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--relay-log-lines must not be negative")
     if args.usage_refresh_seconds <= 0:
         parser.error("--usage-refresh-seconds must be positive")
+    if args.mini_swe_step_limit <= 0:
+        parser.error("--mini-swe-step-limit must be positive")
+    if args.mini_swe_cost_limit < 0:
+        parser.error("--mini-swe-cost-limit must not be negative")
+    if args.mini_swe_timeout_seconds <= 0:
+        parser.error("--mini-swe-timeout-seconds must be positive")
+    if args.executor_adapter not in {"claude", "mini-swe-agent"}:
+        parser.error("--executor-adapter must be claude or mini-swe-agent")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", str(args.mini_swe_provider)):
+        parser.error("--mini-swe-provider has invalid characters")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(args.mini_swe_api_key_env)):
+        parser.error("--mini-swe-api-key-env must be an environment-variable name")
+    if args.mini_swe_api_base:
+        endpoint = urlsplit(str(args.mini_swe_api_base))
+        if endpoint.scheme not in {"http", "https"} or not endpoint.netloc:
+            parser.error("--mini-swe-api-base must be an absolute HTTP(S) URL")
+        if endpoint.username is not None or endpoint.password is not None:
+            parser.error("--mini-swe-api-base must not contain embedded credentials")
+        if endpoint.query or endpoint.fragment:
+            parser.error("--mini-swe-api-base must not contain a query or fragment")
     if not str(args.host).strip():
         parser.error("--host must not be empty")
     if args.auth_mode not in {"local", "oidc"}:

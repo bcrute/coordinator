@@ -8,11 +8,14 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from tests.asgi_server import create_server
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB_APP = ROOT / "skills" / "coordinate-claude-work" / "scripts" / "web_app.py"
@@ -23,6 +26,101 @@ WEB_APP = ROOT / "skills" / "coordinate-claude-work" / "scripts" / "web_app.py"
     "set COORDINATOR_E2E=1 after installing the Playwright Chromium browser",
 )
 class DashboardBrowserTests(unittest.TestCase):
+    def test_cleared_terminal_history_stays_cleared_after_refresh(self) -> None:
+        from playwright.sync_api import sync_playwright
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+            command = [
+                sys.executable,
+                "-u",
+                "-c",
+                "import os; exec('while True:\\n data=os.read(0,1024)\\n "
+                "if not data: break\\n os.write(1,data)')",
+            ]
+            server = create_server(repo, quiet=True, codex_command=command)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            url = f"http://{server.server_address[0]}:{server.server_address[1]}"
+            try:
+                deadline = time.monotonic() + 10
+                while True:
+                    try:
+                        with urllib.request.urlopen(url + "/healthz", timeout=1):
+                            break
+                    except OSError:
+                        if time.monotonic() >= deadline:
+                            self.fail("dashboard did not become healthy")
+                        time.sleep(0.05)
+
+                with sync_playwright() as playwright:
+                    browser = playwright.chromium.launch(headless=True)
+                    page = browser.new_page()
+                    page.route(
+                        "**/api/provider-usage",
+                        lambda route: route.fulfill(
+                            status=200,
+                            content_type="application/json",
+                            body=json.dumps({"providers": []}),
+                        ),
+                    )
+                    page.goto(url + "/#terminal", wait_until="domcontentloaded")
+                    page.locator("#codex-session-start").click()
+                    page.locator("#codex-session-state").filter(has_text="running").wait_for()
+                    page.locator("#codex-session-feedback").filter(
+                        has_text="input ownership"
+                    ).wait_for()
+
+                    marker = "clear-refresh-browser-marker"
+                    page.evaluate(
+                        """(marker) => codexSocket.send(JSON.stringify({
+                          type: 'input', protocol: 'terminal.v1', data: marker + '\\n'
+                        }))""",
+                        marker,
+                    )
+
+                    def terminal_text() -> str:
+                        return page.evaluate(
+                            """() => Array.from(
+                              {length: codexTerminal.buffer.active.length},
+                              (_, index) => {
+                                const line = codexTerminal.buffer.active.getLine(index);
+                                return line ? line.translateToString(true) : '';
+                              }
+                            ).join('\\n')"""
+                        )
+
+                    page.wait_for_function(
+                        "marker => Array.from({length: codexTerminal.buffer.active.length}, "
+                        "(_, index) => codexTerminal.buffer.active.getLine(index)"
+                        "?.translateToString(true) || '').join('\\n').includes(marker)",
+                        arg=marker,
+                    )
+                    self.assertIn(marker, terminal_text())
+
+                    page.locator("#codex-terminal-clear").click()
+                    page.locator("#codex-terminal-clear").wait_for(state="visible")
+                    page.wait_for_function(
+                        "marker => !Array.from({length: codexTerminal.buffer.active.length}, "
+                        "(_, index) => codexTerminal.buffer.active.getLine(index)"
+                        "?.translateToString(true) || '').join('\\n').includes(marker)",
+                        arg=marker,
+                    )
+
+                    page.reload(wait_until="domcontentloaded")
+                    page.locator("#codex-session-state").filter(has_text="running").wait_for()
+                    page.locator("#codex-session-feedback").filter(
+                        has_text="input ownership"
+                    ).wait_for()
+                    self.assertNotIn(marker, terminal_text())
+                    browser.close()
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
     def test_live_dashboard_setup_and_administration_pages(self) -> None:
         from playwright.sync_api import sync_playwright
 
@@ -171,9 +269,9 @@ class DashboardBrowserTests(unittest.TestCase):
                         has_text="Fable"
                     ).filter(has_text="100%").wait_for(timeout=10_000)
                     projection_expectations = (
-                        ("#usage-codex-value .usage-chip", 0, "210%", "bad"),
+                        ("#usage-codex-value .usage-chip", 0, "-110%", "bad"),
                         ("#usage-claude-value .usage-chip", 0, "50%", "ok"),
-                        ("#usage-claude-value .usage-chip", 1, "90%", "warn"),
+                        ("#usage-claude-value .usage-chip", 1, "10%", "warn"),
                         ("#usage-claude-value .usage-chip", 2, "—", "neutral"),
                     )
                     for selector, index, expected, tone in projection_expectations:
@@ -182,6 +280,12 @@ class DashboardBrowserTests(unittest.TestCase):
                         )
                         self.assertEqual(projection.inner_text(), expected)
                         self.assertEqual(projection.get_attribute("data-tone"), tone)
+                    self.assertIn(
+                        "projected remaining at reset",
+                        page.locator("#usage-codex-value .usage-chip").first.get_attribute(
+                            "title"
+                        ),
+                    )
                     page.locator("#connection-label").filter(
                         has_text="state feed"
                     ).wait_for(timeout=10_000)

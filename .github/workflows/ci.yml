@@ -31,8 +31,22 @@ jobs:
       - name: Byte-compile skills and tests
         run: uv run python -m compileall -q src skills tests
 
-      - name: Run unit test suite
-        run: uv run python -m unittest discover -s tests -v
+      - name: Run unit test suite with branch coverage
+        run: |
+          uv run coverage erase
+          uv run coverage run -m unittest discover -s tests -v
+          mv .coverage .coverage.union.full
+
+      - name: Trace executor subprocess contracts
+        run: |
+          COVERAGE_FILE=.coverage.executor uv run coverage run --rcfile=.coveragerc-subprocess -m unittest -v tests.test_executor_adapters
+          COVERAGE_FILE=.coverage.executor uv run coverage combine --rcfile=.coveragerc-subprocess
+          cp .coverage.executor .coverage.union.executor
+
+      - name: Report branch coverage and enforce the regression floor
+        run: |
+          COVERAGE_FILE=.coverage.union uv run coverage combine --keep
+          COVERAGE_FILE=.coverage.union uv run coverage report
 
       - name: Set up Node 24
         uses: actions/setup-node@v7

@@ -14,7 +14,7 @@ COMMANDS = ("serve", "doctor", "init", "data")
 def _help() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="coordinator",
-        description="Run and inspect file-backed Codex/Claude coordination workflows.",
+        description="Run and inspect file-backed, frontier-led coding workflows.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("command", nargs="?", choices=COMMANDS)

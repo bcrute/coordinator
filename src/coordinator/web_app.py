@@ -41,7 +41,7 @@ from .workflow_state import (
 )
 
 ASSETS = Path(__file__).resolve().parent / "assets" / "web"
-WATCHER_ROLES = ("claude", "codex", "both")
+WATCHER_ROLES = ("executor", "claude", "codex", "both")
 MANAGED_ROLE = "both"
 WATCHER_ACTIONS = {"/api/watcher/start": "start", "/api/watcher/stop": "stop"}
 STOP_TIMEOUT_SECONDS = 10.0

@@ -335,7 +335,7 @@ class WorkflowTests(unittest.TestCase):
             ]
             relay = subprocess.run(command, check=False, capture_output=True, text=True)
             self.assertEqual(relay.returncode, 0, relay.stderr)
-            self.assertIn("launching claude", relay.stdout)
+            self.assertIn("launching executor", relay.stdout)
             self.assertIn("launching codex", relay.stdout)
             self.assertIn("GOAL DONE", relay.stdout)
             self.assertIn("- State: `done`", (target / ".coordination/planner/goal.md").read_text())
@@ -363,7 +363,7 @@ class WorkflowTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("waiting for claude watcher", result.stdout)
+            self.assertIn("waiting for executor watcher", result.stdout)
 
     def test_watcher_stops_when_a_handoff_exits_without_review_signal(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -402,7 +402,7 @@ class WorkflowTests(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 3)
-            self.assertIn("RELAY STOPPED: claude exited with status 3", result.stderr)
+            self.assertIn("RELAY STOPPED: executor exited with status 3", result.stderr)
             watcher_status = json.loads(
                 (target / ".coordination/runtime/watcher-both-status.json").read_text()
             )
@@ -463,7 +463,7 @@ class WorkflowTests(unittest.TestCase):
             self.assertIn("[ ] Run tests.", rendered)
             self.assertIn("Generated 4", rendered)
             self.assertIn("Cache read 30", rendered)
-            self.assertIn("CLAUDE SUBAGENTS", rendered)
+            self.assertIn("EXECUTOR WORKERS", rendered)
             self.assertIn(
                 "none active (native Claude lead; provider-selected workers available)",
                 rendered,

@@ -270,7 +270,7 @@ needs an explicit allow decision on **every** request.
 - **Stable subject.** Decisions are keyed on the OIDC `sub` claim (stable and
   provider-issued) and/or an Authentik group or entitlement claim. Never key on
   email, username, or display name — those are mutable and can be re-assigned.
-- **Coverage.** Enforcement applies to `/api/state`, `/api/codex/start|stop`,
+- **Coverage.** Enforcement applies to `/api/state`, `/api/codex/start|stop|clear`,
   `/ws/terminal`, `/api/watcher/start|stop`,
   `/api/repository/select`, every static asset that reveals application content,
   and every future control route — **not merely the HTML shell**. Protecting only

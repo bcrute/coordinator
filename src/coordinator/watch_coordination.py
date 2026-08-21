@@ -19,6 +19,8 @@ from .coordination_dashboard import draw as draw_dashboard
 from .coordination_dashboard import enter as enter_dashboard
 from .coordination_dashboard import leave as leave_dashboard
 from .coordination_dashboard import render as render_dashboard
+from .executor_adapters import EXECUTOR_ADAPTERS, ExecutorAdapter, from_namespace
+from .executor_adapters import resolve_executable as resolve_executor_executable
 
 
 ACTIVE_TASK_STATES = {"ready", "changes_requested"}
@@ -93,10 +95,10 @@ def next_action(state: Snapshot) -> tuple[str, str]:
         )
         if same_review and state.review_verdict in FINAL_VERDICTS:
             return "error", "review verdict exists but Codex did not advance task/goal state"
-        return "codex", f"Claude signaled {state.coder_state} for {state.task_id}"
+        return "codex", f"executor signaled {state.coder_state} for {state.task_id}"
     if same_coder_handoff and state.coder_state == "implementing":
-        return "wait", "Claude handoff is marked implementing"
-    return "claude", f"Codex assigned subgoal {state.task_id} ({state.task_state})"
+        return "wait", "executor handoff is marked implementing"
+    return "executor", f"Codex assigned subgoal {state.task_id} ({state.task_state})"
 
 
 def write_status(
@@ -117,25 +119,11 @@ def write_status(
     temporary.replace(destination)
 
 
-def agent_command(args: argparse.Namespace, action: str) -> list[str]:
-    if action == "claude":
-        return [
-            sys.executable,
-            "-m",
-            "coordinator.run_claude_turn",
-            "--repo",
-            str(args.repo),
-            "--claude-command",
-            args.claude_command,
-            "--permission-mode",
-            args.claude_permission_mode,
-            "--model",
-            args.claude_model,
-            "--subagent-model",
-            args.claude_subagent_model,
-            "--max-turns",
-            str(args.claude_max_turns),
-        ]
+def agent_command(
+    args: argparse.Namespace, action: str, executor: ExecutorAdapter | None = None
+) -> list[str]:
+    if action == "executor":
+        return (executor or from_namespace(args)).command(args.repo)
     return [
         sys.executable,
         "-m",
@@ -148,17 +136,26 @@ def agent_command(args: argparse.Namespace, action: str) -> list[str]:
 
 
 def role_handles(role: str, action: str) -> bool:
-    return role == "both" or role == action
+    # ``claude`` remains a compatibility alias for the implementation side.
+    return role == "both" or role == action or (role == "claude" and action == "executor")
 
 
 def watch(args: argparse.Namespace) -> int:
     args.repo = args.repo.resolve()
+    try:
+        executor = from_namespace(args)
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
     coordination = args.repo / ".coordination"
     if not (coordination / "README.md").is_file():
         print(f"error: coordination workflow is missing from {args.repo}", file=sys.stderr)
         return 2
-    if args.role in {"claude", "both"} and shutil.which(args.claude_command) is None:
-        print(f"error: Claude command not found: {args.claude_command}", file=sys.stderr)
+    if args.role in {"executor", "claude", "both"} and resolve_executor_executable(executor) is None:
+        print(
+            f"error: {executor.display_name} command not found: {executor.executable()}",
+            file=sys.stderr,
+        )
         return 127
     if args.role in {"codex", "both"} and shutil.which(args.codex_command) is None:
         print(f"error: Codex command not found: {args.codex_command}", file=sys.stderr)
@@ -227,7 +224,7 @@ def watch(args: argparse.Namespace) -> int:
             write_status(args.repo, args.role, state, "running", f"launching {action}: {detail}")
             if not dashboard:
                 print(f"Signal: {detail}; launching {action}", flush=True)
-            command = agent_command(args, action)
+            command = agent_command(args, action, executor)
             if args.dry_run:
                 print(" ".join(command))
                 return 0
@@ -302,7 +299,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repo", type=Path, default=Path.cwd(), help="project root")
     parser.add_argument(
         "--role",
-        choices=("claude", "codex", "both"),
+        choices=("executor", "claude", "codex", "both"),
         default="both",
         help="signals this watcher is allowed to relay",
     )
@@ -325,11 +322,32 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--claude-model", default="opus")
     parser.add_argument("--claude-subagent-model", default="sonnet")
     parser.add_argument("--claude-max-turns", type=int, default=40)
+    parser.add_argument(
+        "--executor-adapter",
+        choices=EXECUTOR_ADAPTERS,
+        default="claude",
+        help="implementation runtime (default: claude)",
+    )
+    parser.add_argument("--mini-swe-command", default="mini")
+    parser.add_argument("--mini-swe-model", default="")
+    parser.add_argument("--mini-swe-config", type=Path)
+    parser.add_argument("--mini-swe-api-base", default="")
+    parser.add_argument("--mini-swe-provider", default="openai")
+    parser.add_argument("--mini-swe-api-key-env", default="OPENAI_API_KEY")
+    parser.add_argument("--mini-swe-step-limit", type=int, default=12)
+    parser.add_argument("--mini-swe-cost-limit", type=float, default=0.0)
+    parser.add_argument("--mini-swe-timeout-seconds", type=int, default=900)
     args = parser.parse_args()
     if args.interval <= 0:
         parser.error("--interval must be positive")
     if args.claude_max_turns <= 0:
         parser.error("--claude-max-turns must be positive")
+    if args.mini_swe_step_limit <= 0:
+        parser.error("--mini-swe-step-limit must be positive")
+    if args.mini_swe_cost_limit < 0:
+        parser.error("--mini-swe-cost-limit must not be negative")
+    if args.mini_swe_timeout_seconds <= 0:
+        parser.error("--mini-swe-timeout-seconds must be positive")
     return args
 
 

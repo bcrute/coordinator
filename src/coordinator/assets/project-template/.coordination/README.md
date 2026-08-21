@@ -1,13 +1,14 @@
 # Coordination workflow
 
 This directory is the durable mailbox between the owner, Codex planner/reviewer,
-and Claude implementation agent. It is repository state, not a chat transcript.
+and the configured implementation executor. It is repository state, not a chat transcript.
 
 ## Roles and ownership
 
 - Owner: product decisions, authority, and scope changes.
 - Codex/ChatGPT: `.coordination/planner/` and `.coordination/reviews/`.
-- Claude Code: product files and `.coordination/coder/`.
+- Configured executor: product files. Its Coordinator adapter may write
+  `.coordination/coder/` on the runtime's behalf.
 
 Everyone may read all files. Only the named owner writes each coordination area.
 Repository-level `AGENTS.md` and `CLAUDE.md` remain binding.
@@ -16,10 +17,10 @@ Repository-level `AGENTS.md` and `CLAUDE.md` remain binding.
 
 - `PROJECT.md`: durable facts, commands, boundaries, and decisions.
 - `planner/goal.md`: Codex's overall objective and the durable `done` signal.
-- `planner/current-task.md`: the current Claude-sized subgoal and review round.
+- `planner/current-task.md`: the current executor-sized subgoal and review round.
 - `coder/status.md`: the cross-system implementation signal and an optional
-  concise current activity; it does not mirror Claude's native task list.
-- `coder/latest-report.md`: Claude's most recent handoff.
+  concise current activity; it does not mirror a provider's native task list.
+- `coder/latest-report.md`: the executor's most recent handoff.
 - `reviews/latest.md`: Codex's verdict on that handoff.
 - `reviews/completion.md`: Codex's user-facing overall-goal result.
 
@@ -33,32 +34,37 @@ Codex may return `review -> changes_requested -> implementing` while retaining t
 same task ID. Either agent may record `blocked` when progress needs owner authority
 or a missing external capability.
 
-Every Claude invocation is one implementation handoff. Codex reviews its complete
+Every executor invocation is one implementation handoff. Codex reviews its complete
 result, then requests corrections, assigns the next subgoal, or sets the overall
 goal to `done`. A watcher treats those file states as signals; it never invents a
 task or a verdict itself.
 
 ## Watchers
 
-The Claude-side watcher launches Claude only for `ready` or
+The executor-side watcher launches the configured runtime only for `ready` or
 `changes_requested` subgoals and exits when `planner/goal.md` says `done` or
-`blocked`. The Codex-side watcher launches a review only when Claude's status says
+`blocked`. The Codex-side watcher launches a review only when executor status says
 `review` or `blocked`. They may run as separate processes, or one `both` watcher
 may relay both sides. Runtime locks and status JSON live under `runtime/` and are
 not committed.
 
 In a terminal, the watcher presents a persistent dashboard for the overall goal,
 roadmap, active acceptance contract, activity, timers, generated tokens, separate
-context/cache counts, and observed native Claude subagents. Repeated stream
+context/cache counts, and any provider-reported native workers. Repeated stream
 events for one message ID count once. Agent output is retained in
 `runtime/relay.log`;
 `--no-dashboard` restores line-oriented output. A failed or incomplete handoff
 stops the watcher instead of retrying or waiting indefinitely.
 
-The automatic watcher supplies only the active task packet to an Opus lead and
-lets Claude Code manage native Sonnet subagents. Native agent teams require an
+With the Claude adapter, the automatic watcher supplies only the active task packet to
+an Opus lead and lets Claude Code manage native Sonnet subagents. Native agent teams require an
 interactive session; use `start_claude_team.py` alongside a Codex-only watcher
 rather than recreating Claude's team task list or mailbox here.
+
+With the mini-swe-agent adapter, Coordinator runs one noninteractive, step- and
+wall-time-bounded agent, records its trajectory under `runtime/trajectories/`, and
+writes the coder status/report from observed results. The local model does not own
+coordination files and no nested mini-swe-agent workers are exposed in this integration.
 
 ## Local web app
 
@@ -73,7 +79,7 @@ accepts an absolute path or a path relative to the current working directory, an
 the server refuses to start unless that path contains `.coordination/README.md`.
 Open `http://127.0.0.1:8765` in a browser. The page polls `/api/state` once per
 second and shows the overall goal and progress, roadmap, current task contract,
-coder status, latest review, live metrics, observed native Claude subagents,
+coder status, latest review, live metrics, observed provider workers,
 watcher status files, the managed watcher, and the tail of `runtime/relay.log`.
 
 The only controls are start and stop for one fixed automatic watcher: the `both`

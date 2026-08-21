@@ -10,6 +10,9 @@ performs those actions automatically.
       `uv.lock` is unchanged.
 - [ ] Run the full local suite:
       `.venv/bin/python -m unittest discover -s tests -v`.
+- [ ] Run the branch/subprocess coverage workflow in `docs/TESTING.md`; confirm the
+      regression floor passes and review newly uncovered high-risk behavior rather
+      than adding percentage-only tests.
 - [ ] Run `.venv/bin/python -m compileall -q src skills tests` to catch syntax
       errors.
 - [ ] Run `python -m pip_audit --requirement requirements.txt` and resolve or

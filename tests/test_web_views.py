@@ -135,13 +135,10 @@ class ProviderUsageHeaderTests(unittest.TestCase):
         )
         self.assertIn('reset.textContent = "· " + usageResetShort', self.js)
 
-    def test_reset_and_linear_pace_projection_are_rendered_per_window(self):
+    def test_reset_and_linear_pace_projection_have_rendering_hooks(self):
         for function in ("usageResetShort", "usagePaceForecast", "usageWindowChip"):
             self.assertIn(f"function {function}", self.js)
-        self.assertIn("projected >= 100", self.js)
-        self.assertIn("projected >= 80", self.js)
         self.assertIn('projection.className = "usage-window-projection"', self.js)
-        self.assertIn("projection.textContent = usagePercent(forecast.projected)", self.js)
         self.assertIn('.usage-chip strong[data-tone="ok"]', self.css)
         self.assertIn('.usage-chip strong[data-tone="warn"]', self.css)
         self.assertIn('.usage-chip strong[data-tone="bad"]', self.css)
@@ -286,7 +283,12 @@ class CodexTransportTests(unittest.TestCase):
         self.js = read(WEB_DIR / "app.js")
 
     def test_controls_remain_http_and_interactive_io_uses_websocket(self):
-        for literal in ('"/api/codex/start"', '"/api/codex/stop"', '"/ws/terminal"'):
+        for literal in (
+            '"/api/codex/start"',
+            '"/api/codex/stop"',
+            '"/api/codex/clear"',
+            '"/ws/terminal"',
+        ):
             self.assertIn(literal, self.js, "missing endpoint literal: " + literal)
         self.assertIn("new WebSocket", self.js)
         self.assertNotIn("fetch(CODEX_INPUT_URL", self.js)

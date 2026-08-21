@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "coordinator-workflow"
 dynamic = ["version"]
-description = "Local run control for file-backed Codex and Claude coding workflows"
+description = "Local run control for file-backed, frontier-led coding workflows"
 readme = "README.md"
 requires-python = ">=3.14"
 license = "MIT"
@@ -23,10 +23,20 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "build==1.5.0",
+  "coverage==7.15.4",
   "httpx2==2.9.1",
   "pip-audit==2.10.1",
   "playwright==1.62.0",
 ]
+
+[tool.coverage.run]
+branch = true
+source = ["coordinator"]
+
+[tool.coverage.report]
+fail_under = 70.0
+precision = 1
+show_missing = true
 
 [project.scripts]
 coordinator = "coordinator.cli:main"

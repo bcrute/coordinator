@@ -292,6 +292,21 @@ class CodexSessionManager:
                 "reset": False,
             }
 
+    def clear_output(self) -> int:
+        """Discard retained terminal output without touching the PTY process.
+
+        The returned absolute cursor identifies the clear boundary. Reconnecting
+        clients can resume from it and receive only output produced after the
+        clear operation.
+        """
+
+        with self._output_changed:
+            cursor = self._buffer_next_cursor
+            self._buffer = ""
+            self._buffer_base_cursor = cursor
+            self._output_changed.notify_all()
+            return cursor
+
     def wait_for_output(
         self, cursor: int | None, timeout: float = 1.0
     ) -> dict[str, object]:

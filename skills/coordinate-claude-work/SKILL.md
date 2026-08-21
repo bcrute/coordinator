@@ -1,12 +1,12 @@
 ---
 name: coordinate-claude-work
-description: Coordinate a goal-driven project in which Codex or ChatGPT owns the overall goal, assigns and reviews Claude Code subgoals, and Claude performs all product-code edits. Use when a repository contains `.coordination/`, when the user asks Codex and Claude to communicate through watched files, or when every Claude handoff must be reviewed before Codex assigns the next turn and signals done.
+description: Coordinate a goal-driven project in which Codex or ChatGPT owns the overall goal and reviews bounded implementation subgoals performed by Claude Code or the configured executor. Use when a repository contains `.coordination/`, when watched files relay implementation and review turns, or when every executor handoff must be reviewed before Codex assigns the next turn and signals done.
 ---
 
 # Coordinate Claude Work
 
 Keep one durable project mailbox in `.coordination/`. Act as the planner and
-reviewer; make Claude Code the sole product-code writer.
+reviewer; make the configured executor the sole product-code writer.
 
 ## Initialize a project
 
@@ -27,13 +27,14 @@ by inspection and record them there.
 ## Respect ownership
 
 - Codex owns `.coordination/planner/` and `.coordination/reviews/`.
-- Claude owns product edits and `.coordination/coder/`.
+- The configured executor owns product edits. Its adapter owns
+  `.coordination/coder/` when the provider cannot safely maintain those files.
 - The user owns product policy, scope expansion, credentials, purchases,
   destructive external actions, and unresolved tradeoffs.
 - Either agent may read every file and run non-mutating inspection or tests.
-- Do not edit product files as Codex merely to rescue a failed Claude turn. Report
+- Do not edit product files as Codex merely to rescue a failed executor turn. Report
   the failure or issue a narrower correction turn unless the user changes roles.
-- Do not let Claude commit, push, deploy, or mutate external systems unless the
+- Do not let an executor commit, push, deploy, or mutate external systems unless the
   active assignment explicitly authorizes that action.
 
 ## Run one implementation turn
@@ -47,7 +48,7 @@ by inspection and record them there.
    `.coordination/planner/current-task.md`. Include a stable task ID, state
    `ready`, objective, scope, exclusions, acceptance criteria, required evidence,
    and allowed external actions. Set the review round to `0` for a new task.
-3. Run exactly one Claude handoff:
+3. Run exactly one implementation handoff. Claude Code remains the default:
 
    ```bash
    python3.14 <skill-directory>/scripts/run_claude_turn.py --repo .
@@ -68,7 +69,19 @@ by inspection and record them there.
    configured authentication.
    Do not use a permission-bypass flag. Use `--permission-mode default` when the
    environment or user policy requires explicit project permission rules.
-4. Review before issuing any new task. Read Claude's report, inspect the complete
+   For a deliberately selected mini-swe-agent executor, use the application watcher
+   configured by `executor_adapter = "mini-swe-agent"`, or run one direct handoff:
+
+   ```bash
+   python3.14 <skill-directory>/scripts/run_mini_swe_turn.py --repo . \
+     --model "<litellm-model>" --api-base "<openai-compatible-base>"
+   ```
+
+   mini-swe-agent is an optional external runtime. The adapter invokes it in bounded,
+   noninteractive mode, stores a trajectory under `.coordination/runtime/trajectories/`,
+   writes coder status/report itself, and exposes no nested workers. Pass credentials
+   only through the named environment variable, never in a command or task file.
+4. Review before issuing any new task. Read the executor report, inspect the complete
    diff and repository state, and run or independently inspect evidence that can
    falsify the acceptance claims. Treat unrun checks as unrun.
 5. Replace `.coordination/reviews/latest.md` with verdict `accepted`,
@@ -76,14 +89,14 @@ by inspection and record them there.
    ref/worktree, findings ordered by severity, commands run, and next action.
 6. For `changes_requested`, update the same assignment with the review findings,
    increment the review round, set state `changes_requested`, and run one more
-   Claude turn. Keep the same task ID while the objective is unchanged.
+   executor turn. Keep the same task ID while the objective is unchanged.
 7. For an accepted subgoal, either assign the next bounded subgoal with a new task
    ID and review round `0`, or—only when the overall completion criteria are
    satisfied—set the current task to `accepted`, set the overall goal to `done`,
    and write `.coordination/reviews/completion.md`. Notify the user from that
    completion artifact.
 
-Every Claude invocation is one implementation turn and must receive a Codex
+Every executor invocation is one implementation turn and must receive a Codex
 review. A turn may contain many internal tool calls and code edits; do not confuse
 Claude's internal model turns with coordination handoffs.
 
@@ -96,16 +109,16 @@ current Codex turn:
 python3.14 <skill-directory>/scripts/watch_coordination.py --repo . --role both
 ```
 
-Keep the process attached. It launches Claude for a ready subgoal, launches a
-fresh non-interactive Codex review when Claude signals `review`, and repeats until
+Keep the process attached. It launches the configured executor for a ready subgoal,
+launches a fresh non-interactive Codex review when the executor signals `review`, and repeats until
 Codex writes `State: done` to `planner/goal.md` or records a blocker. When it exits
 done, read `reviews/completion.md` and notify the user.
 
 When attached to a terminal, the watcher uses a persistent btop-style dashboard
 showing the overall goal and roadmap, current acceptance contract and activity,
-timers, Claude token usage, and observed native Agent workers. It refreshes once
-per second. Claude decides whether genuinely independent work warrants up to two
-Sonnet subagents; the Opus lead owns integration. The watcher writes agent
+timers, normalized token usage, and observed native Agent workers. It refreshes once
+per second. With Claude, the lead decides whether genuinely independent work warrants
+up to two Sonnet subagents and owns integration. The watcher writes agent
 subprocess output to `runtime/relay.log`. Use
 `--no-dashboard` when line-oriented output is required. A failed or incomplete
 agent handoff stops the watcher immediately; inspect and review the coordination
@@ -194,7 +207,7 @@ repository root's `docs/SELF_HOSTING.md`; this skill file stays focused on the
 operational procedure, not hosting mechanics.
 
 The page's state feed uses `/api/events` Server-Sent Events. The server emits
-changed snapshots and periodic heartbeats, independently of whether Claude or
+changed snapshots and periodic heartbeats, independently of whether an executor or
 Codex is doing anything and independently of the visible view.
 
 Instead of one long dashboard, the page is split into focused views,
@@ -206,7 +219,7 @@ reachable by nav links or directly by URL hash:
   below.
 - **Work** (`#work`) — overall goal/progress, roadmap, current task contract,
   and latest review.
-- **Agents** (`#agents`) — coder status, observed native Claude subagents, and
+- **Agents** (`#agents`) — coder status, observed provider workers, and
   watcher status/controls.
 - **Logs** (`#logs`) — the tail of `.coordination/runtime/relay.log`.
 - **Activity** (`#activity`) — redacted authentication and control events.
@@ -271,8 +284,9 @@ is. Coordination work and task prompts still come from the repository's own
 for the account running `web_app.py`; the web app itself never prompts for or
 stores credentials. Start launches that command if it is not already running and
 reattaches the browser terminal to its output; Stop ends the running process;
-Clear only redraws the browser terminal and never touches the process or its
-input. Typed input, output, and debounced resize messages share one bounded,
+Clear discards the server's retained replay output and redraws the browser terminal,
+so cleared history stays cleared after a page refresh; it never touches the process or
+its input. Typed input, output, and debounced resize messages share one bounded,
 origin- and CSRF-validated WebSocket; leaving the page (`pagehide`) closes the
 socket, resize watcher, and terminal input listener.
 
@@ -315,7 +329,7 @@ Treat `.coordination/` as authoritative over chat history. On a new Codex sessio
 
 - overall goal `done`: read the completion report and notify the user;
 - overall goal `blocked`: surface the blocker;
-- `ready` or `changes_requested`: resume with one Claude turn;
+- `ready` or `changes_requested`: resume with one configured-executor turn;
 - `implementing`: inspect the actual working tree and coder report before deciding
   whether the prior process ended or is still live;
 - `review`: perform the pending Codex review;

@@ -18,9 +18,12 @@ SKILL = ROOT / "skills" / "coordinate-claude-work"
 CI_PATH = ROOT / ".github" / "workflows" / "ci.yml"
 RELEASE_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "release.yml"
 README_PATH = ROOT / "README.md"
+PYPROJECT_PATH = ROOT / "pyproject.toml"
+SUBPROCESS_COVERAGE_PATH = ROOT / ".coveragerc-subprocess"
 CHECKLIST_PATH = ROOT / "docs" / "RELEASE_CHECKLIST.md"
 EVIDENCE_PATH = ROOT / "docs" / "RELEASE_EVIDENCE.md"
 SELF_HOSTING_PATH = ROOT / "docs" / "SELF_HOSTING.md"
+TESTING_PATH = ROOT / "docs" / "TESTING.md"
 EXAMPLE_CONFIG = ROOT / "workflow.example.toml"
 EXAMPLE_SERVICE = ROOT / "deploy" / "workflow-web.service.example"
 OIDC_SERVICE = ROOT / "deploy" / "workflow-web-oidc.service.example"
@@ -59,6 +62,7 @@ NON_TEXT_SUFFIXES = frozenset({".pyc", ".pyo", ".png", ".jpg", ".jpeg", ".gif", 
 # path into the intended public checkout.
 NO_LEAK_FILES = [
     README_PATH,
+    TESTING_PATH,
     SELF_HOSTING_PATH,
     EXAMPLE_CONFIG,
     EXAMPLE_SERVICE,
@@ -111,7 +115,7 @@ def _first_party_public_files() -> list[Path]:
         ROOT / ".gitignore",
         ROOT / "AGENTS.md",
         ROOT / "CLAUDE.md",
-        ROOT / "pyproject.toml",
+        PYPROJECT_PATH,
         ROOT / "uv.lock",
         ROOT / "CHANGELOG.md",
     ]
@@ -391,8 +395,22 @@ class CiWorkflowTests(unittest.TestCase):
     def test_required_commands_present(self) -> None:
         self.assertIn("python -m pip_audit --requirement requirements.txt", self.text)
         self.assertIn("python -m compileall -q src skills tests", self.text)
-        self.assertIn("python -m unittest discover -s tests", self.text)
+        self.assertIn("coverage run -m unittest discover -s tests", self.text)
+        self.assertIn("coverage report", self.text)
         self.assertIn("node --check", self.text)
+
+    def test_coverage_policy_is_branch_aware_and_subprocess_scoped(self) -> None:
+        project = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))
+        run = project["tool"]["coverage"]["run"]
+        report = project["tool"]["coverage"]["report"]
+        self.assertIs(run["branch"], True)
+        self.assertEqual(run["source"], ["coordinator"])
+        self.assertGreater(report["fail_under"], 0)
+        self.assertLess(report["fail_under"], 100)
+        subprocess_config = SUBPROCESS_COVERAGE_PATH.read_text(encoding="utf-8")
+        self.assertIn("patch = subprocess", subprocess_config)
+        self.assertIn("tests.test_executor_adapters", self.text)
+        self.assertTrue(TESTING_PATH.is_file())
 
     def test_runs_on_ubuntu_with_timeout(self) -> None:
         self.assertIn("ubuntu-latest", self.text)
@@ -505,6 +523,7 @@ class PublicCheckoutUnitDiscoveryTests(unittest.TestCase):
             "test_coordinator_cli.py",
             "test_operational_store.py",
             "test_provider_usage.py",
+            "test_executor_adapters.py",
         }
     )
 

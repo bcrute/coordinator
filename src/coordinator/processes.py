@@ -11,6 +11,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .executor_adapters import ExecutorAdapter
 from .repositories import is_initialized
 
 MANAGED_ROLE = "both"
@@ -19,10 +20,12 @@ START_GRACE_SECONDS = 1.0
 ACTIVE_STATES = ("starting", "running")
 
 
-def default_watcher_command(root: Path) -> list[str]:
+def default_watcher_command(
+    root: Path, executor: ExecutorAdapter | None = None
+) -> list[str]:
     """Build the fixed automatic both-watcher command for `root`."""
 
-    return [
+    command = [
         sys.executable,
         "-m",
         "coordinator.watch_coordination",
@@ -32,6 +35,9 @@ def default_watcher_command(root: Path) -> list[str]:
         MANAGED_ROLE,
         "--no-dashboard",
     ]
+    if executor is not None:
+        command.extend(executor.watcher_arguments())
+    return command
 
 def moment(value: float | None) -> str | None:
     if value is None:

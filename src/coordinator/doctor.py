@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from . import web_app
+from .executor_adapters import from_namespace, resolve_executable
 
 
 @dataclass(frozen=True)
@@ -34,11 +35,19 @@ def evaluate(args: argparse.Namespace) -> list[Check]:
     repo = Path(args.repo).expanduser().resolve()
     root = Path(args.repositories_root).expanduser().resolve()
     marker = repo / ".coordination" / "README.md"
+    executor = from_namespace(args)
+    resolved_executor = resolve_executable(executor)
     return [
         Check("python", "pass", sys.version.split()[0]),
         _command("git", required=True),
         _command("codex", required=False),
         _command("claude", required=False),
+        Check(
+            "implementation_executor",
+            "pass" if resolved_executor else "warn",
+            f"{executor.display_name}: {resolved_executor or 'not available on PATH'}",
+            False,
+        ),
         Check(
             "repository",
             "pass" if repo.is_dir() else "fail",

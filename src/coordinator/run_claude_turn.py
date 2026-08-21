@@ -216,8 +216,8 @@ def write_runtime_progress(
     orchestration_mode: str = "native-subagents",
     completed_at_epoch: float | None = None,
 ) -> None:
-    path = repo / ".coordination" / "runtime" / "claude-progress.json"
     payload: dict[str, object] = {
+        "provider_id": "claude",
         "goal_id": goal_id,
         "task_id": task_id,
         "review_round": review_round,
@@ -232,9 +232,12 @@ def write_runtime_progress(
     }
     if completed_at_epoch is not None:
         payload["completed_at_epoch"] = completed_at_epoch
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    runtime = repo / ".coordination" / "runtime"
+    for name in ("executor-progress.json", "claude-progress.json"):
+        path = runtime / name
+        temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(path)
 
 
 def print_progress(update: tuple[str, str]) -> None:

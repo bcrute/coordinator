@@ -52,6 +52,20 @@ def load_json(path: Path) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
+def load_executor_metrics(repo: Path, task_id: str | None = None) -> dict[str, object]:
+    """Load normalized executor telemetry, with the Claude filename as fallback."""
+
+    runtime = repo / ".coordination" / "runtime"
+    generic = load_json(runtime / "executor-progress.json")
+    legacy = load_json(runtime / "claude-progress.json")
+    if task_id is not None:
+        if generic.get("task_id") == task_id:
+            return generic
+        if legacy.get("task_id") == task_id:
+            return legacy
+    return generic or legacy
+
+
 def ensure_goal_start(repo: Path, goal_id: str) -> float:
     path = repo / ".coordination" / "runtime" / "goal-timing.json"
     timing = load_json(path)
@@ -118,7 +132,7 @@ def subagent_rows(metrics: dict[str, object], now: float) -> list[str]:
             continue
         state = str(value.get("state") or "unknown")
         model = str(value.get("model") or metrics.get("subagent_model") or "inherited")
-        description = one_line(str(value.get("description") or "Claude subagent"))
+        description = one_line(str(value.get("description") or "Executor worker"))
         started = value.get("started_at_epoch")
         ended = value.get("completed_at_epoch") if state != "running" else now
         elapsed = ended - started if isinstance(started, (int, float)) and isinstance(ended, (int, float)) else 0
@@ -141,11 +155,11 @@ def render(repo: Path, phase: str, detail: str = "") -> str:
     task = read(repo / ".coordination" / "planner" / "current-task.md")
     coder = read(repo / ".coordination" / "coder" / "status.md")
     roadmap = read(repo / ".coordination" / "planner" / "roadmap.md")
-    metrics = load_json(repo / ".coordination" / "runtime" / "claude-progress.json")
 
     goal_id = field(goal, "Goal ID") or "none"
     goal_state = field(goal, "State") or "unknown"
     task_id = field(task, "Task ID") or "none"
+    metrics = load_executor_metrics(repo, task_id)
     task_state = field(task, "State") or "unknown"
     task_round = field(task, "Review round") or "?"
     same_coder_handoff = (
@@ -204,7 +218,7 @@ def render(repo: Path, phase: str, detail: str = "") -> str:
         *panel("OVERALL GOAL", goal_rows, width),
         *panel("ROADMAP", roadmap_display, width),
         *panel("CURRENT TURN", current_rows, width),
-        *panel("CLAUDE SUBAGENTS", agents_display, width),
+        *panel("EXECUTOR WORKERS", agents_display, width),
         *panel("LIVE METRICS", metric_rows, width),
         f" {one_line(detail)}  •  Ctrl-C stops the watcher  •  Log: .coordination/runtime/relay.log",
     ]

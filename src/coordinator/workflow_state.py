@@ -7,10 +7,10 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .coordination_dashboard import TOKEN_FIELDS, duration, field, load_json
+from .coordination_dashboard import TOKEN_FIELDS, duration, field, load_executor_metrics, load_json
 from .coordination_dashboard import one_line, read, section
 
-WATCHER_ROLES = ("claude", "codex", "both")
+WATCHER_ROLES = ("executor", "claude", "codex", "both")
 RELAY_LOG_BYTES = 256 * 1024
 
 
@@ -201,8 +201,8 @@ def workflow_state(
     elif coder_current and coder_state == "implementing":
         phase = "implementing"
         active = True
-        label = "Claude is implementing"
-        detail = coder["current_activity"] or "Claude is working on the current task."
+        label = "Executor is implementing"
+        detail = coder["current_activity"] or "The executor is working on the current task."
     elif coder_current and coder_state == "review":
         phase = "waiting_for_codex"
         active = False
@@ -211,7 +211,7 @@ def workflow_state(
     elif task_state in ("ready", "changes_requested"):
         phase = "waiting_for_claude"
         active = False
-        label = "Waiting for Claude"
+        label = "Waiting for executor"
         detail = f"The current task is {task_state} and has not been picked up yet."
     elif task_state == "review":
         phase = "waiting_for_codex"
@@ -250,7 +250,7 @@ def subagent_state(metrics: dict[str, object], now: float) -> list[dict[str, obj
             {
                 "state": state,
                 "model": str(value.get("model") or metrics.get("subagent_model") or "inherited"),
-                "description": one_line(str(value.get("description") or "Claude subagent")),
+                "description": one_line(str(value.get("description") or "Executor worker")),
                 "started_at_epoch": number(value.get("started_at_epoch")),
                 "completed_at_epoch": number(value.get("completed_at_epoch")),
                 "elapsed": elapsed(value.get("started_at_epoch"), ended),
@@ -266,7 +266,7 @@ def subagent_state(metrics: dict[str, object], now: float) -> list[dict[str, obj
 def runtime_state(
     repo: Path, task: dict[str, object], goal_id: str, now: float
 ) -> dict[str, object]:
-    metrics = load_json(repo / ".coordination" / "runtime" / "claude-progress.json")
+    metrics = load_executor_metrics(repo, str(task["id"]))
     timing = load_json(repo / ".coordination" / "runtime" / "goal-timing.json")
     same_task = metrics.get("task_id") == task["id"]
     current = metrics if same_task else {}
@@ -280,7 +280,8 @@ def runtime_state(
         "task_id": metrics.get("task_id") if isinstance(metrics.get("task_id"), str) else None,
         "state": str(metrics.get("state") or "unknown"),
         "matches_current_task": bool(same_task),
-        "primary_model": str(metrics.get("primary_model") or "Claude"),
+        "provider_id": str(metrics.get("provider_id") or "claude"),
+        "primary_model": str(metrics.get("primary_model") or "Executor"),
         "subagent_model": str(metrics.get("subagent_model") or "provider-selected"),
         "orchestration_mode": str(metrics.get("orchestration_mode") or "not recorded"),
         "tokens": {

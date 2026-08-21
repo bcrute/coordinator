@@ -152,6 +152,33 @@ class CodexSessionManagerTests(unittest.TestCase):
         self.assertEqual(result2["text"], "")
         manager.stop()
 
+    def test_clear_output_discards_history_without_stopping_process(self) -> None:
+        script = (
+            f"import sys; sys.stderr.write('{MARKER}\\n'); sys.stderr.flush(); "
+            "line = sys.stdin.readline(); print('after-clear:' + line, flush=True); "
+            "import time; time.sleep(2)"
+        )
+        manager = self._make(script)
+        manager.start()
+        self.assertTrue(_wait_until(lambda: MARKER in manager.read()["text"]))
+
+        boundary = manager.clear_output()
+
+        cleared = manager.read()
+        self.assertEqual(cleared["text"], "")
+        self.assertEqual(cleared["base_cursor"], boundary)
+        self.assertEqual(cleared["next_cursor"], boundary)
+        self.assertTrue(manager.snapshot()["running"])
+
+        manager.write("new-output\n")
+        self.assertTrue(
+            _wait_until(lambda: "after-clear:new-output" in manager.read(boundary)["text"])
+        )
+        replay = manager.read()
+        self.assertNotIn(MARKER, replay["text"])
+        self.assertIn("after-clear:new-output", replay["text"])
+        manager.stop()
+
     def test_invalid_writes_and_sizes(self) -> None:
         script = f"import sys, time; sys.stderr.write('{MARKER}\\n'); time.sleep(2)"
         manager = self._make(script)

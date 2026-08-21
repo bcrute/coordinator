@@ -155,7 +155,7 @@ def openapi_document() -> dict[str, Any]:
         },
         "/api/v1/codex/{action}": {
             "parameters": [action_parameter],
-            "post": _operation("Control the Codex terminal process"),
+            "post": _operation("Control the Codex terminal process or replay buffer"),
         },
     }
     object_schema = {"type": "object", "additionalProperties": True}

@@ -442,6 +442,7 @@ class AuthenticatedAppTests(unittest.TestCase):
             "/api/watcher/stop",
             "/api/codex/start",
             "/api/codex/stop",
+            "/api/codex/clear",
             "/api/repository/select",
         )
         with self.client(self.owner_claims()) as client:
@@ -1085,6 +1086,52 @@ class LocalAppTests(unittest.TestCase):
                         break
                 else:
                     self.fail("terminal reconnect did not replay buffered output")
+
+    def test_terminal_clear_removes_reconnect_replay_without_stopping(self) -> None:
+        marker = "terminal-clear-marker"
+        with TestClient(self.app, base_url="http://127.0.0.1") as client:
+            csrf = client.get("/api/state").json()["security"]["csrf_token"]
+            client.post("/api/codex/start", headers=self.headers(csrf))
+            with client.websocket_connect(
+                "ws://127.0.0.1/ws/terminal",
+                headers={"Origin": "http://127.0.0.1"},
+            ) as socket:
+                socket.send_json(
+                    {"type": "hello", "protocol": "terminal.v1", "csrf_token": csrf}
+                )
+                socket.send_json(
+                    {"type": "input", "protocol": "terminal.v1", "data": marker + "\n"}
+                )
+                for _ in range(12):
+                    message = socket.receive_json()
+                    if message["type"] == "output" and marker in message["output"]["text"]:
+                        break
+                else:
+                    self.fail("terminal did not echo clear marker")
+
+            response = client.post("/api/codex/clear", headers=self.headers(csrf))
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+            self.assertEqual(payload["outcome"], "cleared")
+            self.assertGreater(payload["cleared_through_cursor"], 0)
+            self.assertTrue(payload["codex_session"]["running"])
+
+            with client.websocket_connect(
+                "ws://127.0.0.1/ws/terminal",
+                headers={"Origin": "http://127.0.0.1"},
+            ) as replay:
+                replay.send_json(
+                    {
+                        "type": "hello",
+                        "protocol": "terminal.v1",
+                        "csrf_token": csrf,
+                        "cursor": 0,
+                    }
+                )
+                message = replay.receive_json()
+                self.assertEqual(message["type"], "output")
+                self.assertTrue(message["output"]["reset"])
+                self.assertNotIn(marker, message["output"]["text"])
 
 
 class SettingsValidationTests(unittest.TestCase):

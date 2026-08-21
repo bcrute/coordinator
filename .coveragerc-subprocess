@@ -1,0 +1,9 @@
+[run]
+branch = true
+source = coordinator
+parallel = true
+patch = subprocess
+
+[report]
+precision = 1
+show_missing = true

@@ -1,4 +1,4 @@
-"""Coordinator: local run control for file-backed coding workflows."""
+"""Coordinator: local run control for file-backed, frontier-led coding workflows."""
 
 import sys
 

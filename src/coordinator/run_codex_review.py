@@ -1,5 +1,5 @@
 #!/usr/bin/env python3.14
-"""Run exactly one Codex review for a completed Claude handoff."""
+"""Run exactly one Codex review for a completed executor handoff."""
 
 from __future__ import annotations
 
@@ -122,7 +122,7 @@ def run(args: argparse.Namespace) -> int:
         and field(current_review, "Review round") == task_round
         and field(current_review, "Verdict") in VERDICTS
     ):
-        print("error: this Claude handoff already has a Codex verdict", file=sys.stderr)
+        print("error: this executor handoff already has a Codex verdict", file=sys.stderr)
         return 2
 
     executable = shutil.which(args.codex_command)
@@ -139,7 +139,7 @@ round {task_round}. Read all applicable AGENTS.md files,
 
 Review the actual complete product diff and independently examine or run focused
 evidence that can falsify the acceptance claims. Do not edit product code. Do not
-invoke Claude, start another watcher, commit, push, deploy, or mutate an external
+invoke another executor, start another watcher, commit, push, deploy, or mutate an external
 system.
 
 Replace .coordination/reviews/latest.md with exactly one verdict: accepted,
@@ -152,7 +152,7 @@ round, set state changes_requested, and put concrete corrections in Review
 corrections.
 
 If this subgoal is accepted but the overall goal is not complete, replace
-planner/current-task.md with the next bounded Claude-sized subgoal: use a new task
+planner/current-task.md with the next bounded executor-sized subgoal: use a new task
 ID, state ready, review round 0, explicit scope, acceptance criteria, evidence,
 and external-action limits. Base that choice on the actual remaining gap in the
 overall goal, not a prewritten ceremonial checklist.
@@ -161,7 +161,7 @@ If the overall goal's completion criteria are genuinely satisfied, set this task
 to accepted, set planner/goal.md State to done, and replace
 .coordination/reviews/completion.md with a user-facing summary of the goal result,
 accepted product ref, evidence, limitations, and any optional follow-up. This is
-the durable done signal that stops the Claude watcher.
+the durable done signal that stops the executor watcher.
 
 If progress needs owner authority or a missing capability, set both task and goal
 to blocked and name the exact blocker. Do not mark the goal done merely because

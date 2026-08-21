@@ -29,6 +29,7 @@ from typing import Any
 
 from . import web_app
 from .api_contract import openapi_document
+from .executor_adapters import ExecutorAdapter, from_namespace, resolve_executable
 from .operational_store import GuardrailPolicy, OperationalStore, evaluate_guardrails
 from .provider_usage import DEFAULT_REFRESH_SECONDS, ProviderUsageService
 from authlib.integrations.base_client.errors import OAuthError
@@ -101,6 +102,7 @@ def create_authenticated_app(
     start_grace: float = web_app.START_GRACE_SECONDS,
     usage_refresh_seconds: int = DEFAULT_REFRESH_SECONDS,
     provider_usage_service: ProviderUsageService | None = None,
+    executor_adapter: ExecutorAdapter | None = None,
 ) -> Starlette:
     """Build the default-deny authenticated ASGI application."""
 
@@ -155,6 +157,7 @@ def create_authenticated_app(
             coordination / "reviews" / "latest.md",
             coordination / "reviews" / "completion.md",
             coordination / "runtime" / "claude-progress.json",
+            coordination / "runtime" / "executor-progress.json",
             coordination / "runtime" / "goal-timing.json",
             coordination / "runtime" / "relay.log",
         ]
@@ -1042,6 +1045,18 @@ def create_authenticated_app(
                     "required": True,
                 },
                 {
+                    "name": "implementation executor",
+                    "ok": bool(executor_adapter and resolve_executable(executor_adapter)),
+                    "detail": (
+                        f"{executor_adapter.display_name}: "
+                        f"{resolve_executable(executor_adapter) or 'not found on PATH'}"
+                        if executor_adapter
+                        else "not configured"
+                    ),
+                    "category": "providers",
+                    "required": executor_adapter is not None,
+                },
+                {
                     "name": "Codex CLI",
                     "ok": codex_provider_ok,
                     "detail": codex_provider_detail,
@@ -1329,7 +1344,7 @@ def create_authenticated_app(
                 status_code=404,
             )
         action = request.path_params["action"]
-        if action not in {"start", "stop"}:
+        if action not in {"start", "stop", "clear"}:
             return JSONResponse({"ok": False, "outcome": "not_found"}, status_code=404)
         body = await _bounded_body(request, web_app.CONTROL_BODY_BYTES)
         if isinstance(body, JSONResponse):
@@ -1346,13 +1361,19 @@ def create_authenticated_app(
                     if action == "start":
                         active.codex_session.start()
                         outcome, message = "started", "started the codex session"
-                    else:
+                    elif action == "stop":
                         before = active.codex_session.snapshot()
                         active.codex_session.stop()
                         if before.get("running"):
                             outcome, message = "stopped", "stopped the codex session"
                         else:
                             outcome, message = "conflict", "no codex session is running"
+                    else:
+                        cleared_through_cursor = active.codex_session.clear_output()
+                        outcome, message = (
+                            "cleared",
+                            "cleared retained terminal output",
+                        )
                 except RuntimeError as error:
                     outcome, message = "conflict", str(error)
                 except OSError as error:
@@ -1360,16 +1381,20 @@ def create_authenticated_app(
                 status = {
                     "started": 200,
                     "stopped": 200,
+                    "cleared": 200,
                     "conflict": 409,
                     "error": 500,
                 }[outcome]
-                return status, {
+                payload: dict[str, object] = {
                     "ok": status == 200,
                     "action": f"codex_{action}",
                     "outcome": outcome,
                     "message": message,
                     "codex_session": active.codex_session.snapshot(),
                 }
+                if action == "clear" and outcome == "cleared":
+                    payload["cleared_through_cursor"] = cleared_through_cursor
+                return status, payload
 
         status, payload = await run_in_threadpool(operate)
         issuer, subject = _audit_user(request)
@@ -1881,6 +1906,7 @@ def serve_application(args: Any) -> int:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     listener: socket.socket | None = None
     try:
+        executor = from_namespace(args)
         if args.auth_mode == "oidc":
             settings: OIDCSettings | LocalSettings = settings_from_args(args)
         else:
@@ -1900,6 +1926,10 @@ def serve_application(args: Any) -> int:
             repositories_root=args.repositories_root,
             relay_log_lines=args.relay_log_lines,
             usage_refresh_seconds=int(args.usage_refresh_seconds),
+            watcher_command_for_repo=(
+                lambda repo: web_app.default_watcher_command(repo, executor)
+            ),
+            executor_adapter=executor,
         )
     except ValueError as error:
         print(f"error: {error}", file=os.sys.stderr)

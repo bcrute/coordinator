@@ -1,14 +1,14 @@
-# Codex-plans, Claude-codes coordination workflow
+# Coordinator: frontier-led coding workflows
 
-A goal-driven two-agent development loop, plus a small local dashboard for
+A goal-driven development loop, plus a local dashboard for
 watching and controlling it. Clone this repository once, then point it at one
 or more separate local project repositories to start coordinating
-Codex/ChatGPT and Claude Code turns on those projects.
+Codex planning/review with Claude Code or mini-swe-agent implementation turns.
 
 **Status: self-hosted beta.** It is not an official product of, and has no
-affiliation with, OpenAI or Anthropic. It wraps their
-separately installed and separately authenticated CLIs; you are responsible
-for your own Codex and Claude Code accounts, credentials, and usage.
+affiliation with OpenAI, Anthropic, or the mini-swe-agent project. Provider
+runtimes are installed and configured separately; you are responsible for
+their accounts, credentials, endpoints, models, and usage.
 
 Tested on Linux/Unix-like systems with Python 3.14. It has not been tested
 on Windows.
@@ -21,15 +21,16 @@ repository:
 - **Git**
 - **Python 3.14**
 - **Codex CLI**, logged in (`codex login` or an API key in the environment)
-- **Claude Code CLI**, logged in
+- At least one implementation executor: **Claude Code CLI**, logged in, or the
+  optional **mini-swe-agent** `mini` command with a configured model
 
 ## Architecture
 
 1. Codex/ChatGPT owns the overall goal and writes one bounded subgoal at a
    time.
-2. Claude Code implements that subgoal and writes a handoff report.
+2. The configured executor implements that subgoal. Its adapter records a handoff.
 3. Codex reviews the complete diff and evidence, then either requests a
-   correction or hands Claude the next subgoal.
+   correction or assigns the executor the next subgoal.
 4. When every completion criterion is met, Codex writes the repository's
    `done` signal and notifies you.
 
@@ -106,7 +107,7 @@ shape the files from a project discussion first:
 4. Once `.coordination/` exists, the live state feed updates the dashboard and
    the **Agents** view's watcher **Start** control becomes available. You can
    then start the automatic watcher that
-   relays Claude and Codex turns for you.
+   relays executor and Codex turns for you.
 
 See `skills/coordinate-claude-work/SKILL.md` for the full procedure Codex
 follows, including watched goal mode, native Claude teams, and the review
@@ -116,7 +117,8 @@ The staged path from the current realtime dashboard to the installable,
 recoverable, network-ready application is tracked in
 [`docs/PRODUCT_ROADMAP.md`](docs/PRODUCT_ROADMAP.md). Architectural decisions are
 recorded in the ADR series, including
-[`ADR 0003`](docs/adr/0003-professional-application-core.md).
+[`ADR 0003`](docs/adr/0003-professional-application-core.md) and the
+[`executor-adapter decision`](docs/adr/0004-executor-adapters-and-mini-swe-agent.md).
 
 ## Settings
 
@@ -132,6 +134,13 @@ command-line flag always overrides the matching config value.
 | `port`               | `8765`                               | TCP port; `0` picks a free port. |
 | `relay_log_lines`    | `200`                                | Number of `runtime/relay.log` lines returned by `/api/state`. |
 | `usage_refresh_seconds` | `3600`                            | Server-side refresh interval for cached Codex and Claude rolling-limit usage. Collection does not create model turns. |
+| `executor_adapter`   | `claude`                              | Implementation runtime: `claude` or `mini-swe-agent`. |
+| `mini_swe_command` / `mini_swe_model` | `mini` / provider configuration | mini-swe-agent executable and optional LiteLLM model name. |
+| `mini_swe_config`    | none                                  | Optional base mini-swe-agent YAML. Relative paths resolve beside the Coordinator TOML file. |
+| `mini_swe_api_base` / `mini_swe_provider` | none / `openai`      | Optional OpenAI-compatible endpoint and LiteLLM custom-provider name. |
+| `mini_swe_api_key_env` | `OPENAI_API_KEY`                   | Name of the inherited environment variable containing an endpoint key; its value is never written to TOML or arguments. |
+| `mini_swe_step_limit` / `mini_swe_timeout_seconds` | `12` / `900` | Per-turn model-call and wall-time bounds. |
+| `mini_swe_cost_limit` | `0.0`                                | mini-swe-agent cost cap; zero disables cost limiting for a local model with no registered price. |
 | `quiet`              | `false`                              | Suppress Uvicorn lifecycle messages; request access logging is disabled in both modes. |
 | `auth_mode`          | `local`                              | Both modes use the ASGI runtime; `local` enforces loopback, while `oidc` enables authentication. |
 | `oidc_issuer`        | none                                 | Exact Authentik issuer URL. Required in OIDC mode. |
@@ -148,7 +157,8 @@ command-line flag always overrides the matching config value.
 | `trusted_hosts`      | external URL hostname               | Exact accepted HTTP hostnames; wildcards are refused. |
 | `forwarded_allow_ips` | `127.0.0.1`                         | Proxy IP/CIDR values Uvicorn may trust for forwarded scheme/client data; `*` is refused. |
 
-**Path semantics:** relative `repo`, `repositories_root`, and `state_dir` values
+**Path semantics:** relative `repo`, `repositories_root`, `state_dir`, and
+`mini_swe_config` values
 in the config file resolve against the directory *containing that config file*,
 not the directory you launch the command from. `workflow.example.toml` uses `.`
 and `..` for the repository paths for exactly this reason.
@@ -164,9 +174,10 @@ The topbar shows every percentage-based allowance reported by **Codex** and
 plus named model-specific limits such as Fable when the provider returns them.
 Spark's separate research-preview allowance is intentionally omitted. Each
 provider has columns for the limit and reset time, percentage left,
-and projected percentage used at reset. The projection linearly extrapolates the
-average pace in the current window: red at 100% or more, yellow at 80–99%, and
-green below 80%. A missing reset or window duration displays `—`. Use the
+and projected percentage remaining at reset. The projection linearly extrapolates
+the average pace in the current window: red at 0% or below, yellow at 1–20%, and
+green above 20%. A negative value shows how far the current pace would exceed the
+allowance. A missing reset or window duration displays `—`. Use the
 adjacent refresh button for an immediate update. The server performs one shared
 refresh per `usage_refresh_seconds` (one hour by default), regardless of the
 number of open browser tabs.
@@ -178,6 +189,29 @@ Claude subscription limits are unavailable for API-key-only logins, and either
 provider displays an unavailable state instead of estimating a quota from local
 token history. Credentials and access tokens are never returned to the browser
 or persisted by Coordinator.
+
+### Local/API-backed implementation with mini-swe-agent
+
+Install mini-swe-agent as a separate tool following its
+[official CLI documentation](https://mini-swe-agent.com/latest/usage/mini/), then
+select it in your ignored `workflow.toml`:
+
+```toml
+executor_adapter = "mini-swe-agent"
+mini_swe_model = "openai/your-local-model"
+mini_swe_api_base = "http://127.0.0.1:8000/v1"
+mini_swe_provider = "openai"
+mini_swe_api_key_env = "OPENAI_API_KEY"
+mini_swe_step_limit = 12
+mini_swe_timeout_seconds = 900
+```
+
+Export any required endpoint key before starting Coordinator; put only its environment
+variable name in TOML. Start the app normally and check `coordinator doctor --config
+workflow.toml`. The watcher launches one noninteractive mini-swe-agent turn for each
+ready assignment, stores trajectories below `.coordination/runtime/trajectories/`, and
+hands the resulting diff back to Codex for review. This first integration is
+deliberately single-agent: mini-swe-agent does not create or report nested workers here.
 
 ## Authenticated OIDC mode
 
@@ -234,6 +268,12 @@ Run the full local suite:
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
+The branch-coverage workflow, subprocess instrumentation boundary, regression floor,
+and risk-based behavior matrix are documented in
+[`docs/TESTING.md`](docs/TESTING.md). Coverage is a review aid here: the project does
+not require raw 100% line coverage or add implementation-coupled tests merely to
+increase a score.
+
 The Chromium workflow is opt-in locally because it requires a browser download:
 
 ```bash
@@ -284,6 +324,9 @@ current `0.3.0` feature checkpoint is recorded in
   print mode and support native subagents, not native agent teams; use
   `start_claude_team.py` directly for collaborative team work (see
   `skills/coordinate-claude-work/SKILL.md`).
+- mini-swe-agent runs in unattended `yolo` mode and can execute shell commands as the
+  Coordinator service identity. Keep its repository, model, endpoint, limits, and host
+  isolation within the same trust boundary as the browser terminal.
 - Windows is not supported.
 
 ## Security posture

@@ -104,6 +104,13 @@ starting the server, then restart the server so the new process inherits the
 updated environment. The same applies to Claude Code's own authentication for
 automatic-watcher and native-team turns.
 
+**The selected mini-swe-agent executor is unavailable.** mini-swe-agent is an
+optional, separately installed tool. Run `command -v mini` as the same operating-system
+account that runs Coordinator, verify the model endpoint and named key environment
+variable in `workflow.toml`, and run `coordinator doctor --config workflow.toml`.
+Coordinator does not install mini-swe-agent or copy endpoint credentials into its
+settings.
+
 **A provider usage indicator shows unavailable.** Usage collection runs as the
 same operating-system account as Coordinator. Codex requires a current Codex
 CLI login and an app-server version that supports account rate limits. Claude
@@ -147,15 +154,16 @@ running it manually would give you (still loopback-only by default).
    placeholder paths (`ExecStart`'s script path and `--config` path,
    `WorkingDirectory`, and the CLI directory in `Environment=PATH=...`) with
    the absolute paths to your actual clone, `workflow.toml`, and the
-   directory containing your Codex/Claude executables. Do not use a `--host`
+   directory containing your Codex/Claude/mini executables. Do not use a `--host`
    other than the loopback address your config file already sets, unless
    you have independently put an authenticated boundary in front of the
    service.
 
    systemd user services do not necessarily inherit an interactive shell's
-   `PATH`, so `codex`/`claude` may be missing even though they work in your
+   `PATH`, so `codex`/`claude`/`mini` may be missing even though they work in your
    terminal. Before enabling the unit, run `command -v codex` and
-   `command -v claude` in the shell you normally use them from, and add
+   `command -v claude` (or `command -v mini` for the mini-swe-agent adapter) in
+   the shell you normally use them from, and add
    the directory/directories they report to the unit's `Environment=PATH=...`
    value alongside standard system locations. Never put API keys or tokens
    in the tracked unit file or in `workflow.toml`; authenticate the CLIs

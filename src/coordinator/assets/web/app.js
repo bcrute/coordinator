@@ -14,7 +14,11 @@ var TERMINAL_SOCKET_URL = "/ws/terminal";
 var REPOSITORY_SELECT_URL = "/api/repository/select";
 var REPOSITORY_SELECT_TIMEOUT_MS = 30000;
 var CONTROL_URLS = { start: "/api/watcher/start", stop: "/api/watcher/stop" };
-var CODEX_CONTROL_URLS = { start: "/api/codex/start", stop: "/api/codex/stop" };
+var CODEX_CONTROL_URLS = {
+  start: "/api/codex/start",
+  stop: "/api/codex/stop",
+  clear: "/api/codex/clear",
+};
 var CODEX_CONTROL_TIMEOUT_MS = 30000;
 var CODEX_RESIZE_DEBOUNCE_MS = 150;
 var CODEX_INPUT_CHUNK_CHARS = 16 * 1024;
@@ -398,7 +402,7 @@ function renderCoder(state) {
     "coder-activity",
     current
       ? text(coder.current_activity)
-      : "No current Claude handoff. The raw coder record below is historical."
+      : "No current executor handoff. The raw coder record below is historical."
   );
   setText("coder-task", text(coder.task_id, "none"));
   setText("coder-review-round", text(coder.review_round, "0"));
@@ -442,7 +446,7 @@ function renderRuntime(state) {
   setText("token-input", count(tokens.input_tokens));
   setText("token-cache-read", count(tokens.cache_read_input_tokens));
   setText("token-cache-write", count(tokens.cache_creation_input_tokens));
-  setText("runtime-primary-model", text(runtime.primary_model, "Claude"));
+  setText("runtime-primary-model", text(runtime.primary_model, "Executor"));
   setText("runtime-subagent-model", text(runtime.subagent_model, "provider-selected"));
   setText("runtime-orchestration", text(runtime.orchestration_mode));
   setText("runtime-task", text(runtime.task_id, "none"));
@@ -492,7 +496,7 @@ function renderSubagents(agents) {
         badge.setAttribute("data-tone", mood);
       }
       head.appendChild(badge);
-      head.appendChild(span("record-title", text(entry.description, "Claude subagent")));
+      head.appendChild(span("record-title", text(entry.description, "Executor worker")));
       row.appendChild(head);
       var meta = document.createElement("p");
       meta.className = "record-meta";
@@ -1314,7 +1318,7 @@ function paintCodexControls() {
     stopNode.disabled = !terminalEnabled || busy || codexSession.can_stop !== true;
   }
   if (clearNode) {
-    clearNode.disabled = !terminalEnabled || !codexTerminalReady;
+    clearNode.disabled = !terminalEnabled || busy || !codexTerminalReady;
   }
   if (copyNode) {
     copyNode.disabled =
@@ -1367,7 +1371,14 @@ function codexControl(kind) {
   }
   codexPendingControl = kind;
   paintCodexControls();
-  codexReport(kind === "start" ? "Starting the Codex session…" : "Stopping the Codex session…", "active");
+  codexReport(
+    kind === "start"
+      ? "Starting the Codex session…"
+      : kind === "stop"
+        ? "Stopping the Codex session…"
+        : "Clearing retained terminal output…",
+    "active"
+  );
 
   var controller = typeof AbortController === "function" ? new AbortController() : null;
   var timeout = window.setTimeout(function () {
@@ -1403,6 +1414,17 @@ function codexControl(kind) {
           codexTerminal.reset();
         }
         connectCodexSocket();
+      } else if (
+        kind === "clear" &&
+        result.status === 200 &&
+        Number.isInteger(payload.cleared_through_cursor)
+      ) {
+        closeCodexSocket();
+        codexTerminalCursor = payload.cleared_through_cursor;
+        if (codexTerminalReady && codexTerminal) {
+          codexTerminal.reset();
+        }
+        connectCodexSocket();
       }
     })
     .catch(function (error) {
@@ -1417,14 +1439,7 @@ function codexControl(kind) {
 }
 
 function codexClear() {
-  if (!codexTerminalReady || !codexTerminal) {
-    return;
-  }
-  if (typeof codexTerminal.reset === "function") {
-    codexTerminal.reset();
-  } else if (typeof codexTerminal.clear === "function") {
-    codexTerminal.clear();
-  }
+  codexControl("clear");
 }
 
 function wireCodexControls() {
@@ -1544,18 +1559,19 @@ function usagePaceForecast(windowValue, nowMilliseconds) {
   if (typeof details.resets_at !== "string" ||
       !Number.isFinite(reset.getTime()) || typeof duration !== "number" ||
       duration <= 0 || typeof used !== "number") {
-    return { tone: "neutral", projected: null };
+    return { tone: "neutral", remaining: null };
   }
   var durationMilliseconds = duration * 60 * 1000;
   var elapsed = durationMilliseconds - (reset.getTime() - nowMilliseconds);
-  var projected = elapsed <= 0 ? used : used * durationMilliseconds / elapsed;
-  if (projected >= 100) {
-    return { tone: "bad", projected: projected };
+  var projectedUsed = elapsed <= 0 ? used : used * durationMilliseconds / elapsed;
+  var projectedRemaining = 100 - projectedUsed;
+  if (projectedRemaining <= 0) {
+    return { tone: "bad", remaining: projectedRemaining };
   }
-  if (projected >= 80) {
-    return { tone: "warn", projected: projected };
+  if (projectedRemaining <= 20) {
+    return { tone: "warn", remaining: projectedRemaining };
   }
-  return { tone: "ok", projected: projected };
+  return { tone: "ok", remaining: projectedRemaining };
 }
 
 function usageWindowChip(windowValue) {
@@ -1577,11 +1593,11 @@ function usageWindowChip(windowValue) {
   value.textContent = usagePercent(remaining);
   projection.className = "usage-window-projection";
   projection.dataset.tone = forecast.tone;
-  projection.textContent = usagePercent(forecast.projected);
+  projection.textContent = usagePercent(forecast.remaining);
   name.append(label, reset);
   chip.append(name, value, projection);
   chip.title = label.textContent + ": " + value.textContent + " remaining; " +
-    projection.textContent + " projected used by reset; " + usageReset(details.resets_at);
+    projection.textContent + " projected remaining at reset; " + usageReset(details.resets_at);
   return chip;
 }
 
