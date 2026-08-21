@@ -1,0 +1,53 @@
+# Example hardened system service for the authenticated OIDC dashboard.
+#
+# This assumes:
+# - the clone and virtual environment are under /opt/coordinator;
+# - configuration is /etc/coordinator/workflow.toml;
+# - /etc/coordinator/coordinator.env is mode 0600 and contains only the
+#   COORDINATOR_OIDC_CLIENT_SECRET value;
+# - state_dir in workflow.toml is /var/lib/coordinator;
+# - coordinated repositories are direct children of /srv/repositories;
+# - a TLS reverse proxy on this host is the only client of 127.0.0.1:8765.
+#
+# Replace paths and the service identity for your host. This is a defensible
+# baseline, not a substitute for completing docs/SECURITY_ROADMAP.md.
+
+[Unit]
+Description=Authenticated coordination dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=coordinator
+Group=coordinator
+WorkingDirectory=/opt/coordinator
+EnvironmentFile=/etc/coordinator/coordinator.env
+ExecStart=/opt/coordinator/.venv/bin/python /opt/coordinator/skills/coordinate-claude-work/scripts/web_app.py --config /etc/coordinator/workflow.toml
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+StateDirectory=coordinator
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/coordinator /srv/repositories
+
+[Install]
+WantedBy=multi-user.target

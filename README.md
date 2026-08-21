@@ -19,8 +19,7 @@ Install and authenticate each of these yourself, independently of this
 repository:
 
 - **Git**
-- **Python 3.11 or newer** (standard library only — no extra packages to
-  install for the workflow itself)
+- **Python 3.11 or newer**
 - **Codex CLI**, logged in (`codex login` or an API key in the environment)
 - **Claude Code CLI**, logged in
 
@@ -36,14 +35,26 @@ repository:
 
 The durable state lives in the target project's `.coordination/` directory,
 so a fresh chat can resume without you restating the project or the last
-handoff. A small standard-library-only web app (`web_app.py`) lets you watch
-and control that loop from a browser instead of a terminal.
+handoff. A small web app (`web_app.py`) provides a dependency-free local mode
+and an authenticated ASGI mode so you can watch and control that loop from a
+browser instead of a terminal.
 
 ## Quickstart (from a fresh clone)
 
 Run these from the directory where you cloned this repository:
 
-1. **Install the skill and global defaults** (once per machine):
+1. **Create an environment and install the application dependencies:**
+
+   ```bash
+   uv venv
+   uv pip install --python .venv/bin/python --requirement requirements.txt
+   ```
+
+   If you do not use `uv`, the equivalent is `python3 -m venv .venv` followed
+   by `.venv/bin/python -m pip install --requirement requirements.txt` (your OS
+   may package Python's `venv` support separately).
+
+2. **Install the skill and global defaults** (once per machine):
 
    ```bash
    python3 skills/coordinate-claude-work/scripts/install_user.py
@@ -53,7 +64,7 @@ Run these from the directory where you cloned this repository:
    marked blocks to `~/.codex/AGENTS.md` and `~/.claude/CLAUDE.md`, preserving
    any existing content. Restart Codex and Claude Code afterward.
 
-2. **Create your local settings file.** Copy the example, which stays
+3. **Create your local settings file.** Copy the example, which stays
    untracked and machine-specific:
 
    ```bash
@@ -65,13 +76,13 @@ Run these from the directory where you cloned this repository:
    directory whose sibling Git repositories you want selectable from the
    browser's repository picker.
 
-3. **Run the web app** against your settings file:
+4. **Run the web app** against your settings file:
 
    ```bash
-   python3 skills/coordinate-claude-work/scripts/web_app.py --config workflow.toml
+   .venv/bin/python skills/coordinate-claude-work/scripts/web_app.py --config workflow.toml
    ```
 
-4. **Open the dashboard** at the loopback URL printed on startup (default
+5. **Open the dashboard** at the loopback URL printed on startup (default
    `http://127.0.0.1:8765`).
 
 ## Onboarding your first repository
@@ -107,30 +118,79 @@ command-line flag always overrides the matching config value.
 | `host`               | `127.0.0.1`                          | Bind address. Keep this at loopback unless you provide an authenticated boundary yourself (see warning below). |
 | `port`               | `8765`                               | TCP port; `0` picks a free port. |
 | `relay_log_lines`    | `200`                                | Number of `runtime/relay.log` lines returned by `/api/state`. |
-| `quiet`              | `false`                              | Suppress per-request HTTP logging. |
+| `quiet`              | `false`                              | Suppress per-request logging in local mode; OIDC access logging is always disabled to protect callback query data. |
+| `auth_mode`          | `local`                              | `local` uses the loopback-only development server; `oidc` uses the authenticated ASGI runtime. |
+| `oidc_issuer`        | none                                 | Exact Authentik issuer URL. Required in OIDC mode. |
+| `oidc_client_id`     | none                                 | Authentik confidential-client identifier. Required in OIDC mode. |
+| `oidc_client_secret_env` | `COORDINATOR_OIDC_CLIENT_SECRET` | Environment-variable name holding the client secret; the secret itself never goes in TOML. |
+| `external_url`       | none                                 | Canonical external HTTPS origin, without a path. Required in OIDC mode. |
+| `allowed_subjects` / `allowed_groups` | empty             | Default-deny identity policy; at least one exact subject or group is required. |
+| `groups_claim`       | `groups`                             | ID-token claim containing Authentik groups. |
+| `state_dir`          | `$XDG_STATE_HOME/coordinator`, or `~/.local/state/coordinator` | Owner-only SQLite session and audit directory. |
+| `session_idle_seconds` / `session_absolute_seconds` | `3600` / `43200` | Server-enforced session lifetimes. |
+| `trusted_hosts`      | external URL hostname               | Exact accepted HTTP hostnames; wildcards are refused. |
+| `forwarded_allow_ips` | `127.0.0.1`                         | Proxy IP/CIDR values Uvicorn may trust for forwarded scheme/client data; `*` is refused. |
 
-**Path semantics:** relative `repo` and `repositories_root` values in the
-config file resolve against the directory *containing that config file*, not
-the directory you launch the command from. `workflow.example.toml` uses `.`
-and `..` for exactly this reason.
+**Path semantics:** relative `repo`, `repositories_root`, and `state_dir` values
+in the config file resolve against the directory *containing that config file*,
+not the directory you launch the command from. `workflow.example.toml` uses `.`
+and `..` for the repository paths for exactly this reason.
 
-**Precedence:** command-line flags (`--repo`, `--repositories-root`, `--host`,
-`--port`, `--relay-log-lines`, `--quiet`/`--no-quiet`) always win over a value
+**Precedence:** every explicit command-line flag wins over its corresponding value
 from `--config`, which in turn wins over the built-in default. See
 `workflow.example.toml` for a fully commented starting point.
+
+## Authenticated OIDC mode
+
+The authenticated runtime is generic OIDC with Authentik as the intended OpenID
+Provider. It uses Authorization Code flow with PKCE `S256`, Authlib discovery and
+ID-token validation, an exact callback URL, default-deny subject/group authorization,
+opaque SQLite-backed sessions, per-session CSRF tokens, and security headers. OAuth
+tokens and the client secret are not returned to the browser or stored in the session
+database.
+
+To configure it:
+
+1. In Authentik, create an OAuth2/OIDC provider with its recommended per-provider
+   issuer mode, a confidential client, an
+   asymmetric signing key, the default `profile` scope mapping (for the `groups`
+   claim), and the strict redirect URI
+   `https://<your-host>/auth/callback`. Assign the application only to the intended
+   user or group.
+2. Copy `workflow.example.toml` to the ignored `workflow.toml`, set
+   `auth_mode = "oidc"`, and fill the issuer, client id, external URL, allow policy,
+   state directory, trusted host, and trusted proxy address. Prefer a dedicated
+   Authentik group in `allowed_groups`.
+3. Put the client secret in the named environment variable, not the TOML file:
+
+   ```bash
+   export COORDINATOR_OIDC_CLIENT_SECRET='value-from-authentik'
+   ```
+
+4. Keep the application bound to loopback or another proxy-only transport. Terminate
+   TLS at the reverse proxy and make the upstream unreachable from other machines.
+5. Start the same entrypoint. `auth_mode = "oidc"` selects Starlette/Uvicorn instead
+   of the local `http.server` path.
+
+The SQLite database holds only sessions and redacted audit events. Coordination goals,
+tasks, reviews, relay logs, and repositories remain file-backed. See
+[`docs/adr/0001-authenticated-runtime.md`](docs/adr/0001-authenticated-runtime.md)
+for the decision and [`docs/SECURITY_ROADMAP.md`](docs/SECURITY_ROADMAP.md) for the
+remaining network-readiness gates.
 
 ## Testing
 
 Run the full local suite:
 
 ```bash
-python3 -m unittest discover -s tests -v
+.venv/bin/python -m unittest discover -s tests -v
 ```
 
 Or run a focused subset relevant to the web app and settings:
 
 ```bash
-python3 -m unittest tests.test_web_settings tests.test_web_workflow_state \
+.venv/bin/python -m unittest tests.test_authenticated_web_app \
+  tests.test_web_settings tests.test_web_workflow_state \
   tests.test_web_terminal_contract tests.test_web_views \
   tests.test_web_repository_picker tests.test_web_repository_switching -v
 ```
@@ -139,12 +199,12 @@ python3 -m unittest tests.test_web_settings tests.test_web_workflow_state \
 
 `.github/workflows/ci.yml` runs the full test suite and a compile check on
 every push and pull request, on `ubuntu-latest` with read-only permissions,
-across a Python 3.11 / 3.12 / 3.13 matrix, plus a pinned Node 24 setup for a
-deterministic syntax check of the vendored dashboard app. It installs no
-packages and launches no external services or CLIs.
+across a Python 3.11 / 3.12 / 3.13 matrix. It installs the pinned application
+and test dependencies, audits the application dependency set for known
+vulnerabilities, and uses Node 24 for a syntax check of the dashboard app. The
+tests launch no external identity provider or agent CLI.
 
-Before pushing this repository's intended public file set to a new public
-remote for the first time, work through
+Before publishing a release or substantial security-sensitive update, work through
 [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md).
 
 ## Limitations, honestly
@@ -153,11 +213,11 @@ remote for the first time, work through
   to keep running (in a terminal or as the optional systemd user service
   described in `docs/SELF_HOSTING.md`) for the dashboard and Codex terminal
   to work.
-- The server has **no authentication, TLS, or per-user access control**. It
-  binds `127.0.0.1` by default and is intended strictly for the owner's own
-  machine. Do not bind a routable/LAN address unless you put an
-  authenticated boundary (for example an authenticating reverse proxy) in
-  front of it yourself — this repository does not provide one.
+- The default `local` mode has **no authentication, TLS, or per-user access
+  control** and now refuses non-loopback bind addresses. OIDC mode provides the
+  application authentication boundary, but TLS termination, proxy isolation,
+  Authentik policy, service-account isolation, backups, and operational review are
+  still deployment responsibilities.
 - The browser's "Codex session" terminal gives anyone who can load the page
   a full interactive shell into `codex -C <repo>` using your inherited Codex
   login. Treat the loopback port accordingly.
@@ -175,19 +235,17 @@ remote for the first time, work through
 
 ## Security posture
 
-The dashboard has **no authentication, no sessions, no TLS, and no
-authorization**: every route is anonymous, and anyone who can reach the bound
-port gets the browser terminal's full interactive `codex -C <repo>` session as
-your OS user. It binds `127.0.0.1` for exactly that reason and is intended only
-for your own machine.
+The default local dashboard has **no authentication, no sessions, no TLS, and no
+authorization**. It is restricted to loopback in code because anyone who can reach
+it gets the browser terminal's full interactive `codex -C <repo>` session as your OS
+user.
 
-**This is not network-ready, and adding a login page alone would not make it
-so.** Any network deployment is gated by the plan in
+An authenticated OIDC/ASGI mode now supplies default-deny route enforcement,
+server-side sessions, CSRF checks, and audit events. **That does not by itself make a
+deployment network-ready.** Network exposure remains gated by the plan in
 [`docs/SECURITY_ROADMAP.md`](docs/SECURITY_ROADMAP.md), which records the
-current posture, a native OIDC design with Authentik, server-side sessions,
-default-deny authorization on every route, reverse-proxy and hardening
-requirements, and the ordered exit criteria that must all be met first. None of
-that work is implemented today.
+reverse-proxy, TLS, service-account, secret-management, backup, and adversarial-review
+requirements that must also be met.
 
 ## Self-hosting
 

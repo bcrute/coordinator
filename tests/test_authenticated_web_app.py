@@ -1,0 +1,473 @@
+"""Security contracts for the authenticated ASGI dashboard."""
+
+# ruff: noqa: E402 -- the script directory is intentionally injected below.
+
+from __future__ import annotations
+
+import json
+import stat
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+from authlib.integrations.base_client.errors import OAuthError
+from starlette.responses import RedirectResponse
+from starlette.testclient import TestClient
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = ROOT / "skills" / "coordinate-claude-work" / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+
+from authenticated_web_app import (
+    PUBLIC_PATHS,
+    OIDCSettings,
+    SQLiteSecurityStore,
+    _local_destination,
+    _validated_forwarded_allow_ips,
+    create_authenticated_app,
+)
+
+
+class FakeOIDCClient:
+    def __init__(self, claims: dict[str, object], algorithm: str = "RS256") -> None:
+        self.claims = claims
+        self.algorithm = algorithm
+
+    async def authorize_redirect(self, request, redirect_uri):
+        request.session["fake_oidc_state"] = {
+            "state": "test-state",
+            "nonce": "test-nonce",
+            "code_verifier": "test-verifier",
+            "redirect_uri": redirect_uri,
+        }
+        return RedirectResponse(
+            "https://idp.example/authorize?response_type=code&state=test-state"
+            "&code_challenge_method=S256",
+            status_code=302,
+        )
+
+    async def authorize_access_token(self, request):
+        state = request.session.pop("fake_oidc_state", None)
+        if (
+            not isinstance(state, dict)
+            or request.query_params.get("state") != state.get("state")
+            or request.query_params.get("code") != "test-code"
+        ):
+            raise OAuthError(description="invalid callback")
+        header = (
+            "eyJhbGciOiJSUzI1NiJ9"
+            if self.algorithm == "RS256"
+            else "eyJhbGciOiJIUzI1NiJ9"
+        )
+        return {
+            "access_token": "must-not-be-persisted-or-returned",
+            "id_token": f"{header}.e30.must-not-be-persisted-or-returned",
+            "userinfo": dict(self.claims),
+        }
+
+
+class AuthenticatedAppTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.base = Path(self.temp.name)
+        self.repo = self.base / "repo"
+        self.repo.mkdir()
+        (self.repo / ".git").mkdir()
+        self.issuer = "https://idp.example/application/o/coordinator/"
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def settings(
+        self,
+        *,
+        allowed_subjects: frozenset[str] = frozenset({"owner-subject"}),
+        allowed_groups: frozenset[str] = frozenset(),
+    ) -> OIDCSettings:
+        return OIDCSettings(
+            issuer=self.issuer,
+            client_id="coordinator-test",
+            client_secret="test-only-secret",
+            external_url="http://127.0.0.1",
+            allowed_subjects=allowed_subjects,
+            allowed_groups=allowed_groups,
+            state_dir=self.base / "state",
+            secure_cookie=False,
+            trusted_hosts=("127.0.0.1",),
+        )
+
+    def client(
+        self, claims: dict[str, object], *, algorithm: str = "RS256", **settings_kwargs
+    ):
+        app = create_authenticated_app(
+            self.repo,
+            self.settings(**settings_kwargs),
+            repositories_root=self.base,
+            oidc_client=FakeOIDCClient(claims, algorithm),
+            codex_command_for_repo=lambda repo: [
+                sys.executable,
+                "-c",
+                "import time; time.sleep(60)",
+            ],
+        )
+        return TestClient(app, base_url="http://127.0.0.1")
+
+    def owner_claims(self) -> dict[str, object]:
+        return {
+            "iss": self.issuer,
+            "sub": "owner-subject",
+            "preferred_username": "owner",
+            "groups": ["coordinator-users"],
+        }
+
+    def login(self, client: TestClient) -> tuple[str, str]:
+        response = client.get("/auth/login?next=%2F%23terminal", follow_redirects=False)
+        self.assertEqual(response.status_code, 302, response.text)
+        self.assertIn("code_challenge_method=S256", response.headers["location"])
+        before = client.cookies.get("coordinator_session")
+        self.assertIsInstance(before, str)
+        self.assertIn("HttpOnly", response.headers["set-cookie"])
+        self.assertIn("SameSite=lax", response.headers["set-cookie"])
+
+        response = client.get(
+            "/auth/callback?state=test-state&code=test-code", follow_redirects=False
+        )
+        self.assertEqual(response.status_code, 303, response.text)
+        self.assertEqual(response.headers["location"], "/#terminal")
+        after = client.cookies.get("coordinator_session")
+        self.assertIsInstance(after, str)
+        self.assertNotEqual(before, after, "the session id must rotate after login")
+        return before, after
+
+    def test_default_deny_login_rotation_csrf_and_logout(self) -> None:
+        with self.client(self.owner_claims()) as client:
+            response = client.get("/api/state")
+            self.assertEqual(response.status_code, 401)
+            response = client.get("/app.js", follow_redirects=False)
+            self.assertEqual(response.status_code, 303)
+            self.assertTrue(
+                response.headers["location"].startswith("/auth/login?next=")
+            )
+
+            self.login(client)
+            response = client.get("/api/state")
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+            security = payload["security"]
+            self.assertTrue(security["authenticated"])
+            self.assertEqual(security["user"]["sub"], "owner-subject")
+            serialized = json.dumps(payload)
+            self.assertNotIn("must-not-be-persisted-or-returned", serialized)
+            csrf = security["csrf_token"]
+
+            response = client.post("/auth/logout")
+            self.assertEqual(response.status_code, 403)
+            response = client.post(
+                "/auth/logout",
+                headers={"X-CSRF-Token": csrf, "Origin": "http://127.0.0.1"},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["redirect"], "/auth/login")
+            self.assertEqual(client.get("/api/state").status_code, 401)
+
+    def test_group_can_authorize_when_subject_is_not_allowlisted(self) -> None:
+        claims = self.owner_claims()
+        claims["sub"] = "different-subject"
+        with self.client(
+            claims,
+            allowed_subjects=frozenset(),
+            allowed_groups=frozenset({"coordinator-users"}),
+        ) as client:
+            self.login(client)
+            self.assertEqual(client.get("/api/state").status_code, 200)
+
+    def test_wrong_issuer_and_unallowed_identity_are_denied(self) -> None:
+        cases = [
+            {**self.owner_claims(), "iss": "https://wrong.example"},
+            {**self.owner_claims(), "sub": "not-allowed", "groups": []},
+        ]
+        for claims in cases:
+            with self.subTest(claims=claims), self.client(claims) as client:
+                client.get("/auth/login", follow_redirects=False)
+                response = client.get(
+                    "/auth/callback?state=test-state&code=test-code",
+                    follow_redirects=False,
+                )
+                self.assertEqual(response.status_code, 403)
+                self.assertEqual(client.get("/api/state").status_code, 401)
+
+    def test_bad_callback_is_generic_and_does_not_authenticate(self) -> None:
+        with self.client(self.owner_claims()) as client:
+            client.get("/auth/login", follow_redirects=False)
+            response = client.get(
+                "/auth/callback?state=wrong&code=test-code", follow_redirects=False
+            )
+            self.assertEqual(response.status_code, 401)
+            self.assertNotIn("invalid callback", response.text)
+            self.assertIsNone(client.cookies.get("coordinator_session"))
+            self.assertEqual(client.get("/api/state").status_code, 401)
+
+    def test_post_login_destination_rejects_external_and_backslash_forms(self) -> None:
+        for destination in (
+            "https://evil.example/path",
+            "//evil.example/path",
+            "/\\evil.example/path",
+            "/\r\nLocation: https://evil.example",
+        ):
+            with self.subTest(destination=destination):
+                self.assertEqual(_local_destination(destination), "/")
+
+    def test_every_nonpublic_route_is_denied_without_a_session(self) -> None:
+        with self.client(self.owner_claims()) as client:
+            for route in client.app.routes:
+                path = route.path
+                if path in PUBLIC_PATHS:
+                    continue
+                concrete = path.replace("{action:str}", "start").replace(
+                    "{path:path}", "app.js"
+                )
+                for method in sorted(route.methods or {"GET"}):
+                    with self.subTest(path=path, method=method):
+                        response = client.request(
+                            method, concrete, follow_redirects=False
+                        )
+                        expected = 401 if concrete.startswith("/api/") else 303
+                        self.assertEqual(response.status_code, expected)
+
+    def test_callback_state_is_single_use(self) -> None:
+        with self.client(self.owner_claims()) as client:
+            self.login(client)
+            response = client.get(
+                "/auth/callback?state=test-state&code=test-code", follow_redirects=False
+            )
+            self.assertEqual(response.status_code, 401)
+
+    def test_symmetric_id_token_algorithm_is_denied(self) -> None:
+        with self.client(self.owner_claims(), algorithm="HS256") as client:
+            client.get("/auth/login", follow_redirects=False)
+            response = client.get(
+                "/auth/callback?state=test-state&code=test-code", follow_redirects=False
+            )
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(client.get("/api/state").status_code, 401)
+
+    def test_csrf_origin_and_security_headers_cover_control_routes(self) -> None:
+        with self.client(self.owner_claims()) as client:
+            self.login(client)
+            state = client.get("/api/state")
+            csrf = state.json()["security"]["csrf_token"]
+            for header in (
+                "cache-control",
+                "content-security-policy",
+                "x-content-type-options",
+                "referrer-policy",
+                "permissions-policy",
+            ):
+                self.assertIn(header, state.headers)
+
+            response = client.post(
+                "/api/watcher/start",
+                headers={"X-CSRF-Token": csrf, "Origin": "https://evil.example"},
+            )
+            self.assertEqual(response.status_code, 403)
+            response = client.post(
+                "/api/watcher/start",
+                headers={
+                    "X-CSRF-Token": csrf,
+                    "Origin": "http://127.0.0.1",
+                    "Sec-Fetch-Site": "cross-site",
+                },
+            )
+            self.assertEqual(response.status_code, 403)
+            response = client.post(
+                "/api/watcher/start",
+                headers={"X-CSRF-Token": csrf, "Origin": "http://127.0.0.1"},
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.json()["outcome"], "validation")
+
+    def test_every_current_state_changing_route_is_behind_csrf(self) -> None:
+        paths = (
+            "/auth/logout",
+            "/api/watcher/start",
+            "/api/watcher/stop",
+            "/api/codex/start",
+            "/api/codex/stop",
+            "/api/codex/input",
+            "/api/codex/resize",
+            "/api/repository/select",
+        )
+        with self.client(self.owner_claims()) as client:
+            self.login(client)
+            for path in paths:
+                with self.subTest(path=path):
+                    self.assertEqual(client.post(path).status_code, 403)
+
+            csrf = client.get("/api/state").json()["security"]["csrf_token"]
+            response = client.post(
+                "/api/codex/input",
+                json={"data": "hello"},
+                headers={"X-CSRF-Token": csrf, "Origin": "http://127.0.0.1"},
+            )
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(response.json()["action"], "codex_input")
+
+    def test_untrusted_host_is_rejected_before_application_content(self) -> None:
+        with self.client(self.owner_claims()) as client:
+            response = client.get("http://evil.test/healthz")
+            self.assertEqual(response.status_code, 400)
+
+    def test_database_permissions_and_audit_records(self) -> None:
+        with self.client(self.owner_claims()) as client:
+            self.assertEqual(client.get("/api/state").status_code, 401)
+            self.login(client)
+            state_path = self.base / "state" / "security.sqlite3"
+            self.assertTrue(state_path.is_file())
+            self.assertEqual(stat.S_IMODE(state_path.stat().st_mode), 0o600)
+            connection = __import__("sqlite3").connect(state_path)
+            try:
+                events = connection.execute(
+                    "SELECT event, outcome, subject FROM audit_events ORDER BY event_id"
+                ).fetchall()
+                session_rows = connection.execute(
+                    "SELECT data_json FROM sessions"
+                ).fetchall()
+            finally:
+                connection.close()
+            self.assertIn(("login_callback", "success", "owner-subject"), events)
+            self.assertIn(("authorization", "denied", None), events)
+            self.assertNotIn(
+                "must-not-be-persisted-or-returned", json.dumps(session_rows)
+            )
+
+    def test_production_cookie_has_host_prefix_and_security_attributes(self) -> None:
+        settings = OIDCSettings(
+            issuer=self.issuer,
+            client_id="coordinator-test",
+            client_secret="test-only-secret",
+            external_url="https://coordinator.example",
+            allowed_subjects=frozenset({"owner-subject"}),
+            allowed_groups=frozenset(),
+            state_dir=self.base / "secure-state",
+            trusted_hosts=("coordinator.example",),
+        )
+        app = create_authenticated_app(
+            self.repo,
+            settings,
+            repositories_root=self.base,
+            oidc_client=FakeOIDCClient(self.owner_claims()),
+        )
+        with TestClient(app, base_url="https://coordinator.example") as client:
+            response = client.get("/auth/login", follow_redirects=False)
+            cookie = response.headers["set-cookie"]
+            self.assertIn("__Host-coordinator_session=", cookie)
+            self.assertIn("HttpOnly", cookie)
+            self.assertIn("Secure", cookie)
+            self.assertIn("SameSite=lax", cookie)
+            self.assertIn("Path=/", cookie)
+            self.assertNotIn("Domain=", cookie)
+
+
+class SQLiteSecurityStoreTests(unittest.TestCase):
+    def test_idle_and_absolute_expiry_delete_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLiteSecurityStore(Path(tmp), idle_seconds=10, absolute_seconds=20)
+            store.save("idle", {"user": {}}, created_at=90, now=100)
+            self.assertIsNotNone(store.load("idle", now=109))
+            self.assertIsNone(store.load("idle", now=120))
+            store.save("absolute", {"user": {}}, created_at=100, now=115)
+            self.assertIsNone(store.load("absolute", now=121))
+
+    def test_database_symbolic_link_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state"
+            state.mkdir()
+            target = Path(tmp) / "target.sqlite3"
+            target.touch()
+            (state / "security.sqlite3").symlink_to(target)
+            with self.assertRaisesRegex(ValueError, "symbolic link"):
+                SQLiteSecurityStore(state, idle_seconds=10, absolute_seconds=20)
+
+
+class SettingsValidationTests(unittest.TestCase):
+    def test_client_secret_is_redacted_from_settings_repr(self) -> None:
+        settings = OIDCSettings(
+            issuer="https://idp.example/application/o/coordinator/",
+            client_id="client",
+            client_secret="must-never-appear",
+            external_url="https://app.example",
+            allowed_subjects=frozenset({"owner"}),
+            allowed_groups=frozenset(),
+        )
+        self.assertNotIn("must-never-appear", repr(settings))
+
+    def test_forwarded_proxy_list_accepts_only_literal_ips_and_cidrs(self) -> None:
+        self.assertEqual(
+            _validated_forwarded_allow_ips("127.0.0.1, 10.0.0.0/24, ::1"),
+            "127.0.0.1,10.0.0.0/24,::1",
+        )
+        for value in ("*", "proxy.internal", "127.0.0.1,not-an-ip"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                _validated_forwarded_allow_ips(value)
+
+    def test_oidc_urls_must_not_contain_embedded_credentials(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must not contain URL credentials"):
+            OIDCSettings(
+                issuer="https://user:password@idp.example/",
+                client_id="client",
+                client_secret="secret",
+                external_url="https://app.example",
+                allowed_subjects=frozenset({"owner"}),
+                allowed_groups=frozenset(),
+            )
+
+    def test_trusted_hosts_are_exact_and_cannot_use_wildcards(self) -> None:
+        for host in ("*", "*.example", "app.*"):
+            with (
+                self.subTest(host=host),
+                self.assertRaisesRegex(ValueError, "wildcards"),
+            ):
+                OIDCSettings(
+                    issuer="https://idp.example/",
+                    client_id="client",
+                    client_secret="secret",
+                    external_url="https://app.example",
+                    allowed_subjects=frozenset({"owner"}),
+                    allowed_groups=frozenset(),
+                    trusted_hosts=("app.example", host),
+                )
+
+    def test_default_deny_requires_an_allow_policy(self) -> None:
+        with self.assertRaisesRegex(ValueError, "allowed subject or group"):
+            OIDCSettings(
+                issuer="https://idp.example/application/o/coordinator",
+                client_id="client",
+                client_secret="secret",
+                external_url="https://app.example",
+                allowed_subjects=frozenset(),
+                allowed_groups=frozenset(),
+            )
+
+    def test_https_is_required_for_secure_cookie_mode(self) -> None:
+        with self.assertRaisesRegex(ValueError, "external_url must use HTTPS"):
+            OIDCSettings(
+                issuer="https://idp.example/application/o/coordinator",
+                client_id="client",
+                client_secret="secret",
+                external_url="http://app.example",
+                allowed_subjects=frozenset({"owner"}),
+                allowed_groups=frozenset(),
+            )
+
+    def test_insecure_http_escape_hatch_is_loopback_only(self) -> None:
+        with self.assertRaisesRegex(ValueError, "only on loopback"):
+            OIDCSettings(
+                issuer="https://idp.example/application/o/coordinator/",
+                client_id="client",
+                client_secret="secret",
+                external_url="http://coordinator.example",
+                allowed_subjects=frozenset({"owner"}),
+                allowed_groups=frozenset(),
+                secure_cookie=False,
+            )

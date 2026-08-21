@@ -31,3 +31,37 @@ relay_log_lines = 200
 
 # Suppress per-request logging.
 quiet = false
+
+# Authentication mode. "local" keeps the dependency-free loopback server.
+# Change this to "oidc" only after completing the settings below and placing
+# the app behind a TLS reverse proxy.
+auth_mode = "local"
+
+# Authenticated OIDC settings (uncomment for auth_mode = "oidc"). The client
+# secret itself never belongs in this file; only its environment-variable name
+# is configured here.
+# oidc_issuer = "https://auth.example.com/application/o/coordinator/"
+# oidc_client_id = "replace-with-the-authentik-client-id"
+# oidc_client_secret_env = "COORDINATOR_OIDC_CLIENT_SECRET"
+# external_url = "https://coordinator.example.com"
+
+# Default-deny authorization. Configure at least one exact subject or group.
+# Prefer a dedicated Authentik group for routine administration.
+# allowed_subjects = []
+# allowed_groups = ["coordinator-users"]
+# groups_claim = "groups"
+
+# Opaque sessions and redacted audit records are stored in SQLite here. Use an
+# absolute path outside the clone for a service deployment.
+# state_dir = "/var/lib/coordinator"
+# session_idle_seconds = 3600
+# session_absolute_seconds = 43200
+
+# The external hostname accepted by the application and the proxy addresses
+# whose X-Forwarded-For/X-Forwarded-Proto values Uvicorn may trust.
+# trusted_hosts = ["coordinator.example.com"]
+# forwarded_allow_ips = "127.0.0.1"
+
+# Development escape hatch only. Never enable this for a network deployment;
+# production OIDC requires HTTPS and a Secure cookie.
+# insecure_oidc_http = false

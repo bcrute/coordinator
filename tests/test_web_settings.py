@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills" / "coordinate-claude-work"
 
 sys.path.insert(0, str(SKILL / "scripts"))
-from web_app import RELAY_LOG_LINES, load_config, parse_args  # noqa: E402
+from web_app import RELAY_LOG_LINES, load_config, parse_args, serve  # noqa: E402
 
 
 def write(path: Path, text: str) -> Path:
@@ -32,6 +32,13 @@ class DefaultsTests(unittest.TestCase):
         self.assertEqual(args.port, 8765)
         self.assertEqual(args.relay_log_lines, RELAY_LOG_LINES)
         self.assertFalse(args.quiet)
+
+    def test_local_mode_refuses_a_routable_bind(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / ".git").mkdir()
+            args = parse_args(["--repo", str(repo), "--host", "0.0.0.0"])
+            self.assertEqual(serve(args), 2)
 
 
 class ConfigValuesTests(unittest.TestCase):
@@ -80,6 +87,37 @@ class ConfigValuesTests(unittest.TestCase):
             self.assertEqual(args.host, "127.0.0.1")
             self.assertIsNone(args.repositories_root)
             self.assertEqual(args.repo, Path.cwd())
+
+    def test_oidc_settings_arrays_lifetimes_and_state_path_are_applied(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            config = write(
+                base / "workflow.toml",
+                """
+                auth_mode = "oidc"
+                oidc_issuer = "https://auth.example/application/o/coordinator"
+                oidc_client_id = "coordinator"
+                oidc_client_secret_env = "COORDINATOR_OIDC_CLIENT_SECRET"
+                external_url = "https://coordinator.example"
+                allowed_subjects = ["owner-sub"]
+                allowed_groups = ["coordinator-users"]
+                groups_claim = "groups"
+                state_dir = "state"
+                session_idle_seconds = 900
+                session_absolute_seconds = 7200
+                trusted_hosts = ["coordinator.example"]
+                forwarded_allow_ips = "127.0.0.1"
+                insecure_oidc_http = false
+                """,
+            )
+            args = parse_args(["--config", str(config)])
+            self.assertEqual(args.auth_mode, "oidc")
+            self.assertEqual(args.allowed_subject, ["owner-sub"])
+            self.assertEqual(args.allowed_group, ["coordinator-users"])
+            self.assertEqual(args.state_dir, base / "state")
+            self.assertEqual(args.session_idle_seconds, 900)
+            self.assertEqual(args.session_absolute_seconds, 7200)
+            self.assertEqual(args.trusted_host, ["coordinator.example"])
 
 
 class ConfigRelativeResolutionTests(unittest.TestCase):

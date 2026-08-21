@@ -2,30 +2,42 @@
 
 ## Purpose and honest current posture
 
+### Implementation status (2026-08-20)
+
+The repository now contains an initial authenticated ASGI runtime selected with
+`auth_mode = "oidc"`. It uses Starlette/Uvicorn, Authlib Authorization Code +
+PKCE, strict issuer/subject-or-group decisions, an asymmetric ID-token algorithm
+allowlist, opaque SQLite-backed sessions, per-session CSRF tokens, security headers,
+and redacted audit events. The original anonymous runtime remains available only as
+the enforced loopback `local` mode.
+
+This is implementation progress, **not a declaration of network readiness**. A live
+Authentik integration, TLS proxy isolation, dedicated service identity, secret
+delivery, backup/revocation procedures, and the adversarial deployment checks later
+in this document remain to be completed and evidenced.
+
 This document is the decision record for taking the coordination dashboard from
-what it is today — a **single-user, loopback-only development tool with no
-authentication** — to something the owner could expose on a network behind an
+its original **single-user, loopback-only development mode with no
+authentication** to something the owner could expose on a network behind an
 identity provider without lying to themselves about the risk.
 
 Current posture, stated plainly:
 
-- `web_app.py` is a `http.server`-based `ThreadingHTTPServer`. It binds
-  `127.0.0.1:8765` by default and has **no authentication, no sessions, no TLS,
-  and no per-user authorization**. Every route is anonymous.
-- Anyone who can send an HTTP request to the bound port has the full power of
-  the tool, including a live PTY into `codex -C <repo>` running as the server's
-  own OS user with that user's inherited Codex login.
-- The only cross-origin defense present is a `Sec-Fetch-Site`/`Origin` check on
-  state-changing `POST` endpoints (`same_origin()` in `web_app.py`). That is a
-  browser-driven-request control. It is **not** authentication and does nothing
-  against a direct HTTP client.
-- Nothing in this repository has been implemented from the design below. This
-  document describes intended work, not completed work.
+- `auth_mode = "local"` uses the original `http.server`-based
+  `ThreadingHTTPServer`. It has **no authentication, no sessions, no TLS, and no
+  per-user authorization**, and now refuses any non-loopback bind address.
+- `auth_mode = "oidc"` uses Starlette/Uvicorn and Authlib. It implements the
+  application controls listed in the implementation-status section above, but
+  it has not yet been exercised against the owner's live Authentik deployment
+  or its intended TLS reverse proxy.
+- Anyone who can reach either mode after passing whatever boundary it provides
+  has the full power of the tool, including a live PTY into `codex -C <repo>`
+  running as the server's OS user with that user's inherited Codex login.
 
-**The current mode is not network-ready.** It is safe only under the assumption
-that the loopback interface is trusted, which stops being true the moment the
-host is shared, the port is forwarded, a routable bind address is configured, or
-a tunnel is pointed at it.
+**Local mode is not network-ready, and OIDC mode is not yet a completed
+deployment.** Loopback stops being an adequate boundary the moment the host is
+shared, the port is forwarded, or a tunnel is pointed at it. OIDC mode still
+needs the proxy, TLS, service identity, and operational evidence in this plan.
 
 **OIDC alone is not sufficient.** Adding sign-in to the HTML shell while the API
 routes stay anonymous, or while the upstream port stays reachable, moves the
@@ -46,9 +58,10 @@ exposure.
 | Repository catalog | `/api/state` | Discloses the names and paths of sibling repositories under `repositories_root`. |
 | Host identity and credentials | Filesystem of the server's OS user | The Codex/Claude CLI credentials and Git identity the process inherits. Never sent to the browser, but fully reachable from a PTY. |
 
-### Controls that exist today
+### Controls implemented in the repository
 
-- Default loopback bind (`127.0.0.1`), documented as the intended posture.
+- Default loopback bind (`127.0.0.1`) and a code-level refusal to bind local
+  mode to a routable address.
 - One fixed, non-configurable Codex launch command resolved at server
   construction; no request can change the program, its arguments, or its working
   directory.
@@ -57,27 +70,29 @@ exposure.
   and query-parameter validation on control routes.
 - Repository discovery restricted to Git direct children of `repositories_root`
   plus the already-configured active repository.
+- In OIDC mode: default-deny middleware, Authlib discovery and ID-token
+  validation, exact issuer and asymmetric-algorithm checks, subject/group allow
+  policy, opaque SQLite sessions, login rotation, idle and absolute expiry,
+  POST-only logout, CSRF tokens, exact trusted hosts, security headers, and
+  redacted security/control audit events.
 
-### Controls that do not exist
+### Controls not yet demonstrated for a network deployment
 
-- User authentication of any kind.
-- Server-side sessions, session lifetime, rotation, or logout.
-- Authorization: there is no notion of an allowed identity, group, or role.
-- CSRF tokens (the origin check is the only related defense, and it protects
-  only against browser-initiated cross-site requests).
 - TLS termination or transport confidentiality.
-- Audit events tied to an identity, or redaction rules for what is logged.
 - Rate limiting, lockout, or abuse controls on control endpoints.
-- A production-grade HTTP server or process supervision with hardening.
+- A live Authentik integration and negative-token validation evidence against
+  the real provider.
+- Proxy isolation proving that only the reverse proxy can reach the upstream.
+- An installed dedicated service identity and verified systemd hardening.
+- Rehearsed secret rotation, session revocation, backup, and restore procedures.
 
 ### Trust boundaries today
 
-There is exactly one boundary, and it is the loopback socket: everything on the
-inside (any local process, any local user, any browser tab on the host) is fully
-trusted, and everything else is assumed unable to connect. That single boundary
-is why the tool is usable and also why it must not be exposed as-is.
+Local mode still has exactly one boundary: the loopback socket. OIDC mode adds an
+application identity boundary, but the target proxy, TLS, network isolation, and
+service-account boundaries do not exist merely because the code supports them.
 
-### Attacker impact if the port is reachable
+### Attacker impact in local mode or after an OIDC bypass
 
 | Attacker capability | Consequence |
 | --- | --- |
@@ -193,9 +208,10 @@ Required properties:
 ## Sessions
 
 - **Server-side, opaque.** The browser receives only a high-entropy random
-  session identifier. Tokens (ID, access, refresh) and claims live in the
-  server-side session record. **No tokens in `localStorage`, `sessionStorage`, or
-  any JavaScript-readable location.**
+  session identifier. The current implementation retains only the stable
+  subject, display name, groups, and CSRF token; OAuth tokens are discarded
+  after validation. **No tokens in `localStorage`, `sessionStorage`, or any
+  JavaScript-readable location.**
 - **Cookie attributes.** `HttpOnly`, `Secure`, `SameSite=Lax` (or `Strict` where
   the login redirect flow allows it), `Path=/`, host-only, and a `__Host-` prefix
   where the deployment supports it. No cookie domain widening.
@@ -210,8 +226,10 @@ Required properties:
   clears the cookie, and offers provider-initiated (RP-initiated) logout at
   Authentik. A logout must not be reachable by `GET`.
 - **Storage.** Session records live outside the browser and outside the
-  repository tree, with restrictive file permissions or a dedicated store, and
-  are cleared on service restart unless durable sessions are explicitly chosen.
+  repository tree in an owner-only SQLite database. They are durable across a
+  normal restart and can be invalidated by stopping the service and removing
+  the security database, or by adding a dedicated administrative revocation
+  operation later.
 
 ## CSRF and logging discipline
 
@@ -240,8 +258,8 @@ needs an explicit allow decision on **every** request.
 - **Default deny.** A single enforcement point rejects any request without a
   valid session and an allow decision. New routes are denied until explicitly
   allowed; the allowlist enumerates the small set of unauthenticated routes
-  (login start, callback, logout landing, health, static assets required by the
-  login page) and nothing else.
+  (login start, callback, and health) and nothing else. Logout and static assets
+  require an authenticated session.
 - **Stable subject.** Decisions are keyed on the OIDC `sub` claim (stable and
   provider-issued) and/or an Authentik group or entitlement claim. Never key on
   email, username, or display name — those are mutable and can be re-assigned.
@@ -387,10 +405,15 @@ true" does not count.
 
 ### Phase 0 — Truthful baseline (documentation only)
 
-- **Exit:** This document exists; the README states the current limitation and
-  links here; no claim anywhere in the repository implies authentication exists.
+**Status: complete.**
+
+- **Exit:** This document exists; the README distinguishes local and OIDC mode,
+  states the remaining deployment limitations, and links here.
 
 ### Phase 1 — Platform decision
+
+**Status: complete in the repository.** ADR 0001 records the decision and the
+authenticated route tests exercise the shared PTY/control surface on ASGI.
 
 - **Exit:** A written decision records the server/framework and the OIDC and
   JOSE libraries, with versions and support expectations; the dependency,
@@ -399,12 +422,18 @@ true" does not count.
 
 ### Phase 2 — Enforcement skeleton (still loopback)
 
+**Status: complete in automated tests.**
+
 - **Exit:** A single default-deny enforcement point covers every route; a test
   enumerates the application's routes and fails if any route is reachable
   anonymously without being on the explicit unauthenticated allowlist; adding a
   new route without a decision fails that test.
 
 ### Phase 3 — OIDC login against Authentik
+
+**Status: in progress.** The Authlib flow and several negative cases are tested
+with a fake provider; live Authentik integration and the full negative-token
+matrix remain exit criteria.
 
 - **Exit:** Authorization Code + PKCE `S256` login succeeds end to end;
   automated tests prove refusal for each of: bad signature, wrong `iss`, wrong
@@ -414,6 +443,9 @@ true" does not count.
 
 ### Phase 4 — Sessions and CSRF
 
+**Status: implemented and covered by local automated tests; deployment evidence
+remains outstanding.**
+
 - **Exit:** Sessions are server-side and opaque; the session identifier rotates
   on login; absolute and idle expiry are enforced server-side and tested; logout
   destroys the server-side record and is `POST`-only; every state-changing
@@ -422,12 +454,17 @@ true" does not count.
 
 ### Phase 5 — Authorization policy
 
+**Status: implemented and covered by local automated tests; live Authentik claim
+mapping remains outstanding.**
+
 - **Exit:** Access requires an allowlisted `sub` and/or Authentik group claim;
   a valid token from a non-allowed subject is refused on every route, proven by a
   test; the deny path emits an audit event and discloses nothing about the
   resource.
 
 ### Phase 6 — Deployment boundary
+
+**Status: not deployed.**
 
 - **Exit:** TLS terminates at the proxy with a valid certificate and automated
   renewal; a connection attempt directly to the upstream from another host fails;
@@ -437,6 +474,9 @@ true" does not count.
 
 ### Phase 7 — Hardening and operations
 
+**Status: in progress.** A hardened example unit and CI dependency audit exist;
+installation, rotation, backup, restore, and operational evidence remain.
+
 - **Exit:** The service runs as a dedicated account under the hardening
   directives; secrets come from the chosen store and a rotation has been
   rehearsed once; audit events exist for every listed action with redaction
@@ -444,6 +484,8 @@ true" does not count.
   versions; a restore from backup has been performed once.
 
 ### Phase 8 — Adversarial review
+
+**Status: not started.**
 
 - **Exit:** A deliberate attempt to reach each asset without a valid session
   fails; the checklist below is complete with dated evidence; residual risks are

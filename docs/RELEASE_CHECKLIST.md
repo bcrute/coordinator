@@ -1,17 +1,20 @@
 # Release checklist
 
-A manual checklist for the repository owner to work through before pushing
-this repository's intended public file set to a new public remote. Nothing
-in this document performs any of these actions automatically, and none of
-them have been performed on your behalf by adding this file.
+A manual checklist for the repository owner to work through before publishing
+a release or substantial security-sensitive update. Nothing in this document
+performs those actions automatically.
 
 ## 1. Clean tests
 
-- [ ] Run the full local suite: `python3 -m unittest discover -s tests -v`.
-- [ ] Run `python -m compileall -q skills tests` to catch syntax errors.
+- [ ] Install `requirements-dev.txt` in a clean virtual environment.
+- [ ] Run the full local suite:
+      `.venv/bin/python -m unittest discover -s tests -v`.
+- [ ] Run `.venv/bin/python -m compileall -q skills tests` to catch syntax
+      errors.
+- [ ] Run `python -m pip_audit --requirement requirements.txt` and resolve or
+      explicitly document every finding.
 - [ ] Confirm CI (`.github/workflows/ci.yml`) is green on Python 3.11, 3.12,
-      and 3.13 for the commit you intend to push, once a remote exists to run
-      it on.
+      and 3.13 for the commit you intend to push.
 
 ## 2. Ignored and private material
 
@@ -26,11 +29,11 @@ them have been performed on your behalf by adding this file.
 
 - [ ] Search the tracked/intended-public tree for obvious secret material
       (API keys, tokens, passwords, private SSH keys, `.env` files) before
-      the first commit. Do not rely solely on `.gitignore`; read file
+      the release commit. Do not rely solely on `.gitignore`; read file
       contents, not just filenames.
-- [ ] Confirm example configuration and service files (`workflow.example.toml`,
-      `deploy/workflow-web.service.example`) contain only placeholders, not
-      real paths, hosts, or credentials.
+- [ ] Confirm example configuration and service files (`workflow.example.toml`
+      and both files under `deploy/`) contain only placeholders, not real paths,
+      hosts, or credentials.
 
 ## 4. Config and help consistency
 
@@ -50,7 +53,7 @@ them have been performed on your behalf by adding this file.
 ## 6. Local smoke test
 
 - [ ] Copy `workflow.example.toml` to `workflow.toml`, run
-      `python3 skills/coordinate-claude-work/scripts/web_app.py --config workflow.toml`,
+      `.venv/bin/python skills/coordinate-claude-work/scripts/web_app.py --config workflow.toml`,
       and confirm the dashboard loads at the printed loopback URL before
       publishing.
 
@@ -76,14 +79,13 @@ about to publish still says so.
 
 ## 8. Commit review
 
-- [ ] Before the first commit, run `git status` and `git diff --cached`
+- [ ] Before the release commit, run `git status` and `git diff --cached`
       (after staging) and read the complete result, not just a summary.
 - [ ] Confirm the commit message and author identity are what the owner
       intends.
 
-## 9. Remote creation and push
+## 9. Push
 
-- [ ] Creating the GitHub (or other) remote, and the first push, are
-      explicit, separate owner actions. Nothing in this repository's tooling
-      creates a remote or pushes on its own. Do not push until steps 1-8
+- [ ] Confirm the intended remote and branch immediately before pushing. The
+      repository tooling does not push on its own. Do not push until steps 1-8
       above are complete, including the license verification in step 7.

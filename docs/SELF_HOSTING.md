@@ -1,9 +1,14 @@
 # Self-hosting the coordination dashboard
 
-`web_app.py` is a small, standard-library-only Python HTTP server. It is a
-**dynamic service**, not a static site: it has to keep running for the
-dashboard, `/api/state` polling, and the browser Codex terminal to work.
-There is no build step and nothing to deploy to a CDN or static host.
+`web_app.py` is a **dynamic service**, not a static site: it has to keep
+running for the dashboard, `/api/state` polling, and the browser Codex terminal
+to work. There is no front-end build step and nothing to deploy to a CDN or
+static host. It has two runtime modes:
+
+- `local` (the default): the original standard-library server, enforced as
+  loopback-only and unauthenticated;
+- `oidc`: the Starlette/Authlib application served by Uvicorn, with opaque
+  SQLite sessions, CSRF enforcement, and default-deny authorization.
 
 This guide assumes you have already followed the root `README.md` quickstart
 (installed the skill, copied `workflow.example.toml` to `workflow.toml`, and
@@ -12,7 +17,7 @@ confirmed the app runs in the foreground).
 ## Running in the foreground
 
 ```bash
-python3 skills/coordinate-claude-work/scripts/web_app.py --config workflow.toml
+.venv/bin/python skills/coordinate-claude-work/scripts/web_app.py --config workflow.toml
 ```
 
 - The process logs to standard output/error and serves until you stop it.
@@ -20,14 +25,16 @@ python3 skills/coordinate-claude-work/scripts/web_app.py --config workflow.toml
   (via the Agents view's Start control), stopping the server also stops that
   watcher; a watcher you started yourself in a separate terminal is left
   running.
-- Use `--quiet` (or set `quiet = true` in your config file) to suppress
-  per-request HTTP logging, or `--no-quiet` on the command line to force
-  logging back on even if the config file sets `quiet = true`.
+- In `local` mode, use `--quiet` (or set `quiet = true` in your config file)
+  to suppress per-request HTTP logging, or `--no-quiet` to force it back on.
+  OIDC mode always disables Uvicorn access logs because callback query strings
+  contain short-lived authorization codes and state. Its redacted SQLite audit
+  events are the security record instead.
 - There is no separate application log file by default; redirect stdout/
   stderr yourself if you want one, for example:
 
   ```bash
-  python3 skills/coordinate-claude-work/scripts/web_app.py --config workflow.toml \
+  .venv/bin/python skills/coordinate-claude-work/scripts/web_app.py --config workflow.toml \
     >> ~/workflow-web.log 2>&1
   ```
 
@@ -50,10 +57,15 @@ state; task and review files persist on disk exactly as they were.
 git pull
 ```
 
-There is no separate install step to re-run after a pull unless you are also
-updating the machine-level skill symlink and `AGENTS.md`/`CLAUDE.md` blocks,
-in which case re-run the installer — it only touches its own marked blocks
-and does not reset your project's live coordination state:
+Refresh pinned Python dependencies after a pull, then restart the service:
+
+```bash
+uv pip install --python .venv/bin/python --requirement requirements.txt
+```
+
+If you are also updating the machine-level skill symlink and
+`AGENTS.md`/`CLAUDE.md` blocks, re-run the installer — it only touches its own
+marked blocks and does not reset your project's live coordination state:
 
 ```bash
 python3 skills/coordinate-claude-work/scripts/install_user.py
@@ -71,7 +83,7 @@ systemctl --user restart workflow-web
 one:
 
 ```bash
-python3 skills/coordinate-claude-work/scripts/web_app.py --config workflow.toml --port 0
+.venv/bin/python skills/coordinate-claude-work/scripts/web_app.py --config workflow.toml --port 0
 ```
 
 The chosen port is printed on startup. You can also set `port = 0` (or any
@@ -157,6 +169,19 @@ running it manually would give you (still loopback-only by default).
    loginctl enable-linger "$USER"
    ```
 
-This example unit is a starting point, not a hardened deployment: it does
-not add authentication, TLS, or LAN exposure, and it makes no claim of
-covering every distribution's systemd configuration. Review it before use.
+The example user unit remains a loopback/local starting point. For OIDC mode,
+the service additionally needs the client-secret environment variable, an
+owner-only writable `state_dir`, and a TLS reverse proxy whose address matches
+`forwarded_allow_ips`. Do not put the client secret in the tracked unit or TOML
+file; load it from a separate mode-0600 environment/credential file. OIDC mode
+refuses wildcard trusted hosts and `forwarded_allow_ips = "*"`.
+
+The authenticated application does not remove the need for service-account,
+filesystem, proxy, backup, and recovery hardening. Treat the network-ready
+checklist in `docs/SECURITY_ROADMAP.md` as the deployment gate.
+
+For a future dedicated service account, use
+`deploy/workflow-web-oidc.service.example` as a reviewed starting point. Its
+paths are placeholders for a `/opt` clone, `/etc` configuration and secret
+environment file, `/var/lib` security state, and `/srv` repositories; adapt
+them to the host rather than copying the unit unchanged.

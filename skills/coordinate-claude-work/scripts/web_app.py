@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Serve one repository's coordination dashboard and automatic-watcher controls on localhost."""
+"""Serve the coordination dashboard in local or authenticated OIDC mode."""
 
 from __future__ import annotations
 
 import argparse
 import contextlib
+import ipaddress
 import json
 import os
 import re
@@ -40,7 +41,28 @@ CODEX_INPUT_BODY_BYTES = 64 * 1024
 CODEX_SESSION_ACTIONS = {"/api/codex/start": "codex_start", "/api/codex/stop": "codex_stop"}
 REPOSITORY_SELECT_PATH = "/api/repository/select"
 REPOSITORY_SELECT_BODY_BYTES = 64 * 1024
-CONFIG_KEYS = {"repo", "repositories_root", "host", "port", "relay_log_lines", "quiet"}
+CONFIG_KEYS = {
+    "repo",
+    "repositories_root",
+    "host",
+    "port",
+    "relay_log_lines",
+    "quiet",
+    "auth_mode",
+    "oidc_issuer",
+    "oidc_client_id",
+    "oidc_client_secret_env",
+    "external_url",
+    "allowed_subjects",
+    "allowed_groups",
+    "groups_claim",
+    "state_dir",
+    "session_idle_seconds",
+    "session_absolute_seconds",
+    "trusted_hosts",
+    "forwarded_allow_ips",
+    "insecure_oidc_http",
+}
 
 
 def default_codex_command(root: Path) -> list[str]:
@@ -52,6 +74,19 @@ def default_codex_command(root: Path) -> list[str]:
     """
     executable = shutil.which("codex") or "codex"
     return [executable, "-C", str(root)]
+
+
+def is_loopback_host(host: str) -> bool:
+    """Return whether a bind name is unambiguously loopback-only."""
+
+    if host.strip().lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.strip().strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
@@ -1440,6 +1475,13 @@ def create_server(
 
 def serve(args: argparse.Namespace) -> int:
     repo = args.repo.resolve()
+    if not is_loopback_host(str(args.host)):
+        print(
+            "error: unauthenticated mode refuses a non-loopback bind; configure "
+            "auth_mode = 'oidc' for a reverse-proxied deployment",
+            file=sys.stderr,
+        )
+        return 2
     try:
         server = create_server(
             repo,
@@ -1515,7 +1557,7 @@ def load_config(path: Path) -> dict[str, object]:
     config_dir = resolved.parent
     settings: dict[str, object] = {}
 
-    for key in ("repo", "repositories_root"):
+    for key in ("repo", "repositories_root", "state_dir"):
         if key not in data:
             continue
         value = data[key]
@@ -1556,6 +1598,47 @@ def load_config(path: Path) -> dict[str, object]:
             raise ValueError("--config quiet must be a boolean")
         settings["quiet"] = value
 
+    string_keys = (
+        "auth_mode",
+        "oidc_issuer",
+        "oidc_client_id",
+        "oidc_client_secret_env",
+        "external_url",
+        "groups_claim",
+        "forwarded_allow_ips",
+    )
+    for key in string_keys:
+        if key not in data:
+            continue
+        value = data[key]
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"--config {key} must be a non-empty string")
+        settings[key] = value
+
+    for key in ("allowed_subjects", "allowed_groups", "trusted_hosts"):
+        if key not in data:
+            continue
+        value = data[key]
+        if not isinstance(value, list) or not all(
+            isinstance(item, str) and item.strip() for item in value
+        ):
+            raise ValueError(f"--config {key} must be an array of non-empty strings")
+        settings[key] = list(value)
+
+    for key in ("session_idle_seconds", "session_absolute_seconds"):
+        if key not in data:
+            continue
+        value = data[key]
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ValueError(f"--config {key} must be a positive integer")
+        settings[key] = value
+
+    if "insecure_oidc_http" in data:
+        value = data["insecure_oidc_http"]
+        if not isinstance(value, bool):
+            raise ValueError("--config insecure_oidc_http must be a boolean")
+        settings["insecure_oidc_http"] = value
+
     return settings
 
 
@@ -1565,9 +1648,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--config",
         type=Path,
         default=None,
-        help="portable TOML settings file (see workflow.example.toml); supports "
-        "repo, repositories_root, host, port, relay_log_lines, and quiet; "
-        "explicit command-line flags override its values",
+        help="portable TOML settings file (see workflow.example.toml); explicit "
+        "command-line flags override its base-server and OIDC values",
     )
     parser.add_argument(
         "--repo",
@@ -1611,6 +1693,46 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="suppress per-request logging; use --no-quiet to force logging on "
         "(default: off, unless --config supplies quiet)",
     )
+    parser.add_argument(
+        "--auth-mode",
+        choices=("local", "oidc"),
+        default=None,
+        help="local keeps the legacy loopback-only server; oidc uses the authenticated ASGI runtime",
+    )
+    parser.add_argument("--oidc-issuer", default=None, help="exact OpenID Provider issuer URL")
+    parser.add_argument("--oidc-client-id", default=None, help="OIDC confidential client id")
+    parser.add_argument(
+        "--oidc-client-secret-env",
+        default=None,
+        help="name of the environment variable containing the OIDC client secret",
+    )
+    parser.add_argument("--external-url", default=None, help="canonical external HTTPS origin")
+    parser.add_argument(
+        "--allowed-subject", action="append", default=None, help="allowed OIDC sub; repeatable"
+    )
+    parser.add_argument(
+        "--allowed-group", action="append", default=None, help="allowed OIDC group; repeatable"
+    )
+    parser.add_argument("--groups-claim", default=None, help="OIDC claim containing group names")
+    parser.add_argument(
+        "--state-dir", type=Path, default=None, help="owner-only directory for sessions and audit data"
+    )
+    parser.add_argument("--session-idle-seconds", type=int, default=None)
+    parser.add_argument("--session-absolute-seconds", type=int, default=None)
+    parser.add_argument(
+        "--trusted-host", action="append", default=None, help="accepted Host value; repeatable"
+    )
+    parser.add_argument(
+        "--forwarded-allow-ips",
+        default=None,
+        help="Uvicorn trusted proxy IP/CIDR list; never use * on an exposed socket",
+    )
+    parser.add_argument(
+        "--insecure-oidc-http",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="development-only: permit HTTP callback and a non-Secure cookie",
+    )
     args = parser.parse_args(argv)
 
     config_values: dict[str, object] = {}
@@ -1633,6 +1755,33 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args.port = resolved("port", args.port, 8765)
     args.relay_log_lines = resolved("relay_log_lines", args.relay_log_lines, RELAY_LOG_LINES)
     args.quiet = bool(resolved("quiet", args.quiet, False))
+    args.auth_mode = resolved("auth_mode", args.auth_mode, "local")
+    args.oidc_issuer = resolved("oidc_issuer", args.oidc_issuer, "")
+    args.oidc_client_id = resolved("oidc_client_id", args.oidc_client_id, "")
+    args.oidc_client_secret_env = resolved(
+        "oidc_client_secret_env", args.oidc_client_secret_env, "COORDINATOR_OIDC_CLIENT_SECRET"
+    )
+    args.external_url = resolved("external_url", args.external_url, "")
+    args.allowed_subject = resolved("allowed_subjects", args.allowed_subject, [])
+    args.allowed_group = resolved("allowed_groups", args.allowed_group, [])
+    args.groups_claim = resolved("groups_claim", args.groups_claim, "groups")
+    default_state_home = Path(
+        os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))
+    )
+    args.state_dir = resolved("state_dir", args.state_dir, default_state_home / "coordinator")
+    args.session_idle_seconds = resolved(
+        "session_idle_seconds", args.session_idle_seconds, 3600
+    )
+    args.session_absolute_seconds = resolved(
+        "session_absolute_seconds", args.session_absolute_seconds, 43200
+    )
+    args.trusted_host = resolved("trusted_hosts", args.trusted_host, [])
+    args.forwarded_allow_ips = resolved(
+        "forwarded_allow_ips", args.forwarded_allow_ips, "127.0.0.1"
+    )
+    args.insecure_oidc_http = bool(
+        resolved("insecure_oidc_http", args.insecure_oidc_http, False)
+    )
 
     if not 0 <= args.port <= 65535:
         parser.error("--port must be between 0 and 65535")
@@ -1640,8 +1789,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--relay-log-lines must not be negative")
     if not str(args.host).strip():
         parser.error("--host must not be empty")
+    if args.auth_mode not in {"local", "oidc"}:
+        parser.error("--auth-mode must be local or oidc")
+    if args.session_idle_seconds <= 0 or args.session_absolute_seconds <= 0:
+        parser.error("session lifetimes must be positive")
     return args
 
 
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    if args.auth_mode == "oidc":
+        try:
+            from authenticated_web_app import serve_authenticated
+        except ModuleNotFoundError as error:
+            print(
+                f"error: authenticated mode dependency is missing ({error.name}); "
+                "install requirements.txt",
+                file=sys.stderr,
+            )
+            return 2
+        return serve_authenticated(args)
+    return serve(args)
+
+
 if __name__ == "__main__":
-    raise SystemExit(serve(parse_args()))
+    raise SystemExit(main())

@@ -21,10 +21,11 @@ CHECKLIST_PATH = ROOT / "docs" / "RELEASE_CHECKLIST.md"
 SELF_HOSTING_PATH = ROOT / "docs" / "SELF_HOSTING.md"
 EXAMPLE_CONFIG = ROOT / "workflow.example.toml"
 EXAMPLE_SERVICE = ROOT / "deploy" / "workflow-web.service.example"
+OIDC_SERVICE = ROOT / "deploy" / "workflow-web-oidc.service.example"
 LICENSE_PATH = ROOT / "LICENSE"
 VENDOR_DIR = SKILL / "assets" / "web" / "vendor"
 
-FORBIDDEN_PATH_FRAGMENT = "/home/ben"
+FORBIDDEN_PATH_FRAGMENT = "/home/" + "ben"
 
 # The owner-selected license identity for the first-party surface.
 LICENSE_TITLE = "MIT License"
@@ -57,6 +58,7 @@ NO_LEAK_FILES = [
     SELF_HOSTING_PATH,
     EXAMPLE_CONFIG,
     EXAMPLE_SERVICE,
+    OIDC_SERVICE,
     SKILL / "SKILL.md",
     CI_PATH,
     CHECKLIST_PATH,
@@ -94,6 +96,7 @@ def _first_party_public_files() -> list[Path]:
         SELF_HOSTING_PATH,
         EXAMPLE_CONFIG,
         EXAMPLE_SERVICE,
+        OIDC_SERVICE,
         CI_PATH,
         ROOT / ".gitignore",
         ROOT / "AGENTS.md",
@@ -119,13 +122,17 @@ class RequiredFilesExistTests(unittest.TestCase):
             ROOT / ".gitignore",
             ROOT / "AGENTS.md",
             ROOT / "CLAUDE.md",
+            ROOT / "requirements.txt",
+            ROOT / "requirements-dev.txt",
             EXAMPLE_CONFIG,
             EXAMPLE_SERVICE,
+            OIDC_SERVICE,
             SELF_HOSTING_PATH,
             CHECKLIST_PATH,
             CI_PATH,
             SKILL / "SKILL.md",
             SKILL / "scripts" / "web_app.py",
+            SKILL / "scripts" / "authenticated_web_app.py",
         ]
         for path in required:
             with self.subTest(path=path):
@@ -225,10 +232,11 @@ class ExampleConfigTests(unittest.TestCase):
         # host is commented-out/default-documented, or explicitly loopback if present.
         host = data.get("host", "127.0.0.1")
         self.assertEqual(host, "127.0.0.1")
+        self.assertEqual(data.get("auth_mode", "local"), "local")
         self.assertNotIn("0.0.0.0", text)
         self.assertNotIn("token", text.lower())
         self.assertNotIn("password", text.lower())
-        self.assertNotIn("secret", text.lower())
+        self.assertNotRegex(text, r"(?m)^\s*oidc_client_secret\s*=")
 
 
 class ExampleServiceUnitTests(unittest.TestCase):
@@ -248,6 +256,22 @@ class ExampleServiceUnitTests(unittest.TestCase):
         self.assertNotIn("0.0.0.0", self.text)
         for pattern in (r"password\s*=", r"secret\s*=", r"api_key\s*=", r"token\s*="):
             self.assertNotRegex(self.text.lower(), pattern)
+
+
+class OidcServiceUnitTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.text = OIDC_SERVICE.read_text(encoding="utf-8")
+
+    def test_uses_dedicated_identity_and_owner_only_state(self) -> None:
+        self.assertIn("User=coordinator", self.text)
+        self.assertIn("UMask=0077", self.text)
+        self.assertIn("StateDirectoryMode=0700", self.text)
+        self.assertIn("NoNewPrivileges=true", self.text)
+        self.assertIn("ProtectSystem=strict", self.text)
+
+    def test_loads_secret_from_separate_environment_file(self) -> None:
+        self.assertIn("EnvironmentFile=/etc/coordinator/coordinator.env", self.text)
+        self.assertNotRegex(self.text, r"(?m)^COORDINATOR_OIDC_CLIENT_SECRET=")
 
 
 class CiWorkflowTests(unittest.TestCase):
@@ -271,9 +295,9 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertRegex(self.text, r'node-version:\s*"?24"?')
         self.assertRegex(self.text, r"package-manager-cache:\s*false")
 
-    def test_no_install_cache_or_provider_agent_launch(self) -> None:
+    def test_installs_declared_dependencies_without_provider_agent_launch(self) -> None:
+        self.assertIn("pip install --requirement requirements-dev.txt", self.text)
         forbidden_terms = [
-            "pip install",
             "npm install",
             "npm ci",
             "actions/cache",
@@ -293,6 +317,7 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertNotRegex(self.text, r"(?<!package-manager-)cache:\s*(?!false)\S")
 
     def test_required_commands_present(self) -> None:
+        self.assertIn("python -m pip_audit --requirement requirements.txt", self.text)
         self.assertIn("python -m compileall -q skills tests", self.text)
         self.assertIn("python -m unittest discover -s tests", self.text)
         self.assertIn("node --check", self.text)
@@ -372,6 +397,7 @@ class PublicCheckoutUnitDiscoveryTests(unittest.TestCase):
             "test_web_repository_switching.py",
             "test_codex_session.py",
             "test_codex_session_http.py",
+            "test_authenticated_web_app.py",
             "test_distribution.py",
         }
     )
@@ -401,7 +427,7 @@ class PublicCheckoutUnitDiscoveryTests(unittest.TestCase):
     def test_public_test_set_equals_expected_after_gitignore_exclusions(self) -> None:
         """Derive the public test module set as (all test_*.py on disk) minus
         (the exact per-file .gitignore exclusions), and assert it equals the
-        expected ten modules exactly, so an accidental extra public test
+        expected eleven modules exactly, so an accidental extra public test
         file fails this contract rather than passing silently.
         """
         self.assertEqual(_public_test_modules(), self.EXPECTED_PUBLIC_TEST_MODULES)

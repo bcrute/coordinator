@@ -40,6 +40,7 @@ var renderFailure = "";
 var managed = Object.create(null);
 var pendingControl = "";
 var renderedLog = null;
+var csrfToken = "";
 
 var repositoryCatalog = { root: "", active: "", entries: [] };
 var repositorySwitching = false;
@@ -664,7 +665,11 @@ function selectRepository(path) {
     method: "POST",
     cache: "no-store",
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "X-CSRF-Token": csrfToken,
+    },
     body: JSON.stringify({ path: path }),
   };
   if (controller) {
@@ -855,7 +860,7 @@ function control(kind) {
   var options = {
     method: "POST",
     cache: "no-store",
-    headers: { Accept: "application/json" },
+    headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
   };
   if (controller) {
     options.signal = controller.signal;
@@ -1167,7 +1172,11 @@ function drainCodexInputQueue() {
   var options = {
     method: "POST",
     cache: "no-store",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "X-CSRF-Token": csrfToken,
+    },
     body: JSON.stringify({ data: chunk }),
   };
   if (controller) {
@@ -1213,7 +1222,11 @@ function sendCodexResize(rows, cols) {
   var options = {
     method: "POST",
     cache: "no-store",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "X-CSRF-Token": csrfToken,
+    },
     body: JSON.stringify({ rows: rows, cols: cols }),
   };
   if (controller) {
@@ -1345,7 +1358,7 @@ function codexControl(kind) {
   var options = {
     method: "POST",
     cache: "no-store",
-    headers: { Accept: "application/json" },
+    headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
   };
   if (controller) {
     options.signal = controller.signal;
@@ -1419,6 +1432,20 @@ function wireCodexControls() {
 }
 
 function render(state) {
+  var security = record(state.security);
+  csrfToken = text(security.csrf_token, "");
+  var user = record(security.user);
+  var userNode = el("authenticated-user");
+  var logoutNode = el("logout");
+  var authenticated = security.authenticated === true;
+  if (userNode) {
+    userNode.hidden = !authenticated;
+    userNode.textContent = authenticated ? text(user.display, text(user.sub, "signed in")) : "";
+  }
+  if (logoutNode) {
+    logoutNode.hidden = !authenticated;
+    logoutNode.disabled = !authenticated || csrfToken === "";
+  }
   setText("repo-path", text(state.repo, "unknown repository"));
   setText("generated-at", text(state.generated_at));
   renderRepositoryCatalog(state);
@@ -1434,6 +1461,37 @@ function render(state) {
   renderManaged(state);
   renderLog(state);
   reportActiveRepositoryReadiness(state);
+}
+
+function wireLogout() {
+  var node = el("logout");
+  if (!node) {
+    return;
+  }
+  node.addEventListener("click", function () {
+    if (csrfToken === "") {
+      return;
+    }
+    node.disabled = true;
+    fetch("/auth/logout", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: { Accept: "application/json", "X-CSRF-Token": csrfToken },
+    })
+      .then(answer)
+      .then(function (result) {
+        if (result.status !== 200) {
+          throw new Error(text(result.payload.message, "logout failed"));
+        }
+        window.location.assign(text(result.payload.redirect, "/auth/login"));
+      })
+      .catch(function (error) {
+        node.disabled = false;
+        lastFailure = "logout failed: " + describe(error);
+        paintConnection();
+      });
+  });
 }
 
 /*
@@ -1567,6 +1625,11 @@ function poll() {
 
   fetch(STATE_URL, options)
     .then(function (response) {
+      if (response.status === 401) {
+        var destination = window.location.pathname + window.location.search + window.location.hash;
+        window.location.assign("/auth/login?next=" + encodeURIComponent(destination));
+        throw new Error("the authenticated session expired");
+      }
       if (!response.ok) {
         throw new Error("the state server answered " + response.status);
       }
@@ -1653,6 +1716,7 @@ function start() {
   wireNavigation();
   wireCodexControls();
   wireRepositoryPicker();
+  wireLogout();
   paintConnection();
   poll();
   tickTimer = window.setInterval(paintConnection, POLL_INTERVAL_MS);

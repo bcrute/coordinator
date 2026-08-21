@@ -160,7 +160,9 @@ python3 <skill-directory>/scripts/web_app.py \
 
 or point at a portable TOML settings file (recommended for repeated use — see
 the repository root's `workflow.example.toml` and `README.md` for the full
-key reference and precedence rules):
+key reference and precedence rules). The default `auth_mode = "local"` remains
+loopback-only; `auth_mode = "oidc"` requires the repository's
+`requirements.txt` and selects the authenticated ASGI runtime:
 
 ```bash
 python3 <skill-directory>/scripts/web_app.py --config workflow.toml
@@ -171,13 +173,12 @@ a path relative to the current working directory. `--repositories-root` names
 the directory whose direct-child Git repositories (recognized by a `.git` file
 or directory, scanned non-recursively) populate the browser's repository
 catalog; it defaults to the parent directory of the initial `--repo`.
-`--config` supplies `repo`, `repositories_root`, `host`, `port`,
-`relay_log_lines`, and `quiet`; any of the equivalent command-line flags
-(`--repo`, `--repositories-root`, `--host`, `--port`, `--relay-log-lines`,
-`--quiet`/`--no-quiet`) always override the matching config value, which in
-turn overrides the built-in default. Relative `repo` and `repositories_root`
-paths in a config file resolve against that file's own directory, not the
-launch working directory.
+`--config` supplies the base server fields plus the documented OIDC,
+allow-policy, session, state-directory, trusted-host, and trusted-proxy fields;
+equivalent command-line flags always override the matching config value, which
+in turn overrides the built-in default. Relative `repo`, `repositories_root`,
+and `state_dir` paths in a config file resolve against that file's own directory,
+not the launch working directory.
 Repository creation and cloning happen outside the app for now, and selecting
 a catalog entry never creates or resets its `.coordination/` state. To bring
 an uninitialized repository into coordinated work: select it in the picker,
@@ -263,11 +264,14 @@ deduplicated and debounced before being sent to the server; leaving the page
 (`pagehide`) tears down output polling, the resize watcher, and the terminal's
 input listener.
 
-The server is unauthenticated and localhost-only by design, and the Codex
-terminal means anyone who can load the page gets a full interactive shell using
-your inherited Codex login — LAN exposure is deliberately deferred until
-authentication exists. Native interactive Claude teams still require Claude's
-terminal UI through `start_claude_team.py` and are not launchable or controllable
+The default local server is unauthenticated and enforced as loopback-only, and
+the Codex terminal means anyone who can load it gets a full interactive shell
+using your inherited Codex login. The optional OIDC runtime adds native
+authentication, default-deny authorization, opaque SQLite sessions, CSRF
+enforcement, and audit events, but it still requires the TLS/proxy,
+service-account, secret-management, and operational gates in
+`docs/SECURITY_ROADMAP.md` before network exposure. Native interactive Claude
+teams still require Claude's terminal UI through `start_claude_team.py` and are not launchable or controllable
 from the browser.
 
 Run the browser terminal's focused contract tests with:
