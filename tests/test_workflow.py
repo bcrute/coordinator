@@ -765,7 +765,12 @@ class WebAppTests(unittest.TestCase):
                 body = response.read().decode("utf-8")
                 return response.status, response.headers.get("Content-Type", ""), body
         except urllib.error.HTTPError as error:
-            return error.code, error.headers.get("Content-Type", ""), error.read().decode("utf-8")
+            with error:
+                return (
+                    error.code,
+                    error.headers.get("Content-Type", ""),
+                    error.read().decode("utf-8"),
+                )
 
     def test_web_app_defaults_to_loopback_and_one_configured_repository(self) -> None:
         defaults = parse_web_app_args([])
@@ -1206,7 +1211,8 @@ class WatcherControlTests(unittest.TestCase):
             with urllib.request.urlopen(req) as response:
                 return response.status, dict(response.headers), response.read().decode("utf-8")
         except urllib.error.HTTPError as error:
-            return error.code, dict(error.headers), error.read().decode("utf-8")
+            with error:
+                return error.code, dict(error.headers), error.read().decode("utf-8")
 
     def post_json(
         self, url: str, headers: dict[str, str] | None = None

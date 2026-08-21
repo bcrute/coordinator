@@ -228,7 +228,7 @@ Or run a focused subset relevant to the web app and settings:
 
 `.github/workflows/ci.yml` runs the full test suite and a compile check on
 every push and pull request, on `ubuntu-latest` with read-only permissions,
-across a Python 3.11 / 3.12 / 3.13 matrix. It installs the pinned application
+across a Python 3.11 / 3.12 / 3.13 / 3.14 matrix. It installs the pinned application
 and test dependencies, audits the application dependency set for known
 vulnerabilities, uses Node 24 for a syntax check, and runs a separate Playwright
 Chromium workflow through the local server. The tests launch no external identity

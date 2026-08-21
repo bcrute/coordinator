@@ -9,6 +9,8 @@ import sqlite3
 import stat
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -167,12 +169,17 @@ class OperationalStore:
     def _changed(self) -> None:
         self._revision += 1
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.path, timeout=10.0)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 10000")
-        return connection
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA busy_timeout = 10000")
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def _migrate(self) -> None:
         with self._connect() as connection:
@@ -885,7 +892,7 @@ class OperationalStore:
     def backup(self, destination: Path) -> Path:
         target = destination.resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as source, sqlite3.connect(target) as backup:
+        with self._connect() as source, closing(sqlite3.connect(target)) as backup:
             source.backup(backup)
         target.chmod(0o600)
         self.verify_database(target)
@@ -895,7 +902,7 @@ class OperationalStore:
     def verify_database(path: Path) -> None:
         if not path.is_file() or path.is_symlink():
             raise ValueError("backup must be a regular file")
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection:
             result = connection.execute("PRAGMA integrity_check").fetchone()[0]
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
         if result != "ok":
@@ -905,7 +912,7 @@ class OperationalStore:
 
     def restore(self, source: Path) -> None:
         self.verify_database(source)
-        with sqlite3.connect(source) as backup, self._connect() as destination:
+        with closing(sqlite3.connect(source)) as backup, self._connect() as destination:
             backup.backup(destination)
             destination.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         self.path.chmod(0o600)

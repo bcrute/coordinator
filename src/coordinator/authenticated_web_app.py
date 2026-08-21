@@ -22,7 +22,7 @@ import threading
 import time
 import urllib.parse
 from collections.abc import Callable, Mapping
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -979,7 +979,7 @@ def create_authenticated_app(
             )
             database = operational.diagnostics()
             try:
-                with sqlite3.connect(store.path) as connection:
+                with closing(sqlite3.connect(store.path)) as connection:
                     security_integrity = str(
                         connection.execute("PRAGMA quick_check").fetchone()[0]
                     )

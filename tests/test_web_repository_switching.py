@@ -135,7 +135,8 @@ class RepositorySwitchingTests(unittest.TestCase):
             with urllib.request.urlopen(req) as response:
                 return response.status, dict(response.headers), response.read().decode("utf-8")
         except urllib.error.HTTPError as error:
-            return error.code, dict(error.headers), error.read().decode("utf-8")
+            with error:
+                return error.code, dict(error.headers), error.read().decode("utf-8")
 
     def post_json(self, url: str, payload, headers=None) -> tuple[int, dict[str, object]]:
         merged = {"Content-Type": "application/json"}

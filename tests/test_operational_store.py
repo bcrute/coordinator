@@ -7,6 +7,7 @@ import sqlite3
 import stat
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from coordinator.operational_store import (
@@ -96,7 +97,7 @@ class OperationalStoreTests(unittest.TestCase):
 
     def test_objectives_and_agent_hierarchy_are_indexed(self):
         details = self.store.sync_snapshot(self.repo, snapshot())
-        with sqlite3.connect(self.store.path) as connection:
+        with closing(sqlite3.connect(self.store.path)) as connection:
             objective_count = connection.execute(
                 "SELECT COUNT(*) FROM objectives WHERE run_id = ?", (details["run_id"],)
             ).fetchone()[0]
@@ -169,7 +170,7 @@ class OperationalStoreTests(unittest.TestCase):
         future = self.root / "future"
         future.mkdir(mode=0o700)
         path = future / "operations.sqlite3"
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection:
             connection.execute(f"PRAGMA user_version = {LATEST_SCHEMA_VERSION + 1}")
         path.chmod(0o600)
         with self.assertRaisesRegex(ValueError, "unsupported operational database"):
@@ -179,7 +180,7 @@ class OperationalStoreTests(unittest.TestCase):
         legacy = self.root / "legacy"
         legacy.mkdir(mode=0o700)
         path = legacy / "operations.sqlite3"
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection:
             connection.executescript(
                 """
                 CREATE TABLE runs (
@@ -203,7 +204,7 @@ class OperationalStoreTests(unittest.TestCase):
         migrated = OperationalStore(legacy)
 
         self.assertEqual(migrated.schema_version, LATEST_SCHEMA_VERSION)
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection:
             run_columns = {
                 row[1] for row in connection.execute("PRAGMA table_info(runs)")
             }
@@ -223,7 +224,7 @@ class OperationalStoreTests(unittest.TestCase):
         legacy = self.root / "legacy-v2"
         legacy.mkdir(mode=0o700)
         path = legacy / "operations.sqlite3"
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection:
             connection.executescript(
                 """
                 CREATE TABLE repositories (
@@ -254,7 +255,7 @@ class OperationalStoreTests(unittest.TestCase):
         path.chmod(0o600)
         migrated = OperationalStore(legacy)
         self.assertEqual(migrated.schema_version, LATEST_SCHEMA_VERSION)
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection:
             tables = {
                 row[0]
                 for row in connection.execute(
@@ -267,7 +268,7 @@ class OperationalStoreTests(unittest.TestCase):
         legacy = self.root / "legacy-v3"
         legacy.mkdir(mode=0o700)
         path = legacy / "operations.sqlite3"
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection:
             connection.executescript(
                 """
                 CREATE TABLE runs (
@@ -292,7 +293,7 @@ class OperationalStoreTests(unittest.TestCase):
         path.chmod(0o600)
         migrated = OperationalStore(legacy)
         self.assertEqual(migrated.schema_version, LATEST_SCHEMA_VERSION)
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection:
             columns = {row[1] for row in connection.execute("PRAGMA table_info(runs)")}
         self.assertIn("archived_at", columns)
 

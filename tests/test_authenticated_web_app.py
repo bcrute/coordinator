@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
@@ -589,10 +590,10 @@ class SQLiteSecurityStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             database = base / "security.sqlite3"
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection:
                 connection.execute("PRAGMA user_version = 1")
             SQLiteSecurityStore(base, idle_seconds=10, absolute_seconds=20)
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection:
                 self.assertEqual(
                     connection.execute("PRAGMA user_version").fetchone()[0], 2
                 )
@@ -607,7 +608,7 @@ class SQLiteSecurityStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             database = base / "security.sqlite3"
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection:
                 connection.execute("PRAGMA user_version = 3")
             with self.assertRaisesRegex(ValueError, "unsupported security database"):
                 SQLiteSecurityStore(base, idle_seconds=10, absolute_seconds=20)
