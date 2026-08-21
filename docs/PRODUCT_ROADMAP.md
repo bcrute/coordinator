@@ -149,7 +149,7 @@ Exit gate:
 
 ## Phase 3 - Daily-driver workspace and run experience
 
-**Status: in progress.**
+**Status: complete.**
 
 Progress:
 
@@ -159,6 +159,20 @@ Progress:
   are available without leaving the application.
 - The Chromium journey covers repository setup, workspace discovery, run history and
   timeline inspection, preference persistence, and live guardrail editing.
+- Run summaries carry review, timer, and usage data across repositories; detail views
+  expose structured evidence and a bounded read-only Git status/diff. Runs can be
+  archived and reopened through a versioned migration.
+- Terminal replay/reconnect now grants exactly one browser connection input ownership
+  while additional connections remain observable and explicitly read-only.
+
+Exit evidence:
+
+- The browser journey initializes and selects a repository, discovers a durable run,
+  inspects its event timeline, edits limits and preferences, and survives live-feed
+  restarts without hand-editing configuration.
+- Source contracts and Chromium checks cover unique landmarks/IDs, labeled form
+  controls, named buttons, responsive settings, keyboard navigation, and terminal
+  transport ownership.
 
 Deliverables:
 
@@ -186,7 +200,7 @@ Exit gate:
 
 ## Phase 4 - Versioned interfaces and operations
 
-**Status: planned.**
+**Status: in progress.**
 
 Deliverables:
 

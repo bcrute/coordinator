@@ -62,6 +62,7 @@ var codexPendingControl = "";
 var codexSocket = null;
 var codexSocketTimer = null;
 var codexOnDataDisposable = null;
+var codexTerminalWritable = false;
 
 var codexResizeTimer = null;
 var codexLastSentRows = null;
@@ -1032,7 +1033,7 @@ function initCodexTerminal() {
      */
     codexTerminalReady = true;
     codexOnDataDisposable = codexTerminal.onData(function (data) {
-      if (codexSocket && codexSocket.readyState === WebSocket.OPEN) {
+      if (codexTerminalWritable && codexSocket && codexSocket.readyState === WebSocket.OPEN) {
         for (var index = 0; index < data.length; index += CODEX_INPUT_CHUNK_CHARS) {
           codexSocket.send(
             JSON.stringify({ type: "input", data: data.slice(index, index + CODEX_INPUT_CHUNK_CHARS) })
@@ -1078,6 +1079,7 @@ function closeCodexSocket() {
     codexSocket = null;
     socket.close();
   }
+  codexTerminalWritable = false;
 }
 
 function connectCodexSocket() {
@@ -1092,6 +1094,7 @@ function connectCodexSocket() {
       return;
     }
     socket.send(JSON.stringify({ type: "hello", csrf_token: csrfToken }));
+    codexTerminalWritable = false;
     codexReport("Terminal connected through the live socket.", "ok");
     scheduleCodexFitAndResize();
   });
@@ -1142,7 +1145,7 @@ function sendCodexResize(rows, cols) {
   }
   codexLastSentRows = rows;
   codexLastSentCols = cols;
-  if (codexSocket && codexSocket.readyState === WebSocket.OPEN) {
+  if (codexTerminalWritable && codexSocket && codexSocket.readyState === WebSocket.OPEN) {
     codexSocket.send(JSON.stringify({ type: "resize", rows: rows, cols: cols }));
   }
 }
@@ -1228,6 +1231,16 @@ function applyCodexSession(session) {
   setText("codex-session-pid", codexProcessText(session));
   setText("codex-session-size", codexSizeText(session));
   setText("codex-session-command", commandText(session.command));
+  var attachment = record(session.attachment);
+  if (attachment.mode) {
+    codexTerminalWritable = attachment.owned_by_this_connection === true;
+    codexReport(
+      codexTerminalWritable
+        ? "Terminal attached with input ownership."
+        : "Terminal attached read-only; another browser owns input.",
+      codexTerminalWritable ? "ok" : "warn"
+    );
+  }
   paintCodexControls();
   connectCodexSocket();
 }

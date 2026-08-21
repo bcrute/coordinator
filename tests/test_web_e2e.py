@@ -74,7 +74,7 @@ class DashboardBrowserTests(unittest.TestCase):
                     ).wait_for(timeout=10_000)
                     page.locator("#nav-terminal").click()
                     page.locator("#codex-session-feedback").filter(
-                        has_text="live socket"
+                        has_text="input ownership"
                     ).wait_for(timeout=10_000)
 
                     page.locator("#nav-setup").click()

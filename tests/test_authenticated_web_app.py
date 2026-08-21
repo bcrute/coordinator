@@ -694,6 +694,41 @@ class LocalAppTests(unittest.TestCase):
                             break
                 self.assertIn("socket-roundtrip", "".join(chunks))
 
+    def test_terminal_websocket_grants_one_input_owner(self) -> None:
+        with TestClient(self.app, base_url="http://127.0.0.1") as client:
+            csrf = client.get("/api/state").json()["security"]["csrf_token"]
+            client.post("/api/codex/start", headers=self.headers(csrf))
+
+            def session_message(socket):
+                for _ in range(4):
+                    message = socket.receive_json()
+                    if message["type"] == "session":
+                        return message["session"]
+                self.fail("terminal did not send a session snapshot")
+
+            with client.websocket_connect(
+                "ws://127.0.0.1/ws/terminal",
+                headers={"Origin": "http://127.0.0.1"},
+            ) as owner:
+                owner.send_json({"type": "hello", "csrf_token": csrf})
+                self.assertEqual(
+                    session_message(owner)["attachment"]["mode"], "read_write"
+                )
+                with client.websocket_connect(
+                    "ws://127.0.0.1/ws/terminal",
+                    headers={"Origin": "http://127.0.0.1"},
+                ) as observer:
+                    observer.send_json({"type": "hello", "csrf_token": csrf})
+                    self.assertEqual(
+                        session_message(observer)["attachment"]["mode"], "read_only"
+                    )
+                    observer.send_json({"type": "input", "data": "refused"})
+                    response = observer.receive_json()
+                    while response["type"] == "session":
+                        response = observer.receive_json()
+                    self.assertEqual(response["type"], "error")
+                    self.assertIn("read-only", response["message"])
+
 
 class SettingsValidationTests(unittest.TestCase):
     def test_client_secret_is_redacted_from_settings_repr(self) -> None:

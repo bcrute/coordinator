@@ -18,6 +18,7 @@ import sqlite3
 import stat
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 from collections.abc import Callable, Mapping
@@ -117,6 +118,8 @@ def create_authenticated_app(
     )
     operational = OperationalStore(settings.state_dir)
     operational.recover_interrupted()
+    terminal_attachment_lock = threading.Lock()
+    terminal_attachment_owner: list[str | None] = [None]
 
     if isinstance(settings, OIDCSettings) and oidc_client is None:
         oauth = OAuth()
@@ -1011,6 +1014,8 @@ def create_authenticated_app(
         )
 
     async def terminal_socket(websocket: WebSocket):
+        attachment_id = secrets.token_urlsafe(18)
+        writable = False
         origin = (websocket.headers.get("origin") or "").strip().lower()
         if not origin or origin != _websocket_origin(websocket, settings).lower():
             await websocket.close(code=1008, reason="origin refused")
@@ -1043,6 +1048,11 @@ def create_authenticated_app(
             await websocket.close(code=1008, reason="invalid handshake")
             return
 
+        with terminal_attachment_lock:
+            if terminal_attachment_owner[0] is None:
+                terminal_attachment_owner[0] = attachment_id
+                writable = True
+
         with context.lease() as active:
             repository = str(active.repo)
             manager = active.codex_session
@@ -1065,9 +1075,12 @@ def create_authenticated_app(
                     cursor = cursor_value
                 if output.get("text") or output.get("reset"):
                     await websocket.send_json({"type": "output", "output": output})
-                await websocket.send_json(
-                    {"type": "session", "session": manager.snapshot()}
-                )
+                session = manager.snapshot()
+                session["attachment"] = {
+                    "mode": "read_write" if writable else "read_only",
+                    "owned_by_this_connection": writable,
+                }
+                await websocket.send_json({"type": "session", "session": session})
 
         async def receive_input() -> None:
             while True:
@@ -1092,6 +1105,14 @@ def create_authenticated_app(
                     if refreshed is None:
                         await websocket.close(code=1008, reason="session expired")
                         return
+                    if kind in {"input", "resize"} and not writable:
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "message": "terminal is read-only; another browser connection owns input",
+                            }
+                        )
+                        continue
                     if kind == "input" and isinstance(message.get("data"), str):
                         await run_in_threadpool(manager.write, message["data"])
                     elif kind == "resize" and all(
@@ -1131,6 +1152,10 @@ def create_authenticated_app(
             sender.cancel()
             receiver.cancel()
             await asyncio.gather(sender, receiver, return_exceptions=True)
+            if writable:
+                with terminal_attachment_lock:
+                    if terminal_attachment_owner[0] == attachment_id:
+                        terminal_attachment_owner[0] = None
 
     async def asset(request: Request):
         path = "/" + request.path_params.get("path", "")
