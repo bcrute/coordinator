@@ -26,6 +26,56 @@ WEB_APP = ROOT / "skills" / "coordinate-claude-work" / "scripts" / "web_app.py"
     "set COORDINATOR_E2E=1 after installing the Playwright Chromium browser",
 )
 class DashboardBrowserTests(unittest.TestCase):
+    def test_terminal_socket_reconnects_automatically_after_unexpected_close(
+        self,
+    ) -> None:
+        from playwright.sync_api import sync_playwright
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            (repo / ".git").mkdir()
+            server = create_server(repo, quiet=True)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            url = f"http://{server.server_address[0]}:{server.server_address[1]}"
+            try:
+                with sync_playwright() as playwright:
+                    browser = playwright.chromium.launch(headless=True)
+                    page = browser.new_page()
+                    page.route(
+                        "**/api/provider-usage",
+                        lambda route: route.fulfill(
+                            status=200,
+                            content_type="application/json",
+                            body=json.dumps({"providers": []}),
+                        ),
+                    )
+                    page.goto(url + "/#terminal", wait_until="domcontentloaded")
+                    page.locator("#codex-session-feedback").filter(
+                        has_text="input ownership"
+                    ).wait_for(timeout=10_000)
+                    page.evaluate(
+                        "globalThis.__closedTerminalSocket = codexSocket; "
+                        "codexSocket.close()"
+                    )
+                    page.wait_for_function(
+                        "() => codexSocket && "
+                        "codexSocket !== globalThis.__closedTerminalSocket && "
+                        "codexSocket.readyState === WebSocket.OPEN",
+                        timeout=10_000,
+                    )
+                    page.locator("#codex-session-feedback").filter(
+                        has_text="input ownership"
+                    ).wait_for(timeout=10_000)
+                    with urllib.request.urlopen(url + "/healthz", timeout=2) as response:
+                        self.assertEqual(response.status, 200)
+                    browser.close()
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
     def test_cleared_terminal_history_stays_cleared_after_refresh(self) -> None:
         from playwright.sync_api import sync_playwright
 
