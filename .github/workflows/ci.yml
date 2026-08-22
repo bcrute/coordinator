@@ -74,8 +74,8 @@ jobs:
           python -m pip install uv==0.12.3
           uv sync --locked --extra dev
 
-      - name: Install Chromium
-        run: uv run python -m playwright install --with-deps chromium
+      - name: Install Chromium and Firefox
+        run: uv run python -m playwright install --with-deps chromium firefox
 
       - name: Run browser workflow
         env:

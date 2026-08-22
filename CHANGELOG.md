@@ -20,6 +20,8 @@ interface with migration notes.
   discovery, explicit coexist/skip choices, and a packaged coordination validator.
 - Application-wide behavioral test ownership and risk coverage for setup, runners,
   maintenance, provider usage, process discovery, web controls, and failure recovery.
+- A Firefox-specific browser regression for automatic terminal socket reconnection,
+  alongside the complete Chromium journey.
 
 ### Changed
 

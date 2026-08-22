@@ -11,7 +11,7 @@ failure/recovery path. Executing a line is not sufficient evidence by itself.
 |---|---|---|
 | OIDC authorization and sessions | Default deny, PKCE/state, identity allow policy, CSRF, expiry, revocation, logout, migration, and secure cookies | `tests.test_authenticated_web_app` |
 | Repository scope | Direct-child discovery, exact catalog selection, uninitialized setup, lease-safe switching, and shutdown | `tests.test_web_repository_switching` |
-| Browser terminal | Fixed command, bounded protocol, ownership, UTF-8, resize, reconnect, copy, and process-group cleanup | `tests.test_codex_session`, `tests.test_web_terminal_contract`, Chromium journey |
+| Browser terminal | Fixed command, bounded protocol, ownership, UTF-8, resize, reconnect, copy, and process-group cleanup | `tests.test_codex_session`, `tests.test_web_terminal_contract`, Chromium journey, Firefox reconnect journey |
 | Watcher lifecycle | Lock contention, start/stop, process-group cleanup, handoff signals, and failure stop | `tests.test_workflow` |
 | Durable operational state | Idempotent indexing, migrations, interruption recovery, guardrails, archive/reopen, backup verification | `tests.test_operational_store` |
 | Executor adapters | Default Claude compatibility, trusted selection, bounded command construction, and diagnostics | `tests.test_executor_adapters` |

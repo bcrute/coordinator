@@ -23,10 +23,10 @@ WEB_APP = ROOT / "skills" / "coordinate-claude-work" / "scripts" / "web_app.py"
 
 @unittest.skipUnless(
     os.environ.get("COORDINATOR_E2E") == "1",
-    "set COORDINATOR_E2E=1 after installing the Playwright Chromium browser",
+    "set COORDINATOR_E2E=1 after installing the Playwright browsers",
 )
 class DashboardBrowserTests(unittest.TestCase):
-    def test_terminal_socket_reconnects_automatically_after_unexpected_close(
+    def test_firefox_terminal_socket_reconnects_after_unexpected_close(
         self,
     ) -> None:
         from playwright.sync_api import sync_playwright
@@ -41,7 +41,7 @@ class DashboardBrowserTests(unittest.TestCase):
             url = f"http://{server.server_address[0]}:{server.server_address[1]}"
             try:
                 with sync_playwright() as playwright:
-                    browser = playwright.chromium.launch(headless=True)
+                    browser = playwright.firefox.launch(headless=True)
                     page = browser.new_page()
                     page.route(
                         "**/api/provider-usage",

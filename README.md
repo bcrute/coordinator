@@ -302,10 +302,12 @@ and risk-based behavior matrix are documented in
 not require raw 100% line coverage or add implementation-coupled tests merely to
 increase a score.
 
-The Chromium workflow is opt-in locally because it requires a browser download:
+The browser workflow is opt-in locally because it requires Chromium and Firefox
+downloads. Chromium covers the complete journey; Firefox independently covers the
+terminal disconnect/reconnect contract:
 
 ```bash
-.venv/bin/python -m playwright install chromium
+.venv/bin/python -m playwright install chromium firefox
 COORDINATOR_E2E=1 .venv/bin/python -m unittest -v tests.test_web_e2e
 ```
 
@@ -325,8 +327,9 @@ every push and pull request, on `ubuntu-latest` with read-only permissions,
 on Python 3.14. It installs the pinned application
 and test dependencies, audits the application dependency set for known
 vulnerabilities, uses Node 24 for a syntax check, and runs a separate Playwright
-Chromium workflow through the local server. The tests launch no external identity
-provider or agent CLI.
+browser workflow through the local server: a complete Chromium journey plus a focused
+Firefox terminal-reconnect contract. The tests launch no external identity provider
+or agent CLI.
 
 Before publishing a release or substantial security-sensitive update, work through
 [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md). Dated verification from the
