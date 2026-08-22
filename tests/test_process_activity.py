@@ -187,6 +187,32 @@ class ProcessClassificationTests(unittest.TestCase):
 
 
 class ProcessObserverTests(unittest.TestCase):
+    def write_process(
+        self,
+        proc: Path,
+        pid: int,
+        ppid: int,
+        name: str,
+        *,
+        children: tuple[int, ...] = (),
+        argv: tuple[str, ...] = (),
+        environment: tuple[str, ...] = (),
+    ) -> None:
+        base = proc / str(pid)
+        task = base / "task" / str(pid)
+        task.mkdir(parents=True)
+        fields = ["S", str(ppid), *("0" for _ in range(17)), str(pid * 10)]
+        (base / "stat").write_text(
+            f"{pid} ({name}) " + " ".join(fields) + "\n", encoding="utf-8"
+        )
+        (base / "cmdline").write_bytes(b"\0".join(value.encode() for value in argv))
+        (base / "environ").write_bytes(
+            b"\0".join(value.encode() for value in environment)
+        )
+        (task / "children").write_text(
+            " ".join(str(value) for value in children), encoding="utf-8"
+        )
+
     def test_non_procfs_platform_reports_unsupported_without_global_discovery(
         self,
     ) -> None:
@@ -223,6 +249,57 @@ class ProcessObserverTests(unittest.TestCase):
             )
 
         self.assertEqual(model, "gpt-5.6-sol")
+
+    def test_fake_procfs_tree_is_scoped_parsed_and_cached_without_aliasing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            proc = Path(temporary)
+            (proc / "uptime").write_text("1000.0 0.0\n", encoding="utf-8")
+            self.write_process(proc, 100, 1, "bash", children=(101,), argv=("bash",))
+            self.write_process(
+                proc,
+                101,
+                100,
+                "claude",
+                argv=("claude", "--model", "opus", "private prompt"),
+                environment=("ANTHROPIC_MODEL=haiku", "UNRELATED_SECRET=hidden"),
+            )
+            self.write_process(
+                proc,
+                999,
+                1,
+                "codex",
+                argv=("codex", "--model", "must-not-appear"),
+            )
+            observer = ProcessActivityObserver(
+                proc_root=proc,
+                cache_seconds=60,
+                monotonic=lambda: 10.0,
+                wall_clock=lambda: 20.0,
+            )
+
+            first = observer.snapshot(100, "managed-session")
+            first["agents"].clear()
+            cached = observer.snapshot(100, "managed-session")
+
+        self.assertEqual([agent["pid"] for agent in cached["agents"]], [101])
+        self.assertEqual(cached["agents"][0]["model"], "opus")
+        serialized = json.dumps(cached)
+        self.assertNotIn("private prompt", serialized)
+        self.assertNotIn("UNRELATED_SECRET", serialized)
+        self.assertNotIn("999", serialized)
+
+    def test_idle_and_disappeared_managed_processes_have_distinct_states(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            proc = Path(temporary)
+            (proc / "uptime").write_text("1.0 0.0\n", encoding="utf-8")
+            observer = ProcessActivityObserver(proc_root=proc, cache_seconds=0)
+            idle = observer.snapshot(None, None)
+            disappeared = observer.snapshot(42, "finished-session")
+
+        self.assertEqual(idle["state"], "idle")
+        self.assertTrue(idle["supported"])
+        self.assertEqual(disappeared["state"], "unavailable")
+        self.assertEqual(disappeared["root_pid"], 42)
 
 
 if __name__ == "__main__":

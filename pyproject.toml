@@ -34,7 +34,7 @@ branch = true
 source = ["coordinator"]
 
 [tool.coverage.report]
-fail_under = 70.0
+fail_under = 80.0
 precision = 1
 show_missing = true
 

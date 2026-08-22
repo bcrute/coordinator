@@ -816,6 +816,47 @@ class LocalAppTests(unittest.TestCase):
             self.assertEqual(response.status_code, 400, response.text)
             self.assertEqual(response.json()["outcome"], "validation")
 
+            for body in (
+                {},
+                {"project_name": 7},
+                {"project_name": "Project", "unexpected": True},
+                {"project_name": "bad\nname"},
+                {"project_name": "x" * 121},
+            ):
+                with self.subTest(body=body):
+                    response = client.post(
+                        "/api/repository/initialize",
+                        json=body,
+                        headers=self.headers(csrf),
+                    )
+                    self.assertEqual(response.status_code, 400, response.text)
+
+    def test_repository_initialize_refuses_ci_overwrite_and_reports_init_failure(self) -> None:
+        destination = self.repo / ".github" / "workflows" / "coordinator.yml"
+        destination.parent.mkdir(parents=True)
+        destination.write_text("name: User owned\n", encoding="utf-8")
+        with TestClient(self.app, base_url="http://127.0.0.1") as client:
+            csrf = client.get("/api/state").json()["security"]["csrf_token"]
+            response = client.post(
+                "/api/repository/initialize",
+                json={"project_name": "Project", "ci_action": "add"},
+                headers=self.headers(csrf),
+            )
+            self.assertEqual(response.status_code, 409, response.text)
+            self.assertIn("not Coordinator-managed", response.json()["message"])
+            self.assertEqual(destination.read_text(encoding="utf-8"), "name: User owned\n")
+
+            (self.repo / "AGENTS.md").write_text(
+                "<!-- coordinate-claude-work:start -->\nbroken\n", encoding="utf-8"
+            )
+            response = client.post(
+                "/api/repository/initialize",
+                json={"project_name": "Project", "ci_action": "skip"},
+                headers=self.headers(csrf),
+            )
+            self.assertEqual(response.status_code, 500, response.text)
+            self.assertEqual(response.json()["message"], "Coordination initialization failed.")
+
     def test_versioned_contract_readiness_metrics_and_correlation(self) -> None:
         with TestClient(self.app, base_url="http://127.0.0.1") as client:
             ready = client.get("/readyz")

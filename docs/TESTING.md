@@ -17,6 +17,9 @@ failure/recovery path. Executing a line is not sufficient evidence by itself.
 | Executor adapters | Default Claude compatibility, trusted selection, bounded command construction, and diagnostics | `tests.test_executor_adapters` |
 | mini-swe-agent handoff | Timeout and signal cleanup, no orphan, replay/lock refusal, planner ownership, malformed/nonzero outcomes, secret non-persistence, normalized telemetry | `tests.test_executor_adapters` |
 | Provider allowance display | Provider parsing/cache failures, remaining-window rendering, pace projection, and manual refresh | `tests.test_provider_usage`, Chromium journey |
+| Project initialization and CI | Existing-file preservation, managed-block idempotence, GitHub remote sanitization, CI discovery/add/skip, unsafe-path refusal, validator failures, and browser confirmation | `tests.test_coordinator_cli`, `tests.test_github_ci`, `tests.test_authenticated_web_app`, Chromium journey |
+| Planner and team runners | Handoff identity/state gates, complete/next/correct/block transition validity, planner/review ownership, incomplete and nonzero exits, duplicate locks, native-team TTY requirements, environment, and cleanup | `tests.test_workflow`, `tests.test_workflow_runners` |
+| Data maintenance commands | Verified backup/restore, live and backup verification, repository rebuild, retention pruning, and failure reporting | `tests.test_maintenance_cli`, `tests.test_operational_store` |
 | Complete browser journey | Setup, workspace/run discovery, preferences, guardrails, terminal copy, usage projection, administration views, and basic accessibility | `tests.test_web_e2e` in CI |
 | Public distribution | Package contents, locked Python 3.14 environment, public test set, docs, CI, release metadata, and secret exclusions | `tests.test_distribution` |
 
@@ -24,6 +27,12 @@ New behavior must extend this matrix when it introduces a new boundary. Tests sh
 assert public responses, persisted records, process state, or rendered browser
 behavior. Source-text assertions are appropriate only for static distribution or
 markup-schema contracts; they do not substitute for runtime behavior.
+
+`tests.test_test_ownership` maps every top-level production module to at least one
+behavioral suite. Adding a module requires an explicit test owner; the ownership test
+cannot own another module itself. This is an inventory guard, not evidence that the
+named suite is sufficient—the risk matrix and review of public/failure behavior remain
+the standard.
 
 ## Coverage workflow
 

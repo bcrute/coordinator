@@ -18,6 +18,8 @@ interface with migration notes.
   terminals, scoped to the exact process tree of each managed terminal session.
 - Safe GitHub Actions setup during project initialization, including existing-workflow
   discovery, explicit coexist/skip choices, and a packaged coordination validator.
+- Application-wide behavioral test ownership and risk coverage for setup, runners,
+  maintenance, provider usage, process discovery, web controls, and failure recovery.
 
 ### Changed
 
@@ -30,6 +32,10 @@ interface with migration notes.
   cleared output does not return after a page refresh while the Codex process continues.
 - Large terminal replays are emitted as bounded, cursor-contiguous WebSocket frames
   with explicit event-loop yields, keeping health and control requests responsive.
+- Corrupt operational databases now produce a stable validation error instead of
+  leaking a raw SQLite exception.
+- Claude handoffs now fail closed when the executor changes Coordinator-owned planner
+  or review files.
 
 ## [0.3.0] - 2026-08-21
 

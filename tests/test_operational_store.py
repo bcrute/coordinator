@@ -341,7 +341,7 @@ class OperationalStoreTests(unittest.TestCase):
     def test_corrupt_backup_is_refused(self):
         corrupt = self.root / "corrupt.sqlite3"
         corrupt.write_text(json.dumps({"not": "sqlite"}), encoding="utf-8")
-        with self.assertRaises((ValueError, sqlite3.DatabaseError)):
+        with self.assertRaisesRegex(ValueError, "could not be read as SQLite"):
             self.store.restore(corrupt)
 
 

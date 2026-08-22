@@ -902,9 +902,12 @@ class OperationalStore:
     def verify_database(path: Path) -> None:
         if not path.is_file() or path.is_symlink():
             raise ValueError("backup must be a regular file")
-        with closing(sqlite3.connect(path)) as connection:
-            result = connection.execute("PRAGMA integrity_check").fetchone()[0]
-            version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        try:
+            with closing(sqlite3.connect(path)) as connection:
+                result = connection.execute("PRAGMA integrity_check").fetchone()[0]
+                version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        except sqlite3.DatabaseError as error:
+            raise ValueError("database could not be read as SQLite") from error
         if result != "ok":
             raise ValueError(f"database integrity check failed: {result}")
         if version != LATEST_SCHEMA_VERSION:

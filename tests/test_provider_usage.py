@@ -6,7 +6,9 @@ import io
 import json
 import subprocess
 import tempfile
+import threading
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -16,6 +18,9 @@ from coordinator.authenticated_web_app import create_authenticated_app
 from coordinator.provider_usage import (
     ProviderUsageError,
     ProviderUsageService,
+    _claude_windows,
+    _codex_windows,
+    _read_claude_usage,
     collect_claude_usage,
     collect_codex_usage,
 )
@@ -86,6 +91,52 @@ class FakeCodexProcess:
 
 
 class CollectorTests(unittest.TestCase):
+    def test_provider_window_normalization_clamps_values_and_labels_custom_limits(
+        self,
+    ) -> None:
+        codex = _codex_windows(
+            {
+                "rateLimitsByLimitId": {
+                    "special": {
+                        "limitId": "special",
+                        "limitName": "Review model",
+                        "primary": {
+                            "usedPercent": 140,
+                            "windowDurationMins": 1440,
+                            "resetsAt": "not-a-date",
+                        },
+                        "individualLimit": {
+                            "remainingPercent": 120,
+                            "resetsAt": 0,
+                        },
+                    }
+                }
+            }
+        )
+        self.assertEqual(
+            [(window["label"], window["remaining_percent"]) for window in codex],
+            [("Review model · 1-day", 0.0), ("Review model · Spend", 100.0)],
+        )
+        self.assertIsNone(codex[0]["resets_at"])
+        self.assertEqual(codex[1]["resets_at"], "1970-01-01T00:00:00+00:00")
+
+        claude = _claude_windows(
+            {
+                "limits": [
+                    {
+                        "kind": "weekly_scoped",
+                        "group": "weekly",
+                        "percent": -10,
+                        "scope": {"surface": "claude_code"},
+                    },
+                    {"kind": "ignored", "percent": True},
+                ]
+            }
+        )
+        self.assertEqual(len(claude), 1)
+        self.assertEqual(claude[0]["label"], "Claude Code")
+        self.assertEqual(claude[0]["remaining_percent"], 100.0)
+
     @mock.patch("coordinator.provider_usage.subprocess.Popen")
     def test_codex_uses_app_server_and_returns_remaining_windows(self, popen) -> None:
         process = FakeCodexProcess()
@@ -237,6 +288,86 @@ class CollectorTests(unittest.TestCase):
         with self.assertRaisesRegex(ProviderUsageError, "claude.ai subscriptions"):
             collect_claude_usage(command="/usr/bin/claude-test")
 
+    @mock.patch("coordinator.provider_usage.subprocess.Popen")
+    def test_codex_start_stream_and_protocol_failures_are_bounded(self, popen) -> None:
+        popen.side_effect = OSError("private launch detail")
+        with self.assertRaisesRegex(ProviderUsageError, "could not be started"):
+            collect_codex_usage(command="/usr/bin/codex-test")
+
+        streamless = mock.Mock(stdin=None, stdout=None)
+        popen.side_effect = None
+        popen.return_value = streamless
+        with self.assertRaisesRegex(ProviderUsageError, "streams are unavailable"):
+            collect_codex_usage(command="/usr/bin/codex-test")
+        streamless.kill.assert_called_once_with()
+
+        rejected = FakeCodexProcess()
+        rejected.stdout = io.StringIO(json.dumps({"id": 1, "error": {}}) + "\n")
+        popen.return_value = rejected
+        with self.assertRaisesRegex(ProviderUsageError, "rejected the usage request"):
+            collect_codex_usage(command="/usr/bin/codex-test")
+        self.assertTrue(rejected.terminated)
+
+    @mock.patch("coordinator.provider_usage._read_claude_usage")
+    @mock.patch("coordinator.provider_usage.subprocess.run")
+    def test_claude_rejects_invalid_auth_and_missing_oauth_credentials(
+        self, run, read_usage
+    ) -> None:
+        run.return_value = subprocess.CompletedProcess(
+            ["claude", "auth", "status", "--json"], 0, stdout="not-json", stderr=""
+        )
+        with self.assertRaisesRegex(ProviderUsageError, "status was invalid"):
+            collect_claude_usage(command="/usr/bin/claude-test")
+
+        run.return_value = subprocess.CompletedProcess(
+            ["claude", "auth", "status", "--json"],
+            0,
+            stdout=json.dumps({"loggedIn": True, "authMethod": "claude.ai"}),
+            stderr="",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            credentials = Path(temporary) / "credentials.json"
+            credentials.write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(ProviderUsageError, "credentials are unavailable"):
+                collect_claude_usage(
+                    command="/usr/bin/claude-test", credentials_path=credentials
+                )
+        read_usage.assert_not_called()
+
+    def test_claude_http_errors_and_response_bounds_have_safe_messages(self) -> None:
+        for status, expected in (
+            (401, "auth login"),
+            (429, "rate limited"),
+            (500, "HTTP 500"),
+        ):
+            failure = urllib.error.HTTPError(
+                "https://example.invalid", status, "failure", {}, None
+            )
+            try:
+                with self.subTest(status=status), mock.patch(
+                    "coordinator.provider_usage.urllib.request.urlopen",
+                    side_effect=failure,
+                ):
+                    with self.assertRaisesRegex(ProviderUsageError, expected):
+                        _read_claude_usage("secret", 1.0)
+            finally:
+                failure.close()
+
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b"x" * (1024 * 1024 + 1)
+        with mock.patch(
+            "coordinator.provider_usage.urllib.request.urlopen", return_value=response
+        ):
+            with self.assertRaisesRegex(ProviderUsageError, "unexpectedly large"):
+                _read_claude_usage("secret", 1.0)
+
+        response.__enter__.return_value.read.return_value = b"[]"
+        with mock.patch(
+            "coordinator.provider_usage.urllib.request.urlopen", return_value=response
+        ):
+            with self.assertRaisesRegex(ProviderUsageError, "invalid usage data"):
+                _read_claude_usage("secret", 1.0)
+
 
 class ServiceTests(unittest.TestCase):
     def test_refresh_is_shared_and_provider_failures_are_bounded(self) -> None:
@@ -263,6 +394,46 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(payload["providers"][0]["remaining_percent"], 72.0)
         self.assertEqual(payload["providers"][1]["status"], "unavailable")
         self.assertEqual(payload["providers"][1]["message"], "Claude CLI is not logged in.")
+
+    def test_snapshot_is_isolated_and_unexpected_failures_are_redacted(self) -> None:
+        def broken():
+            raise RuntimeError("secret provider detail")
+
+        service = ProviderUsageService(60, collectors={"codex": broken}, clock=lambda: 1.0)
+        initial = service.snapshot()
+        initial["providers"].clear()
+        self.assertEqual(len(service.snapshot()["providers"]), 1)
+
+        payload = service.refresh()
+        provider = payload["providers"][0]
+        self.assertEqual(provider["status"], "unavailable")
+        self.assertNotIn("secret provider detail", str(provider["message"]))
+
+        with self.assertRaisesRegex(ValueError, "must be positive"):
+            ProviderUsageService(0)
+
+    def test_background_refresh_starts_once_and_shutdown_is_bounded(self) -> None:
+        called = threading.Event()
+        calls: list[int] = []
+
+        def collect():
+            calls.append(1)
+            called.set()
+            return {
+                "id": "codex",
+                "name": "Codex",
+                "status": "available",
+                "remaining_percent": 100.0,
+                "windows": [],
+            }
+
+        service = ProviderUsageService(60, collectors={"codex": collect})
+        service.start()
+        service.start()
+        self.assertTrue(called.wait(timeout=2.0))
+        service.shutdown()
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(service.snapshot()["refreshing"])
 
 
 class FakeUsageService:

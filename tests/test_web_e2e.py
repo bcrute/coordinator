@@ -352,6 +352,20 @@ class DashboardBrowserTests(unittest.TestCase):
                     self.assertFalse(
                         (existing_ci.parent / "coordinator.yml").exists()
                     )
+                    page.locator("#repository-ci-skip").click()
+                    page.locator("#repository-initialize-feedback").filter(
+                        has_text="Kept the repository's current CI configuration"
+                    ).wait_for(timeout=10_000)
+                    page.locator("#repository-ci-confirmation").wait_for(state="hidden")
+                    self.assertFalse(
+                        (existing_ci.parent / "coordinator.yml").exists()
+                    )
+                    page.locator(
+                        '#repository-initialize-form button[type="submit"]'
+                    ).click()
+                    page.locator("#repository-ci-confirmation").wait_for(
+                        state="visible", timeout=10_000
+                    )
                     page.locator("#repository-ci-add").click()
                     page.locator("#repository-initialize-feedback").filter(
                         has_text="Added .github/workflows/coordinator.yml"

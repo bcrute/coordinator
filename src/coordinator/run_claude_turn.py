@@ -391,6 +391,16 @@ def run(args: argparse.Namespace) -> int:
         print(" ".join(command[:-1] + ["<coordination prompt>"]))
         return 0
 
+    coordinator_owned_paths = (
+        goal_path,
+        task_path,
+        repo / ".coordination" / "reviews" / "latest.md",
+        repo / ".coordination" / "reviews" / "completion.md",
+    )
+    coordinator_owned_before = {
+        path: path.read_bytes() if path.is_file() else None
+        for path in coordinator_owned_paths
+    }
     lock_path = repo / ".coordination" / ".claude-turn.lock"
     try:
         lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -550,6 +560,19 @@ def run(args: argparse.Namespace) -> int:
         os.close(lock_fd)
         lock_path.unlink(missing_ok=True)
     if returncode == 0:
+        coordinator_owned_changed = [
+            str(path.relative_to(repo))
+            for path, before in coordinator_owned_before.items()
+            if (path.read_bytes() if path.is_file() else None) != before
+        ]
+        if coordinator_owned_changed:
+            changed = ", ".join(coordinator_owned_changed)
+            print(
+                "error: Claude modified Coordinator-owned coordination files: "
+                f"{changed}; inspect and restore planner/review state before retrying",
+                file=sys.stderr,
+            )
+            return 3
         coder_status = status_path.read_text(encoding="utf-8") if status_path.is_file() else ""
         valid_handoff = (
             field(coder_status, "Task ID") == task_id

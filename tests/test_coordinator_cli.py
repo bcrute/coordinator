@@ -58,6 +58,26 @@ class CoordinatorCLITests(unittest.TestCase):
         self.assertEqual(checks["repository"]["status"], "pass")
         self.assertEqual(checks["coordination"]["status"], "warn")
 
+    def test_doctor_fails_only_for_missing_required_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result, output, error = self.invoke(
+                [
+                    "doctor",
+                    "--repo",
+                    str(root / "missing-repo"),
+                    "--repositories-root",
+                    str(root / "missing-root"),
+                    "--json",
+                ]
+            )
+        self.assertEqual(result, 1, error)
+        payload = json.loads(output)
+        self.assertFalse(payload["ok"])
+        checks = {item["name"]: item for item in payload["checks"]}
+        self.assertEqual(checks["repository"]["status"], "fail")
+        self.assertEqual(checks["repositories_root"]["status"], "fail")
+
     def test_init_uses_packaged_template_and_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory)
@@ -87,9 +107,10 @@ class CoordinatorCLITests(unittest.TestCase):
             existing = target / ".github" / "workflows" / "tests.yml"
             existing.parent.mkdir(parents=True)
             existing.write_text("name: Existing\n", encoding="utf-8")
-            result, output, error = self.invoke(
-                ["init", str(target), "--project-name", "Existing CI"]
-            )
+            with mock.patch.object(sys.stdin, "isatty", return_value=False):
+                result, output, error = self.invoke(
+                    ["init", str(target), "--project-name", "Existing CI"]
+                )
             self.assertEqual(result, 0, error)
             self.assertIn("choose whether to add", output)
             self.assertFalse((existing.parent / "coordinator.yml").exists())
@@ -107,6 +128,35 @@ class CoordinatorCLITests(unittest.TestCase):
             self.assertEqual(result, 0, error)
             self.assertIn("Added .github/workflows/coordinator.yml", output)
             self.assertTrue((existing.parent / "coordinator.yml").is_file())
+
+    def test_init_rejects_missing_target_and_honors_explicit_ci_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result, output, error = self.invoke(
+                [
+                    "init",
+                    str(root / "missing"),
+                    "--project-name",
+                    "Missing",
+                ]
+            )
+            self.assertEqual(result, 2)
+            self.assertEqual(output, "")
+            self.assertIn("target is not a directory", error)
+
+            result, output, error = self.invoke(
+                [
+                    "init",
+                    str(root),
+                    "--project-name",
+                    "Skipped CI",
+                    "--github-ci",
+                    "skip",
+                ]
+            )
+            self.assertEqual(result, 0, error)
+            self.assertIn("current CI configuration", output)
+            self.assertFalse((root / ".github" / "workflows" / "coordinator.yml").exists())
 
     def test_data_command_backs_up_and_verifies_operational_index(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
