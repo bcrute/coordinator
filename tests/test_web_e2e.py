@@ -125,9 +125,19 @@ class DashboardBrowserTests(unittest.TestCase):
 
                     marker = "clear-refresh-browser-marker"
                     page.evaluate(
-                        """(marker) => codexSocket.send(JSON.stringify({
-                          type: 'input', protocol: 'terminal.v1', data: marker + '\\n'
-                        }))""",
+                        """(marker) => {
+                          const send = () => {
+                            if (codexTerminalWritable && codexSocket &&
+                                codexSocket.readyState === WebSocket.OPEN) {
+                              codexSocket.send(JSON.stringify({
+                                type: 'input', protocol: 'terminal.v1',
+                                data: marker + '\\n'
+                              }));
+                            }
+                          };
+                          send();
+                          globalThis.__terminalMarkerRetry = setInterval(send, 250);
+                        }""",
                         marker,
                     )
 
@@ -148,10 +158,14 @@ class DashboardBrowserTests(unittest.TestCase):
                         "?.translateToString(true) || '').join('\\n').includes(marker)",
                         arg=marker,
                     )
+                    page.evaluate("clearInterval(globalThis.__terminalMarkerRetry)")
                     self.assertIn(marker, terminal_text())
 
                     page.locator("#codex-terminal-clear").click()
-                    page.locator("#codex-terminal-clear").wait_for(state="visible")
+                    page.wait_for_function("() => codexPendingControl === ''")
+                    page.locator("#codex-session-feedback").filter(
+                        has_text="input ownership"
+                    ).wait_for()
                     page.wait_for_function(
                         "marker => !Array.from({length: codexTerminal.buffer.active.length}, "
                         "(_, index) => codexTerminal.buffer.active.getLine(index)"
