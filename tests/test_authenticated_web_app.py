@@ -734,6 +734,12 @@ class LocalAppTests(unittest.TestCase):
                 )
             )
             names = {check["name"] for check in diagnostics["checks"]}
+            implementation = next(
+                check
+                for check in diagnostics["checks"]
+                if check["name"] == "implementation executor"
+            )
+            self.assertFalse(implementation["required"])
             self.assertTrue(
                 {
                     "free disk space",

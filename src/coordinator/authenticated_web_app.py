@@ -158,6 +158,7 @@ def create_authenticated_app(
     executor_service = ExecutorSettingsService(
         operational, executor_adapter or ClaudeExecutorAdapter()
     )
+    executor_required = executor_adapter is not None
     watcher_factory = watcher_command_for_repo or (
         lambda selected_repo: web_app.default_watcher_command(
             selected_repo, executor_service.adapter()
@@ -1213,7 +1214,7 @@ def create_authenticated_app(
                     "detail": f"{configured_executor.display_name}: "
                     f"{configured_executable or 'not found on PATH'}",
                     "category": "providers",
-                    "required": True,
+                    "required": executor_required,
                 },
                 {
                     "name": "Codex CLI",
