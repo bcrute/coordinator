@@ -119,9 +119,9 @@ class TokenRates:
 
 
 CODEX_RATES: tuple[tuple[str, TokenRates], ...] = (
-    ("gpt-5.6-sol", TokenRates(2.50, 0.25, 3.125, 15.00)),
-    ("gpt-5.6-terra", TokenRates(1.25, 0.125, 1.5625, 7.50)),
-    ("gpt-5.6-luna", TokenRates(0.50, 0.05, 0.625, 3.00)),
+    ("gpt-5.6-sol", TokenRates(4.00, 0.40, 5.00, 20.00)),
+    ("gpt-5.6-terra", TokenRates(2.00, 0.20, 2.50, 12.00)),
+    ("gpt-5.6-luna", TokenRates(0.20, 0.02, 0.25, 1.20)),
     ("gpt-5.5-pro", TokenRates(15.00, 15.00, 15.00, 90.00)),
     ("gpt-5.5", TokenRates(2.50, 0.25, 2.50, 15.00)),
     ("gpt-5.4-pro", TokenRates(15.00, 15.00, 15.00, 90.00)),
@@ -130,6 +130,14 @@ CODEX_RATES: tuple[tuple[str, TokenRates], ...] = (
     ("gpt-5.2-codex", TokenRates(1.75, 0.175, 1.75, 14.00)),
     ("codex-mini-latest", TokenRates(1.50, 0.375, 1.50, 6.00)),
 )
+
+
+CODEX_LONG_CONTEXT_RATES: tuple[tuple[str, TokenRates], ...] = (
+    ("gpt-5.6-sol", TokenRates(8.00, 0.80, 10.00, 30.00)),
+    ("gpt-5.6-terra", TokenRates(4.00, 0.40, 5.00, 18.00)),
+    ("gpt-5.6-luna", TokenRates(0.40, 0.04, 0.50, 1.80)),
+)
+CODEX_LONG_CONTEXT_THRESHOLD = 272_000
 
 
 CLAUDE_RATES: tuple[tuple[str, TokenRates], ...] = (
@@ -158,6 +166,16 @@ def _rates(model: str, catalog: tuple[tuple[str, TokenRates], ...]) -> TokenRate
 
 def _claude_rates(model: str, _occurred_at: float) -> TokenRates | None:
     return _rates(model, CLAUDE_RATES)
+
+
+def _codex_rates(
+    model: str, context_input_tokens: int
+) -> tuple[TokenRates | None, str]:
+    if context_input_tokens > CODEX_LONG_CONTEXT_THRESHOLD:
+        long_rates = _rates(model, CODEX_LONG_CONTEXT_RATES)
+        if long_rates is not None:
+            return long_rates, "long-context"
+    return _rates(model, CODEX_RATES), "short-context"
 
 
 class _JsonlAdapter:
@@ -198,7 +216,7 @@ class _JsonlAdapter:
 class CodexUsageHistoryAdapter(_JsonlAdapter):
     id = "codex"
     display_name = "Codex"
-    revision = "pricing-2026-08-22"
+    revision = "standard-context-pricing-2026-08-23"
 
     def __init__(self, root: Path | None = None) -> None:
         super().__init__(root or Path.home() / ".codex" / "sessions")
@@ -243,10 +261,22 @@ class CodexUsageHistoryAdapter(_JsonlAdapter):
                     cache_write_tokens=delta["cache_write_input_tokens"],
                     output_tokens=delta["output_tokens"],
                 )
-                rates = _rates(model, CODEX_RATES)
+                last_usage = info.get("last_token_usage")
+                context_input_tokens = (
+                    _integer(last_usage.get("input_tokens"))
+                    if isinstance(last_usage, dict)
+                    else record.input_tokens
+                    + record.cache_read_tokens
+                    + record.cache_write_tokens
+                )
+                rates, context_tier = _codex_rates(model, context_input_tokens)
                 yield UsageRecord(
                     **{**record.__dict__, "cost_usd": rates.cost(record) if rates else None,
-                       "cost_basis": "estimated_api_price" if rates else None}
+                       "cost_basis": (
+                           f"estimated_api_price:openai-standard:{context_tier}:2026-08-23"
+                           if rates
+                           else None
+                       )}
                 )
 
 

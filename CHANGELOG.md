@@ -30,6 +30,8 @@ interface with migration notes.
 
 - Provider usage pace projections now remain in the same percentage-left frame as the
   header: zero or negative means the current pace exhausts the allowance before reset.
+- Codex GPT-5.6 API-equivalent values now use OpenAI's published Standard short- and
+  long-context rates, and a pricing revision revalues previously imported history.
 - Historical usage records preserve five-minute, one-hour, and unclassified cache
   writes separately while retaining the combined cache-write API total.
 

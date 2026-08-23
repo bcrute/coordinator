@@ -231,6 +231,10 @@ Coordinator. Provider tabs show cumulative API-equivalent value over 24 hours,
 7 days, 30 days, or all retained history, plus raw token totals, pricing coverage,
 and a per-model breakdown. These figures estimate what the same token mix would
 cost at published API rates; they are not charges against the subscription.
+GPT-5.6 Codex records use OpenAI's Standard short- or long-context rate for each
+turn, with the long-context rate applied when the native prompt counter exceeds
+272,000 input tokens. Claude records retain the provider's distinct five-minute
+and one-hour cache-write rates.
 
 The importer reads only timestamps, model identifiers, message/session identifiers,
 and token counters. Prompts, responses, tool arguments, credentials, and repository

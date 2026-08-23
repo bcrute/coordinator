@@ -85,6 +85,61 @@ class NativeUsageAdapterTests(unittest.TestCase):
             self.assertEqual(second.cache_read_tokens, 20)
             self.assertEqual(second.output_tokens, 10)
 
+    def test_codex_5_6_uses_published_standard_context_prices(self) -> None:
+        cases = (
+            ("gpt-5.6-sol", 100_000, 40_000, 10_000, 0.456),
+            ("gpt-5.6-terra", 100_000, 40_000, 10_000, 0.248),
+            ("gpt-5.6-luna", 100_000, 40_000, 10_000, 0.0248),
+            ("gpt-5.6-sol", 300_000, 100_000, 10_000, 1.98),
+            ("gpt-5.6-terra", 300_000, 100_000, 10_000, 1.02),
+            ("gpt-5.6-luna", 300_000, 100_000, 10_000, 0.102),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for index, case in enumerate(cases):
+                model, input_tokens, cached_tokens, output_tokens, _ = case
+                usage = {
+                    "input_tokens": input_tokens,
+                    "cached_input_tokens": cached_tokens,
+                    "cache_write_input_tokens": 0,
+                    "output_tokens": output_tokens,
+                }
+                jsonl(
+                    root / f"{index}.jsonl",
+                    [
+                        {
+                            "timestamp": f"2026-08-23T12:00:{index:02d}Z",
+                            "type": "turn_context",
+                            "payload": {"model": model},
+                        },
+                        {
+                            "timestamp": f"2026-08-23T12:01:{index:02d}Z",
+                            "type": "event_msg",
+                            "payload": {
+                                "type": "token_count",
+                                "info": {
+                                    "last_token_usage": usage,
+                                    "total_token_usage": usage,
+                                },
+                            },
+                        },
+                    ],
+                )
+
+            records = CodexUsageHistoryAdapter(root).collect({}).records
+
+            self.assertEqual(len(records), len(cases))
+            records_by_timestamp = sorted(records, key=lambda record: record.occurred_at)
+            for record, case in zip(records_by_timestamp, cases, strict=True):
+                model, _, _, _, expected_cost = case
+                with self.subTest(model=model, expected_cost=expected_cost):
+                    self.assertEqual(record.model, model)
+                    self.assertAlmostEqual(record.cost_usd or 0, expected_cost)
+                    expected_tier = (
+                        "long-context" if case[1] > 272_000 else "short-context"
+                    )
+                    self.assertIn(expected_tier, record.cost_basis or "")
+
     def test_claude_keeps_last_usage_update_per_message_and_preserves_unknown_models(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
