@@ -161,6 +161,10 @@ a {
   text-transform: capitalize;
 }
 
+.usage-provider-label small[data-stale="true"] {
+  color: var(--warn);
+}
+
 .usage-window-list {
   display: grid;
   gap: 0.12rem;

@@ -412,6 +412,76 @@ class ServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must be positive"):
             ProviderUsageService(0)
 
+    def test_refresh_failure_retains_last_successful_provider_values_as_stale(self) -> None:
+        now = [1000.0]
+        failing = [False]
+
+        def codex():
+            if failing[0]:
+                raise ProviderUsageError("Codex usage request timed out.")
+            return {
+                "id": "codex",
+                "name": "Codex",
+                "status": "available",
+                "plan": "pro",
+                "remaining_percent": 32.0,
+                "windows": [
+                    {"label": "Weekly (7d)", "remaining_percent": 32.0}
+                ],
+            }
+
+        service = ProviderUsageService(
+            3600, collectors={"codex": codex}, clock=lambda: now[0]
+        )
+        current = service.refresh()["providers"][0]
+        failing[0] = True
+        now[0] = 2000.0
+
+        stale = service.refresh()["providers"][0]
+
+        self.assertEqual(stale["status"], "stale")
+        self.assertTrue(stale["stale"])
+        self.assertEqual(stale["plan"], "pro")
+        self.assertEqual(stale["remaining_percent"], 32.0)
+        self.assertEqual(stale["windows"], current["windows"])
+        self.assertEqual(stale["message"], "Codex usage request timed out.")
+        self.assertEqual(stale["last_success_at"], "1970-01-01T00:16:40+00:00")
+        self.assertEqual(stale["last_error_at"], "1970-01-01T00:33:20+00:00")
+
+    def test_success_after_stale_refresh_replaces_retained_values(self) -> None:
+        remaining = [70.0]
+        failing = [False]
+        now = [1000.0]
+
+        def codex():
+            if failing[0]:
+                raise ProviderUsageError("temporary failure")
+            return {
+                "id": "codex",
+                "name": "Codex",
+                "status": "available",
+                "remaining_percent": remaining[0],
+                "windows": [],
+            }
+
+        service = ProviderUsageService(
+            60, collectors={"codex": codex}, clock=lambda: now[0]
+        )
+        service.refresh()
+        failing[0] = True
+        service.refresh()
+        failing[0] = False
+        remaining[0] = 65.0
+        now[0] = 3000.0
+
+        recovered = service.refresh()["providers"][0]
+
+        self.assertEqual(recovered["status"], "available")
+        self.assertFalse(recovered["stale"])
+        self.assertEqual(recovered["remaining_percent"], 65.0)
+        self.assertEqual(recovered["last_success_at"], "1970-01-01T00:50:00+00:00")
+        self.assertIsNone(recovered["last_error_at"])
+
     def test_background_refresh_starts_once_and_shutdown_is_bounded(self) -> None:
         called = threading.Event()
         calls: list[int] = []

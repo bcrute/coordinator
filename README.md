@@ -210,6 +210,11 @@ adjacent refresh button for an immediate update. The server performs one shared
 refresh per `usage_refresh_seconds` (one hour by default), regardless of the
 number of open browser tabs.
 
+If a provider refresh fails after a successful reading, the header keeps that
+provider's last known windows and marks them **stale** beside the plan. The tooltip
+shows the refresh failure and last-success time. A provider is shown as unavailable
+only when Coordinator has no successful value to retain.
+
 These checks do not create model turns: Codex is queried through its local app
 server's account-rate-limit method; Claude Code's non-interactive authentication
 status is checked before its authenticated subscription-usage endpoint is read.

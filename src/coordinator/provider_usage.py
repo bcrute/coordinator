@@ -499,6 +499,9 @@ class ProviderUsageService:
                     "remaining_percent": None,
                     "windows": [],
                     "message": "Waiting for the first usage check.",
+                    "stale": False,
+                    "last_success_at": None,
+                    "last_error_at": None,
                 }
                 for provider_id in self._collectors
             ],
@@ -512,6 +515,11 @@ class ProviderUsageService:
         with self._refresh_lock:
             with self._lock:
                 self._snapshot["refreshing"] = True
+                previous = {
+                    str(provider.get("id")): deepcopy(provider)
+                    for provider in self._snapshot.get("providers", [])
+                    if isinstance(provider, Mapping) and provider.get("id")
+                }
 
             def collect(item: tuple[str, Callable[[], dict[str, object]]]):
                 provider_id, collector = item
@@ -536,11 +544,53 @@ class ProviderUsageService:
                 max_workers=max(1, len(self._collectors)),
                 thread_name_prefix="coordinator-provider-usage",
             ) as executor:
-                providers = list(executor.map(collect, self._collectors.items()))
+                collected = list(executor.map(collect, self._collectors.items()))
             completed = self._clock()
+            completed_at = _iso_timestamp(completed)
+            providers: list[dict[str, object]] = []
+            for result in collected:
+                provider_id = str(result.get("id") or "")
+                if result.get("status") == "available":
+                    result.update(
+                        {
+                            "stale": False,
+                            "last_success_at": completed_at,
+                            "last_error_at": None,
+                        }
+                    )
+                    providers.append(result)
+                    continue
+                prior = previous.get(provider_id)
+                prior_has_usage = bool(
+                    prior
+                    and (
+                        prior.get("windows")
+                        or isinstance(prior.get("remaining_percent"), (int, float))
+                    )
+                    and prior.get("status") in {"available", "stale"}
+                )
+                if prior_has_usage and prior is not None:
+                    prior.update(
+                        {
+                            "status": "stale",
+                            "stale": True,
+                            "message": result.get("message"),
+                            "last_error_at": completed_at,
+                        }
+                    )
+                    providers.append(prior)
+                    continue
+                result.update(
+                    {
+                        "stale": False,
+                        "last_success_at": None,
+                        "last_error_at": completed_at,
+                    }
+                )
+                providers.append(result)
             with self._lock:
                 self._snapshot = {
-                    "generated_at": _iso_timestamp(completed),
+                    "generated_at": completed_at,
                     "next_refresh_at": _iso_timestamp(completed + self.refresh_seconds),
                     "refresh_interval_seconds": self.refresh_seconds,
                     "refreshing": False,

@@ -1733,7 +1733,12 @@ function renderProviderUsage(payload) {
     if (!providerElement || !value) return;
     var title = text(details.name, target.id === "codex" ? "Codex" : "Claude");
     var plan = text(details.plan);
-    if (target.plan) target.plan.textContent = plan ? plan : "";
+    var stale = details.status === "stale" || details.stale === true;
+    providerElement.dataset.status = text(details.status, "unavailable");
+    if (target.plan) {
+      target.plan.textContent = [plan, stale ? "stale" : ""].filter(Boolean).join(" · ");
+      target.plan.dataset.stale = stale ? "true" : "false";
+    }
     if (plan) title += " " + plan;
     var windows = list(details.windows);
     if (!windows.length && typeof remaining === "number") {
@@ -1758,6 +1763,13 @@ function renderProviderUsage(payload) {
       unavailable.title = text(details.message, "Usage unavailable");
       value.append(unavailable);
       title += " — " + text(details.message, "Usage unavailable");
+    }
+    if (stale) {
+      var lastSuccess = new Date(details.last_success_at).getTime();
+      title += " — stale: " + text(details.message, "The latest refresh failed.");
+      if (Number.isFinite(lastSuccess)) {
+        title += " Last updated " + new Date(lastSuccess).toLocaleString() + ".";
+      }
     }
     providerElement.title = title;
   });

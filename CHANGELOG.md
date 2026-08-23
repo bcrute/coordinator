@@ -35,6 +35,8 @@ interface with migration notes.
 
 ### Fixed
 
+- Transient provider-limit refresh failures now retain the last successful header
+  values with a stale warning instead of replacing them with unavailable placeholders.
 - Clearing the browser terminal now discards its retained server replay buffer, so
   cleared output does not return after a page refresh while the Codex process continues.
 - Large terminal replays are emitted as bounded, cursor-contiguous WebSocket frames

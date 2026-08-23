@@ -238,8 +238,11 @@ class DashboardBrowserTests(unittest.TestCase):
                             {
                                 "id": "codex",
                                 "name": "Codex",
-                                "status": "available",
+                                "status": "stale",
+                                "stale": True,
                                 "plan": "pro",
+                                "message": "Codex usage request timed out.",
+                                "last_success_at": now.isoformat(),
                                 "remaining_percent": 70,
                                 "windows": [
                                     {
@@ -349,6 +352,14 @@ class DashboardBrowserTests(unittest.TestCase):
                     page.goto(url, wait_until="domcontentloaded")
                     page.locator("#usage-codex-value").filter(has_text="70%").wait_for(
                         timeout=10_000
+                    )
+                    self.assertIn(
+                        "stale",
+                        page.locator("#usage-codex-plan").inner_text().casefold(),
+                    )
+                    self.assertIn(
+                        "Codex usage request timed out",
+                        page.locator("#usage-codex").get_attribute("title"),
                     )
                     page.locator("#usage-claude-value").filter(has_text="55%").wait_for(
                         timeout=10_000
