@@ -18,6 +18,7 @@ ROUTES = [
     "agents",
     "logs",
     "activity",
+    "usage",
     "runs",
     "settings",
     "setup",

@@ -81,6 +81,7 @@
         <li><a href="#agents" id="nav-agents" data-route="agents">Agents</a></li>
         <li><a href="#logs" id="nav-logs" data-route="logs">Logs</a></li>
         <li><a href="#activity" id="nav-activity" data-route="activity">Activity</a></li>
+        <li><a href="#usage" id="nav-usage" data-route="usage">Usage</a></li>
         <li><a href="#runs" id="nav-runs" data-route="runs">Runs</a></li>
         <li><a href="#settings" id="nav-settings" data-route="settings">Settings</a></li>
         <li><a href="#setup" id="nav-setup" data-route="setup">Setup</a></li>
@@ -470,6 +471,53 @@
           <div class="panel-body">
             <p class="note" id="activity-feedback">Open this page to load recent control and authentication events.</p>
             <ul class="records" id="activity-events"></ul>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-usage" class="view" aria-labelledby="view-usage-heading" hidden>
+        <h2 class="view-heading" id="view-usage-heading">Usage value</h2>
+        <section class="panel panel-wide usage-history" aria-labelledby="usage-history-heading">
+          <header class="panel-head">
+            <div>
+              <h3 id="usage-history-heading">Subscription value over time</h3>
+              <p class="panel-subtitle">API-equivalent value where pricing is known; raw tokens otherwise.</p>
+            </div>
+            <div class="controls">
+              <label class="compact-field" for="usage-history-range">Range
+                <select id="usage-history-range">
+                  <option value="24h">24 hours</option>
+                  <option value="7d" selected>7 days</option>
+                  <option value="30d">30 days</option>
+                  <option value="all">All time</option>
+                </select>
+              </label>
+              <button type="button" class="control-button" id="usage-history-refresh">Import now</button>
+            </div>
+          </header>
+          <div class="panel-body">
+            <div class="provider-tabs" id="usage-history-tabs" role="tablist" aria-label="Usage providers"></div>
+            <p class="note" id="usage-history-feedback">Open this page to import native usage telemetry.</p>
+            <div class="usage-value-summary" id="usage-value-summary" hidden>
+              <div><span id="usage-value-label">Estimated API value</span><strong id="usage-value-total">$0.00</strong></div>
+              <div><span>Total tokens</span><strong id="usage-token-total">0</strong></div>
+              <div><span>Pricing coverage</span><strong id="usage-price-coverage">—</strong></div>
+            </div>
+            <div class="usage-chart-wrap" id="usage-chart-wrap" hidden>
+              <svg id="usage-history-chart" class="usage-chart" viewBox="0 0 960 320" role="img" aria-labelledby="usage-chart-title usage-chart-description">
+                <title id="usage-chart-title">Provider usage over time</title>
+                <desc id="usage-chart-description">Cumulative usage for the selected provider and range.</desc>
+              </svg>
+            </div>
+            <section class="usage-models" aria-labelledby="usage-models-heading">
+              <h4 id="usage-models-heading">Models</h4>
+              <div class="table-scroll">
+                <table>
+                  <thead><tr><th scope="col">Model</th><th scope="col">Tokens</th><th scope="col">API value</th></tr></thead>
+                  <tbody id="usage-model-rows"></tbody>
+                </table>
+              </div>
+            </section>
           </div>
         </section>
       </section>

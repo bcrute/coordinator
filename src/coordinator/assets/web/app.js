@@ -10,6 +10,8 @@ var STATE_URL = "/api/state";
 var STATE_EVENTS_URL = "/api/events";
 var PROVIDER_USAGE_URL = "/api/provider-usage";
 var PROVIDER_USAGE_REFRESH_URL = "/api/provider-usage/refresh";
+var USAGE_HISTORY_URL = "/api/usage-history";
+var USAGE_HISTORY_REFRESH_URL = "/api/usage-history/refresh";
 var TERMINAL_SOCKET_URL = "/ws/terminal";
 var REPOSITORY_SELECT_URL = "/api/repository/select";
 var REPOSITORY_SELECT_TIMEOUT_MS = 30000;
@@ -33,6 +35,10 @@ var nodes = Object.create(null);
 var counts = new Intl.NumberFormat();
 var tickTimer = null;
 var usageTimer = null;
+var usageHistoryPayload = null;
+var usageHistoryProvider = "";
+var usageHistoryLoaded = false;
+var usageHistoryLoading = false;
 var stateSource = null;
 var lastSuccessAt = null;
 var failures = 0;
@@ -87,6 +93,7 @@ var ROUTES = [
   "agents",
   "logs",
   "activity",
+  "usage",
   "runs",
   "settings",
   "setup",
@@ -1803,6 +1810,211 @@ function wireProviderUsage() {
   usageTimer = window.setInterval(loadProviderUsage, 60 * 1000);
 }
 
+/* Historical provider value ---------------------------------------------- */
+
+function usageMoney(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  if (value > 0 && value < 0.01) return "$" + value.toFixed(4);
+  return "$" + value.toFixed(2);
+}
+
+function usageAxis(value, metric) {
+  if (metric === "cost") return usageMoney(value);
+  if (value >= 1000000) return (value / 1000000).toFixed(1) + "M";
+  if (value >= 1000) return (value / 1000).toFixed(0) + "k";
+  return counts.format(Math.round(value));
+}
+
+function usageSvg(name, attributes, content) {
+  var namespace = ["http:", "", "www.w3.org", "2000", "svg"].join("/");
+  var node = document.createElementNS(namespace, name);
+  Object.keys(attributes || {}).forEach(function (key) {
+    node.setAttribute(key, attributes[key]);
+  });
+  if (typeof content === "string") node.textContent = content;
+  return node;
+}
+
+function renderUsageChart(provider, payload) {
+  var chart = el("usage-history-chart");
+  var wrap = el("usage-chart-wrap");
+  if (!chart || !wrap) return;
+  var metric = text(provider.metric, "tokens");
+  var series = list(provider.series).map(function (point) {
+    return {
+      at: new Date(record(point).timestamp).getTime(),
+      value: metric === "cost" ? Number(record(point).cost_usd || 0) : Number(record(point).tokens || 0),
+    };
+  }).filter(function (point) {
+    return Number.isFinite(point.at) && Number.isFinite(point.value);
+  }).sort(function (left, right) { return left.at - right.at; });
+  chart.replaceChildren();
+  chart.append(
+    usageSvg("title", { id: "usage-chart-title" }, text(provider.name, "Provider") + " usage over time"),
+    usageSvg("desc", { id: "usage-chart-description" },
+      "Cumulative " + (metric === "cost" ? "estimated API value" : "token usage") + " for the selected range.")
+  );
+  if (!series.length) {
+    wrap.hidden = true;
+    return;
+  }
+  wrap.hidden = false;
+  var start = new Date(record(payload).from || series[0].at).getTime();
+  var end = new Date(record(payload).to || series[series.length - 1].at).getTime();
+  if (!Number.isFinite(start)) start = series[0].at;
+  if (!Number.isFinite(end) || end <= start) end = start + 1;
+  var running = 0;
+  var cumulative = [{ at: start, value: 0 }];
+  series.forEach(function (point) {
+    running += point.value;
+    cumulative.push({ at: point.at, value: running, increment: point.value });
+  });
+  var max = Math.max(running, metric === "cost" ? 0.01 : 1);
+  var left = 72, right = 24, top = 20, bottom = 44;
+  var width = 960 - left - right, height = 320 - top - bottom;
+  function x(at) { return left + ((at - start) / (end - start)) * width; }
+  function y(value) { return top + height - (value / max) * height; }
+  for (var grid = 0; grid <= 4; grid += 1) {
+    var amount = max * grid / 4;
+    var gridY = y(amount);
+    chart.append(
+      usageSvg("line", { x1: left, x2: left + width, y1: gridY, y2: gridY, class: "usage-grid" }),
+      usageSvg("text", { x: left - 10, y: gridY + 4, class: "usage-axis-label", "text-anchor": "end" }, usageAxis(amount, metric))
+    );
+  }
+  var path = cumulative.map(function (point, index) {
+    return (index === 0 ? "M" : "L") + x(point.at).toFixed(1) + " " + y(point.value).toFixed(1);
+  }).join(" ");
+  chart.append(usageSvg("path", { d: path, class: "usage-value-line" }));
+  cumulative.slice(1).forEach(function (point) {
+    var marker = usageSvg("circle", {
+      cx: x(point.at).toFixed(1), cy: y(point.value).toFixed(1), r: 3,
+      class: "usage-value-point", tabindex: "0",
+    });
+    marker.append(usageSvg("title", {}, new Date(point.at).toLocaleString() + " — +" +
+      usageAxis(point.increment, metric) + ", cumulative " + usageAxis(point.value, metric)));
+    chart.append(marker);
+  });
+  [start, start + (end - start) / 2, end].forEach(function (at, index) {
+    chart.append(usageSvg("text", {
+      x: x(at), y: 304, class: "usage-axis-label",
+      "text-anchor": index === 0 ? "start" : index === 2 ? "end" : "middle",
+    }, new Date(at).toLocaleDateString([], { month: "short", day: "numeric", hour: "numeric" })));
+  });
+}
+
+function renderUsageHistory(payload) {
+  usageHistoryPayload = payload;
+  var providers = list(record(payload).providers);
+  var tabs = el("usage-history-tabs");
+  if (!tabs) return;
+  if (!providers.some(function (provider) { return text(record(provider).id, "") === usageHistoryProvider; })) {
+    usageHistoryProvider = providers.length ? text(record(providers[0]).id, "") : "";
+  }
+  tabs.replaceChildren.apply(tabs, providers.map(function (providerValue) {
+    var provider = record(providerValue);
+    var button = document.createElement("button");
+    var selected = text(provider.id, "") === usageHistoryProvider;
+    button.type = "button";
+    button.className = "provider-tab";
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-selected", selected ? "true" : "false");
+    button.textContent = text(provider.name, text(provider.id, "Provider"));
+    button.addEventListener("click", function () {
+      usageHistoryProvider = text(provider.id, "");
+      renderUsageHistory(usageHistoryPayload);
+    });
+    return button;
+  }));
+  var selected = providers.find(function (provider) {
+    return text(record(provider).id, "") === usageHistoryProvider;
+  });
+  var details = record(selected);
+  var totals = record(details.totals);
+  var feedback = el("usage-history-feedback");
+  var summary = el("usage-value-summary");
+  var modelsBody = el("usage-model-rows");
+  if (!selected) {
+    if (feedback) feedback.textContent = "No usage adapters are configured.";
+    if (summary) summary.hidden = true;
+    if (modelsBody) modelsBody.replaceChildren();
+    renderUsageChart({}, payload);
+    return;
+  }
+  var metric = text(details.metric, "tokens");
+  var totalTokens = Number(totals.total_tokens || 0);
+  if (feedback) {
+    feedback.textContent = details.status === "error" ? text(details.message, "Usage import failed.") :
+      totalTokens ? "Imported native telemetry. Costs are API-equivalent estimates, not subscription charges." :
+        record(payload).refreshing === true ? "Importing native telemetry…" : "No usage was found in this range.";
+  }
+  if (summary) summary.hidden = false;
+  setText("usage-value-label", metric === "cost" ? text(details.cost_label, "Estimated API value") : "Recorded usage");
+  setText("usage-value-total", metric === "cost" ? usageMoney(Number(totals.cost_usd || 0)) : counts.format(totalTokens) + " tokens");
+  setText("usage-token-total", counts.format(totalTokens));
+  setText("usage-price-coverage", typeof details.coverage_percent === "number" ? details.coverage_percent.toFixed(1) + "%" : "not applicable");
+  if (modelsBody) {
+    var rows = list(details.models).map(function (modelValue) {
+      var model = record(modelValue);
+      var row = document.createElement("tr");
+      row.append(
+        document.createElement("td"), document.createElement("td"), document.createElement("td")
+      );
+      row.children[0].textContent = text(model.model, "unknown");
+      row.children[1].textContent = counts.format(Number(model.tokens || 0));
+      row.children[2].textContent = metric === "cost" && Number(model.valued_tokens || 0) > 0 ?
+        usageMoney(Number(model.cost_usd || 0)) : "—";
+      return row;
+    });
+    if (!rows.length) {
+      var empty = document.createElement("tr");
+      var cell = document.createElement("td");
+      cell.colSpan = 3;
+      cell.textContent = "No model usage in this range.";
+      empty.append(cell);
+      rows.push(empty);
+    }
+    modelsBody.replaceChildren.apply(modelsBody, rows);
+  }
+  renderUsageChart(details, payload);
+  var refresh = el("usage-history-refresh");
+  if (refresh) refresh.disabled = record(payload).refreshing === true || usageHistoryLoading;
+}
+
+function loadUsageHistory(force) {
+  if (usageHistoryLoading) return Promise.resolve();
+  usageHistoryLoading = true;
+  var rangeNode = el("usage-history-range");
+  var range = rangeNode ? rangeNode.value : "7d";
+  var url = (force ? USAGE_HISTORY_REFRESH_URL : USAGE_HISTORY_URL) + "?range=" + encodeURIComponent(range);
+  var options = { cache: "no-store", headers: { Accept: "application/json" } };
+  if (force) {
+    options.method = "POST";
+    options.headers["X-CSRF-Token"] = csrfToken;
+  }
+  return fetch(url, options).then(answer).then(function (result) {
+    if (result.status < 200 || result.status >= 300) throw new Error("usage history request failed");
+    usageHistoryLoaded = true;
+    renderUsageHistory(result.payload);
+    if (!force && !record(result.payload).generated_at) {
+      window.setTimeout(function () { loadUsageHistory(false); }, 1500);
+    }
+  }).catch(function () {
+    setText("usage-history-feedback", "Usage history is temporarily unavailable.");
+  }).finally(function () {
+    usageHistoryLoading = false;
+    var refresh = el("usage-history-refresh");
+    if (refresh) refresh.disabled = false;
+  });
+}
+
+function wireUsageHistory() {
+  var range = el("usage-history-range");
+  var refresh = el("usage-history-refresh");
+  if (range) range.addEventListener("change", function () { loadUsageHistory(false); });
+  if (refresh) refresh.addEventListener("click", function () { loadUsageHistory(true); });
+}
+
 /* Workspace and durable runs --------------------------------------------- */
 
 function renderOwnerAction(state) {
@@ -2582,7 +2794,7 @@ function wireShortcuts() {
       return;
     }
     shortcutPrefix = false;
-    var destinations = { w: "monitor", r: "runs", l: "logs", s: "settings" };
+    var destinations = { w: "monitor", r: "runs", l: "logs", s: "settings", u: "usage" };
     if (terminalEnabled) destinations.t = "terminal";
     if (destinations[key]) window.location.hash = "#" + destinations[key];
   });
@@ -2632,6 +2844,8 @@ function applyRoute() {
     }
   } else if (route === "activity") {
     loadActivity();
+  } else if (route === "usage") {
+    loadUsageHistory(false);
   } else if (route === "runs") {
     loadRuns();
   } else if (route === "settings" && !preferencesLoaded) {
@@ -2658,6 +2872,7 @@ function start() {
   wireDailyDriver();
   wireShortcuts();
   wireProviderUsage();
+  wireUsageHistory();
   paintConnection();
   startStateFeed();
   tickTimer = window.setInterval(paintConnection, POLL_INTERVAL_MS);

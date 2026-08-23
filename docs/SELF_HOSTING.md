@@ -111,6 +111,14 @@ variable in `workflow.toml`, and run `coordinator doctor --config workflow.toml`
 Coordinator does not install mini-swe-agent or copy endpoint credentials into its
 settings.
 
+**The Usage page is empty or takes time on its first visit.** The first historical
+import scans the service account's native `~/.codex/sessions` and
+`~/.claude/projects` telemetry. Large histories can take several seconds, and the
+page remains responsive while that work runs in the background. Revisit the page or
+select **Import now** after the initial scan. Subsequent imports use file
+fingerprints and normally complete quickly. An unrecognized model remains visible as
+raw tokens with incomplete pricing coverage instead of receiving a guessed value.
+
 **A provider usage indicator shows unavailable.** Usage collection runs as the
 same operating-system account as Coordinator. Codex requires a current Codex
 CLI login and an app-server version that supports account rate limits. Claude

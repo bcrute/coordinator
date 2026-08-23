@@ -33,6 +33,7 @@ from .executor_adapters import ExecutorAdapter, from_namespace, resolve_executab
 from .github_ci import configure_github_ci
 from .operational_store import GuardrailPolicy, OperationalStore, evaluate_guardrails
 from .provider_usage import DEFAULT_REFRESH_SECONDS, ProviderUsageService
+from .usage_history import UsageHistoryService
 from authlib.integrations.base_client.errors import OAuthError
 from authlib.integrations.starlette_client import OAuth
 from joserfc import jwt
@@ -132,6 +133,7 @@ def create_authenticated_app(
     start_grace: float = web_app.START_GRACE_SECONDS,
     usage_refresh_seconds: int = DEFAULT_REFRESH_SECONDS,
     provider_usage_service: ProviderUsageService | None = None,
+    usage_history_service: UsageHistoryService | None = None,
     executor_adapter: ExecutorAdapter | None = None,
 ) -> Starlette:
     """Build the default-deny authenticated ASGI application."""
@@ -167,6 +169,7 @@ def create_authenticated_app(
     usage_service = provider_usage_service or ProviderUsageService(
         usage_refresh_seconds
     )
+    history_service = usage_history_service or UsageHistoryService(settings.state_dir)
     terminal_attachment_lock = threading.Lock()
     terminal_attachment_owner: list[str | None] = [None]
     state_cache_lock = threading.Lock()
@@ -660,6 +663,33 @@ def create_authenticated_app(
         payload = await run_in_threadpool(usage_service.refresh)
         usage_service.start()
         return JSONResponse({"ok": True, **payload})
+
+    async def usage_history(request: Request):
+        range_name = request.query_params.get("range", "7d")
+        try:
+            payload = await run_in_threadpool(history_service.history, range_name)
+        except ValueError as error:
+            return JSONResponse(
+                {"ok": False, "outcome": "validation", "message": str(error)},
+                status_code=400,
+            )
+        history_service.start()
+        return JSONResponse({"ok": True, **payload})
+
+    async def usage_history_refresh(request: Request):
+        range_name = request.query_params.get("range", "7d")
+        if range_name not in {"24h", "7d", "30d", "all"}:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "outcome": "validation",
+                    "message": "range must be one of: 24h, 7d, 30d, all",
+                },
+                status_code=400,
+            )
+        await run_in_threadpool(history_service.refresh)
+        history_service.start()
+        return JSONResponse({"ok": True, **history_service.history(range_name)})
 
     async def state_events(request: Request):
         if not isinstance(request.session.get("csrf_token"), str):
@@ -1774,6 +1804,7 @@ def create_authenticated_app(
             yield
         finally:
             await run_in_threadpool(usage_service.shutdown)
+            await run_in_threadpool(history_service.shutdown)
             await run_in_threadpool(context.shutdown)
 
     routes = [
@@ -1793,6 +1824,14 @@ def create_authenticated_app(
         Route(
             "/api/v1/provider-usage/refresh",
             versioned(provider_usage_refresh),
+            methods=["POST"],
+        ),
+        Route("/api/usage-history", usage_history, methods=["GET"]),
+        Route("/api/v1/usage-history", versioned(usage_history), methods=["GET"]),
+        Route("/api/usage-history/refresh", usage_history_refresh, methods=["POST"]),
+        Route(
+            "/api/v1/usage-history/refresh",
+            versioned(usage_history_refresh),
             methods=["POST"],
         ),
         Route("/api/events", state_events, methods=["GET"]),
@@ -1855,6 +1894,7 @@ def create_authenticated_app(
         Route("/api/codex/{action:str}", post_only, methods=["GET", "HEAD"]),
         Route("/api/repository/select", post_only, methods=["GET", "HEAD"]),
         Route("/api/provider-usage/refresh", post_only, methods=["GET", "HEAD"]),
+        Route("/api/usage-history/refresh", post_only, methods=["GET", "HEAD"]),
         WebSocketRoute("/ws/terminal", terminal_socket),
         Route("/{path:path}", asset, methods=["GET", "HEAD"]),
     ]
@@ -1880,6 +1920,7 @@ def create_authenticated_app(
     app.state.security_store = store
     app.state.operational_store = operational
     app.state.provider_usage = usage_service
+    app.state.usage_history = history_service
     app.state.settings = settings
     return app
 

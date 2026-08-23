@@ -18,6 +18,7 @@ ROUTES = [
     "agents",
     "logs",
     "activity",
+    "usage",
     "runs",
     "settings",
     "setup",
@@ -39,6 +40,7 @@ VIEW_PANEL_IDS = {
     ],
     "logs": ["relay-log-heading"],
     "activity": ["activity-heading"],
+    "usage": ["usage-history-heading"],
     "runs": ["run-history-heading", "run-detail-heading"],
     "settings": ["guardrails-heading", "preferences-heading", "shortcuts-heading"],
     "setup": ["create-repository-heading", "initialize-heading"],
@@ -163,6 +165,32 @@ class ProviderUsageHeaderTests(unittest.TestCase):
         self.assertIn("remaining", renderer.group(0))
         self.assertIn("windows.forEach", renderer.group(0))
         self.assertIn("usageWindowChip", renderer.group(0))
+
+
+class UsageHistoryViewTests(unittest.TestCase):
+    def setUp(self):
+        self.js = read(WEB_DIR / "app.js")
+        self.html = read(WEB_DIR / "index.html")
+
+    def test_dedicated_view_has_dynamic_provider_tabs_and_range_controls(self):
+        self.assertIn('id="usage-history-tabs"', self.html)
+        self.assertIn('id="usage-history-range"', self.html)
+        self.assertIn('id="usage-history-chart"', self.html)
+        self.assertIn('id="usage-history-refresh"', self.html)
+        renderer = re.search(r"function renderUsageHistory\([\s\S]*?\n}\n", self.js)
+        self.assertIsNotNone(renderer)
+        self.assertIn("providers.map", renderer.group(0))
+        self.assertIn('button.setAttribute("role", "tab")', renderer.group(0))
+        self.assertNotIn('["codex", "claude"]', renderer.group(0))
+
+    def test_history_import_is_csrf_protected_and_costs_are_labeled_as_estimates(self):
+        self.assertIn('var USAGE_HISTORY_URL = "/api/usage-history"', self.js)
+        self.assertIn('var USAGE_HISTORY_REFRESH_URL = "/api/usage-history/refresh"', self.js)
+        loader = re.search(r"function loadUsageHistory\([\s\S]*?\n}\n", self.js)
+        self.assertIsNotNone(loader)
+        self.assertIn('options.method = "POST"', loader.group(0))
+        self.assertIn('options.headers["X-CSRF-Token"] = csrfToken', loader.group(0))
+        self.assertIn("API-equivalent estimates, not subscription charges", self.js)
 
 
 class PanelGroupingTests(unittest.TestCase):

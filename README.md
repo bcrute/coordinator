@@ -218,6 +218,29 @@ provider displays an unavailable state instead of estimating a quota from local
 token history. Credentials and access tokens are never returned to the browser
 or persisted by Coordinator.
 
+### Historical usage value
+
+The dedicated **Usage** page imports token metadata from native Codex and Claude
+session records across the service account, including sessions started outside
+Coordinator. Provider tabs show cumulative API-equivalent value over 24 hours,
+7 days, 30 days, or all retained history, plus raw token totals, pricing coverage,
+and a per-model breakdown. These figures estimate what the same token mix would
+cost at published API rates; they are not charges against the subscription.
+
+The importer reads only timestamps, model identifiers, message/session identifiers,
+and token counters. Prompts, responses, tool arguments, credentials, and repository
+contents are neither copied into the owner-only usage database nor returned by the
+HTTP API. The first import scans existing native history and may take several
+seconds; later imports fingerprint files and revisit only changed logs. Cache writes
+retain their native five-minute or one-hour duration when the provider reports it;
+the combined cache-write total remains available for adapter compatibility.
+
+Historical usage is provider-neutral. A `UsageHistoryAdapter` supplies a stable ID,
+display name, and normalized records. The page builds its tabs from the API response,
+so a local or custom adapter appears without frontend changes. Adapters may supply a
+native or estimated USD value; records without a valid price remain useful and are
+shown as straight token counts rather than assigned an invented value.
+
 ### Local/API-backed implementation with mini-swe-agent
 
 Install mini-swe-agent as a separate tool following its

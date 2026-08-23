@@ -294,12 +294,56 @@ class DashboardBrowserTests(unittest.TestCase):
                             },
                         ],
                     }
+                    history_payload = {
+                        "ok": True,
+                        "generated_at": now.isoformat(),
+                        "refreshing": False,
+                        "range": "7d",
+                        "from": (now - weekly).isoformat(),
+                        "to": now.isoformat(),
+                        "bucket_seconds": 3600,
+                        "providers": [
+                            {
+                                "id": "codex",
+                                "name": "Codex",
+                                "status": "available",
+                                "metric": "cost",
+                                "cost_label": "Estimated API value",
+                                "coverage_percent": 100.0,
+                                "totals": {"total_tokens": 125000, "cost_usd": 4.25},
+                                "series": [
+                                    {"timestamp": (now - timedelta(days=1)).isoformat(), "tokens": 50000, "cost_usd": 1.25},
+                                    {"timestamp": now.isoformat(), "tokens": 75000, "cost_usd": 3.0},
+                                ],
+                                "models": [{"model": "gpt-test", "tokens": 125000, "valued_tokens": 125000, "cost_usd": 4.25}],
+                            },
+                            {
+                                "id": "local-qwen",
+                                "name": "Local Qwen",
+                                "status": "available",
+                                "metric": "tokens",
+                                "cost_label": None,
+                                "coverage_percent": None,
+                                "totals": {"total_tokens": 42000, "cost_usd": 0},
+                                "series": [{"timestamp": now.isoformat(), "tokens": 42000, "cost_usd": 0}],
+                                "models": [{"model": "qwen-27b", "tokens": 42000, "valued_tokens": 0, "cost_usd": 0}],
+                            },
+                        ],
+                    }
                     page.route(
                         "**/api/provider-usage",
                         lambda route: route.fulfill(
                             status=200,
                             content_type="application/json",
                             body=json.dumps(usage_payload),
+                        ),
+                    )
+                    page.route(
+                        "**/api/usage-history?*",
+                        lambda route: route.fulfill(
+                            status=200,
+                            content_type="application/json",
+                            body=json.dumps(history_payload),
                         ),
                     )
                     page.goto(url, wait_until="domcontentloaded")
@@ -335,6 +379,23 @@ class DashboardBrowserTests(unittest.TestCase):
                         page.locator("#usage-codex-value .usage-chip").first.get_attribute(
                             "title"
                         ),
+                    )
+                    page.locator("#nav-usage").click()
+                    page.locator("#usage-history-tabs .provider-tab").filter(
+                        has_text="Codex"
+                    ).wait_for(timeout=10_000)
+                    self.assertEqual(page.locator("#usage-value-total").inner_text(), "$4.25")
+                    self.assertGreater(
+                        page.locator("#usage-history-chart .usage-value-line").count(), 0
+                    )
+                    page.locator("#usage-history-tabs .provider-tab").filter(
+                        has_text="Local Qwen"
+                    ).click()
+                    self.assertEqual(
+                        page.locator("#usage-value-total").inner_text(), "42,000 tokens"
+                    )
+                    self.assertEqual(
+                        page.locator("#usage-price-coverage").inner_text(), "not applicable"
                     )
                     page.locator("#connection-label").filter(
                         has_text="state feed"

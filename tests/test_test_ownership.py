@@ -27,6 +27,7 @@ TEST_OWNERS: dict[str, tuple[str, ...]] = {
     "process_activity": ("test_process_activity.py",),
     "processes": ("test_workflow.py",),
     "provider_usage": ("test_provider_usage.py",),
+    "usage_history": ("test_usage_history.py",),
     "repositories": ("test_web_repository_switching.py",),
     "run_claude_turn": ("test_workflow.py", "test_workflow_runners.py"),
     "run_codex_review": ("test_workflow.py", "test_workflow_runners.py"),

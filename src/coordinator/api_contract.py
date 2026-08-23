@@ -77,6 +77,12 @@ def openapi_document() -> dict[str, Any]:
         "/api/v1/provider-usage/refresh": {
             "post": _operation("Refresh Codex and Claude usage", "ProviderUsage")
         },
+        "/api/v1/usage-history": {
+            "get": _operation("Historical provider usage and estimated value", "UsageHistory")
+        },
+        "/api/v1/usage-history/refresh": {
+            "post": _operation("Import native provider usage telemetry", "UsageHistory")
+        },
         "/api/v1/events": {
             "get": {
                 "summary": "Resumable state and transition stream",
@@ -212,6 +218,28 @@ def openapi_document() -> dict[str, Any]:
                 "next_refresh_at": {"type": ["string", "null"], "format": "date-time"},
                 "refresh_interval_seconds": {"type": "integer", "minimum": 1},
                 "refreshing": {"type": "boolean"},
+                "providers": {"type": "array", "items": object_schema},
+            },
+            "additionalProperties": False,
+        },
+        "UsageHistory": {
+            "type": "object",
+            "required": [
+                "ok",
+                "generated_at",
+                "refreshing",
+                "range",
+                "bucket_seconds",
+                "providers",
+            ],
+            "properties": {
+                "ok": {"const": True},
+                "generated_at": {"type": ["string", "null"], "format": "date-time"},
+                "refreshing": {"type": "boolean"},
+                "range": {"enum": ["24h", "7d", "30d", "all"]},
+                "from": {"type": ["string", "null"], "format": "date-time"},
+                "to": {"type": "string", "format": "date-time"},
+                "bucket_seconds": {"type": "integer", "minimum": 1},
                 "providers": {"type": "array", "items": object_schema},
             },
             "additionalProperties": False,

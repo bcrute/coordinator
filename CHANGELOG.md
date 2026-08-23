@@ -22,11 +22,16 @@ interface with migration notes.
   maintenance, provider usage, process discovery, web controls, and failure recovery.
 - A Firefox-specific browser regression for automatic terminal socket reconnection,
   alongside the complete Chromium journey.
+- A provider-neutral historical Usage screen with dynamic provider tabs, native Codex
+  and Claude session importers, API-equivalent cost estimates, pricing coverage, raw
+  token fallback for local/custom adapters, and an owner-only incremental SQLite index.
 
 ### Changed
 
 - Provider usage pace projections now remain in the same percentage-left frame as the
   header: zero or negative means the current pace exhausts the allowance before reset.
+- Historical usage records preserve five-minute, one-hour, and unclassified cache
+  writes separately while retaining the combined cache-write API total.
 
 ### Fixed
 
