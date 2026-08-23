@@ -564,6 +564,39 @@
 
       <section id="view-settings" class="view" aria-labelledby="view-settings-heading" hidden>
         <h2 class="view-heading" id="view-settings-heading">Settings</h2>
+        <section class="panel" aria-labelledby="executor-settings-heading">
+          <header class="panel-head">
+            <h3 id="executor-settings-heading">Implementation executor</h3>
+            <p class="badge" id="executor-settings-state">not loaded</p>
+          </header>
+          <form class="panel-body settings-form" id="executor-settings-form">
+            <p class="note">Choose the agent used for future bounded watcher turns. Stop the managed watcher before changing this selection.</p>
+            <label>Executor
+              <select name="executor_adapter">
+                <option value="claude">Claude Code</option>
+                <option value="mini-swe-agent">mini-swe-agent</option>
+              </select>
+            </label>
+            <label class="executor-claude">Lead model <input name="claude_model" value="opus" required /></label>
+            <label class="executor-claude">Subagent model <input name="claude_subagent_model" value="sonnet" required /></label>
+            <label class="executor-claude">Maximum turns <input name="claude_max_turns" type="number" min="1" max="200" value="40" required /></label>
+            <label class="executor-mini">OpenAI-compatible endpoint <input name="mini_swe_api_base" type="url" placeholder="Endpoint base URL ending in /v1" /></label>
+            <label class="executor-mini">Model
+              <input name="mini_swe_model" list="executor-model-options" placeholder="Qwen/Qwen3.8-27B" />
+              <datalist id="executor-model-options"></datalist>
+            </label>
+            <label class="executor-mini">LiteLLM provider <input name="mini_swe_provider" value="openai" required /></label>
+            <label class="executor-mini">API-key environment variable <input name="mini_swe_api_key_env" placeholder="blank for an unauthenticated local endpoint" /></label>
+            <label class="executor-mini">Step limit <input name="mini_swe_step_limit" type="number" min="1" max="200" value="12" required /></label>
+            <label class="executor-mini">Wall-time limit (seconds) <input name="mini_swe_timeout_seconds" type="number" min="10" max="86400" value="900" required /></label>
+            <label class="executor-mini">Cost limit <input name="mini_swe_cost_limit" type="number" min="0" step="0.01" value="0" required /></label>
+            <div class="executor-mini executor-actions">
+              <button type="button" class="control-button" id="executor-discover">Discover models</button>
+            </div>
+            <button type="submit" class="control-button">Save executor</button>
+            <p class="note form-feedback" id="executor-settings-feedback" role="status">Only the environment-variable name is stored; secret values never enter Coordinator state.</p>
+          </form>
+        </section>
         <section class="panel" aria-labelledby="guardrails-heading">
           <header class="panel-head">
             <h3 id="guardrails-heading">Active run guardrails</h3>

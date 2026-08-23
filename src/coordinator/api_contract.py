@@ -152,6 +152,22 @@ def openapi_document() -> dict[str, Any]:
             "get": _operation("Non-secret preferences", "Preferences"),
             "post": _operation("Update non-secret preferences", "Preferences", request_schema="PreferencePatch"),
         },
+        "/api/v1/executor-settings": {
+            "get": _operation("Persisted implementation executor settings", "ExecutorSettings"),
+            "post": _operation(
+                "Update the executor used by future watcher starts",
+                "ExecutorSettings",
+                request_schema="ExecutorSettingsPatch",
+                statuses=("400", "401", "403", "409"),
+            ),
+        },
+        "/api/v1/executor-settings/discover": {
+            "post": _operation(
+                "Discover models from an OpenAI-compatible endpoint",
+                "ExecutorModelList",
+                request_schema="ExecutorDiscovery",
+            )
+        },
         "/api/v1/diagnostics": {
             "get": _operation("Bounded operational diagnostics", "Diagnostics")
         },
@@ -274,6 +290,32 @@ def openapi_document() -> dict[str, Any]:
             "properties": {"ok": {"const": True}, "preferences": object_schema},
             "additionalProperties": False,
         },
+        "ExecutorSettings": {
+            "type": "object",
+            "required": ["ok", "configuration", "status"],
+            "properties": {
+                "ok": {"const": True},
+                "configuration": {"$ref": "#/components/schemas/ExecutorSettingsPatch"},
+                "status": object_schema,
+                "outcome": {"type": "string"},
+                "message": {"type": "string"},
+                "managed_watcher": object_schema,
+            },
+            "additionalProperties": False,
+        },
+        "ExecutorModelList": {
+            "type": "object",
+            "required": ["ok", "models"],
+            "properties": {
+                "ok": {"const": True},
+                "models": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                },
+            },
+            "additionalProperties": False,
+        },
         "Diagnostics": {
             "type": "object",
             "required": ["ok", "mode", "summary", "checks"],
@@ -294,6 +336,32 @@ def openapi_document() -> dict[str, Any]:
                 "browser_notifications": {"type": "boolean"},
                 "theme": {"enum": ["system", "dark", "light"]},
                 "log_lines": {"type": "integer", "minimum": 50, "maximum": 200},
+            },
+            "additionalProperties": False,
+        },
+        "ExecutorSettingsPatch": {
+            "type": "object",
+            "properties": {
+                "executor_adapter": {"enum": ["claude", "mini-swe-agent"]},
+                "claude_model": {"type": "string", "minLength": 1},
+                "claude_subagent_model": {"type": "string", "minLength": 1},
+                "claude_max_turns": {"type": "integer", "minimum": 1, "maximum": 200},
+                "mini_swe_model": {"type": "string"},
+                "mini_swe_api_base": {"type": "string"},
+                "mini_swe_provider": {"type": "string", "minLength": 1},
+                "mini_swe_api_key_env": {"type": "string"},
+                "mini_swe_step_limit": {"type": "integer", "minimum": 1, "maximum": 200},
+                "mini_swe_cost_limit": {"type": "number", "minimum": 0},
+                "mini_swe_timeout_seconds": {"type": "integer", "minimum": 10, "maximum": 86400},
+            },
+            "additionalProperties": False,
+        },
+        "ExecutorDiscovery": {
+            "type": "object",
+            "required": ["api_base"],
+            "properties": {
+                "api_base": {"type": "string", "minLength": 1},
+                "api_key_env": {"type": "string"},
             },
             "additionalProperties": False,
         },

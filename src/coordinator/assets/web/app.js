@@ -60,6 +60,7 @@ var selectedRun = null;
 var selectedRunEvents = [];
 var preferences = { browser_notifications: false, theme: "system", log_lines: 200 };
 var preferencesLoaded = false;
+var executorSettingsLoaded = false;
 var lastNotificationKey = "";
 var shortcutPrefix = false;
 
@@ -2253,6 +2254,63 @@ function loadPreferences() {
   });
 }
 
+function toggleExecutorFields() {
+  var form = el("executor-settings-form");
+  if (!form) return;
+  var mini = form.elements.namedItem("executor_adapter").value === "mini-swe-agent";
+  Array.prototype.forEach.call(document.querySelectorAll(".executor-claude"), function (node) {
+    node.hidden = mini;
+  });
+  Array.prototype.forEach.call(document.querySelectorAll(".executor-mini"), function (node) {
+    node.hidden = !mini;
+  });
+}
+
+function renderExecutorSettings(payload) {
+  var configuration = record(payload.configuration);
+  var status = record(payload.status);
+  var form = el("executor-settings-form");
+  if (!form) return;
+  Object.keys(configuration).forEach(function (name) {
+    var control = form.elements.namedItem(name);
+    if (control) control.value = String(configuration[name]);
+  });
+  toggleExecutorFields();
+  var available = status.executable_available === true;
+  var state = el("executor-settings-state");
+  state.textContent = text(status.display_name, text(status.adapter, "executor")) +
+    (available ? " · ready" : " · executable missing");
+  state.dataset.tone = available ? "ok" : "bad";
+  if (status.load_warning) {
+    setText("executor-settings-feedback", text(status.load_warning, "Stored settings were ignored."));
+  }
+}
+
+function loadExecutorSettings() {
+  return apiGet("/api/executor-settings").then(function (payload) {
+    executorSettingsLoaded = true;
+    renderExecutorSettings(payload);
+  }).catch(function (error) {
+    setText("executor-settings-feedback", "Could not load executor settings: " + describe(error));
+  });
+}
+
+function executorSettingsPayload(form) {
+  return {
+    executor_adapter: form.elements.namedItem("executor_adapter").value,
+    claude_model: form.elements.namedItem("claude_model").value.trim(),
+    claude_subagent_model: form.elements.namedItem("claude_subagent_model").value.trim(),
+    claude_max_turns: Number(form.elements.namedItem("claude_max_turns").value),
+    mini_swe_model: form.elements.namedItem("mini_swe_model").value.trim(),
+    mini_swe_api_base: form.elements.namedItem("mini_swe_api_base").value.trim(),
+    mini_swe_provider: form.elements.namedItem("mini_swe_provider").value.trim(),
+    mini_swe_api_key_env: form.elements.namedItem("mini_swe_api_key_env").value.trim(),
+    mini_swe_step_limit: Number(form.elements.namedItem("mini_swe_step_limit").value),
+    mini_swe_cost_limit: Number(form.elements.namedItem("mini_swe_cost_limit").value),
+    mini_swe_timeout_seconds: Number(form.elements.namedItem("mini_swe_timeout_seconds").value),
+  };
+}
+
 function wireLogout() {
   var node = el("logout");
   if (!node) {
@@ -2785,7 +2843,48 @@ function wireDailyDriver() {
       setText("preferences-feedback", "Could not save preferences: " + describe(error));
     });
   });
+  var executorForm = el("executor-settings-form");
+  if (executorForm) {
+    executorForm.elements.namedItem("executor_adapter").addEventListener("change", toggleExecutorFields);
+    executorForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      setText("executor-settings-feedback", "Saving executor settings…");
+      apiPost("/api/executor-settings", executorSettingsPayload(executorForm)).then(function (result) {
+        if (result.status !== 200) {
+          throw new Error(text(result.payload.message, "save failed"));
+        }
+        renderExecutorSettings(result.payload);
+        setText("executor-settings-feedback", text(result.payload.message, "Executor settings saved."));
+        restartStateFeed();
+      }).catch(function (error) {
+        setText("executor-settings-feedback", "Could not save executor settings: " + describe(error));
+      });
+    });
+  }
+  var discover = el("executor-discover");
+  if (discover && executorForm) discover.addEventListener("click", function () {
+    discover.disabled = true;
+    setText("executor-settings-feedback", "Discovering models…");
+    apiPost("/api/executor-settings/discover", {
+      api_base: executorForm.elements.namedItem("mini_swe_api_base").value.trim(),
+      api_key_env: executorForm.elements.namedItem("mini_swe_api_key_env").value.trim(),
+    }).then(function (result) {
+      if (result.status !== 200) throw new Error(text(result.payload.message, "discovery failed"));
+      var models = list(result.payload.models);
+      var options = el("executor-model-options");
+      options.replaceChildren.apply(options, models.map(function (model) {
+        var option = document.createElement("option");
+        option.value = text(model, "");
+        return option;
+      }));
+      if (models.length === 1) executorForm.elements.namedItem("mini_swe_model").value = models[0];
+      setText("executor-settings-feedback", "Discovered " + models.length + " model" + (models.length === 1 ? "." : "s."));
+    }).catch(function (error) {
+      setText("executor-settings-feedback", "Could not discover models: " + describe(error));
+    }).then(function () { discover.disabled = false; });
+  });
   loadPreferences();
+  loadExecutorSettings();
 }
 
 function wireShortcuts() {
@@ -2860,8 +2959,9 @@ function applyRoute() {
     loadUsageHistory(false);
   } else if (route === "runs") {
     loadRuns();
-  } else if (route === "settings" && !preferencesLoaded) {
-    loadPreferences();
+  } else if (route === "settings") {
+    if (!preferencesLoaded) loadPreferences();
+    if (!executorSettingsLoaded) loadExecutorSettings();
   } else if (route === "sessions") {
     loadSessions();
   } else if (route === "diagnostics") {

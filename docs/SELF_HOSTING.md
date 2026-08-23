@@ -106,10 +106,10 @@ automatic-watcher and native-team turns.
 
 **The selected mini-swe-agent executor is unavailable.** mini-swe-agent is an
 optional, separately installed tool. Run `command -v mini` as the same operating-system
-account that runs Coordinator, verify the model endpoint and named key environment
-variable in `workflow.toml`, and run `coordinator doctor --config workflow.toml`.
-Coordinator does not install mini-swe-agent or copy endpoint credentials into its
-settings.
+account that runs Coordinator, verify the model endpoint and optional named key
+environment variable on the Settings page, and run `coordinator doctor --config
+workflow.toml`. An unauthenticated local endpoint uses a blank key name. Coordinator
+does not install mini-swe-agent or copy endpoint credentials into its settings.
 
 **The Usage page is empty or takes time on its first visit.** The first historical
 import scans the service account's native `~/.codex/sessions` and

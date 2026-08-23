@@ -42,7 +42,12 @@ VIEW_PANEL_IDS = {
     "activity": ["activity-heading"],
     "usage": ["usage-history-heading"],
     "runs": ["run-history-heading", "run-detail-heading"],
-    "settings": ["guardrails-heading", "preferences-heading", "shortcuts-heading"],
+    "settings": [
+        "executor-settings-heading",
+        "guardrails-heading",
+        "preferences-heading",
+        "shortcuts-heading",
+    ],
     "setup": ["create-repository-heading", "initialize-heading"],
     "sessions": ["sessions-heading"],
     "diagnostics": ["diagnostics-heading"],

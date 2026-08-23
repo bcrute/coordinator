@@ -403,9 +403,14 @@ def run(args: argparse.Namespace) -> int:
             f"mini-swe-agent is working on step 0 with {args.model or 'its configured model'}.",
         )
         child_env = os.environ.copy()
-        source_key = child_env.get(args.api_key_env)
-        if source_key and args.api_key_env != "OPENAI_API_KEY":
-            child_env["OPENAI_API_KEY"] = source_key
+        if args.api_key_env:
+            source_key = child_env.get(args.api_key_env)
+            if source_key:
+                child_env["OPENAI_API_KEY"] = source_key
+        else:
+            # LiteLLM's OpenAI-compatible client expects a value even when a
+            # local endpoint deliberately performs no authentication.
+            child_env["OPENAI_API_KEY"] = "local-endpoint-no-key"
         print(f"Starting mini-swe-agent handoff: {task_id}", flush=True)
         child = subprocess.Popen(
             command,
@@ -547,7 +552,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--progress-interval must be positive")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", args.provider):
         parser.error("--provider must contain only letters, numbers, dot, underscore, or hyphen")
-    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", args.api_key_env):
+    if args.api_key_env and not re.fullmatch(
+        r"[A-Za-z_][A-Za-z0-9_]*", args.api_key_env
+    ):
         parser.error("--api-key-env must be an environment-variable name")
     if args.api_base:
         endpoint = urlsplit(args.api_base)

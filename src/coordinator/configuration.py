@@ -137,7 +137,6 @@ def load_config(path: Path) -> dict[str, object]:
         "mini_swe_model",
         "mini_swe_api_base",
         "mini_swe_provider",
-        "mini_swe_api_key_env",
         "auth_mode",
         "oidc_issuer",
         "oidc_client_id",
@@ -153,6 +152,12 @@ def load_config(path: Path) -> dict[str, object]:
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"--config {key} must be a non-empty string")
         settings[key] = value
+
+    if "mini_swe_api_key_env" in data:
+        value = data["mini_swe_api_key_env"]
+        if not isinstance(value, str):
+            raise ValueError("--config mini_swe_api_key_env must be a string")
+        settings["mini_swe_api_key_env"] = value
 
     for key in ("allowed_subjects", "allowed_groups", "trusted_hosts"):
         if key not in data:
@@ -427,7 +432,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--executor-adapter must be claude or mini-swe-agent")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", str(args.mini_swe_provider)):
         parser.error("--mini-swe-provider has invalid characters")
-    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(args.mini_swe_api_key_env)):
+    if args.mini_swe_api_key_env and not re.fullmatch(
+        r"[A-Za-z_][A-Za-z0-9_]*", str(args.mini_swe_api_key_env)
+    ):
         parser.error("--mini-swe-api-key-env must be an environment-variable name")
     if args.mini_swe_api_base:
         endpoint = urlsplit(str(args.mini_swe_api_base))

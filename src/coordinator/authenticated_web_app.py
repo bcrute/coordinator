@@ -29,7 +29,13 @@ from typing import Any
 
 from . import web_app
 from .api_contract import openapi_document
-from .executor_adapters import ExecutorAdapter, from_namespace, resolve_executable
+from .executor_adapters import (
+    ClaudeExecutorAdapter,
+    ExecutorAdapter,
+    from_namespace,
+    resolve_executable,
+)
+from .executor_settings import ExecutorSettingsService, discover_models
 from .github_ci import configure_github_ci
 from .operational_store import GuardrailPolicy, OperationalStore, evaluate_guardrails
 from .provider_usage import DEFAULT_REFRESH_SECONDS, ProviderUsageService
@@ -147,7 +153,16 @@ def create_authenticated_app(
     if not root_dir.is_dir():
         raise ValueError(f"repositories_root must be a directory: {root_dir}")
 
-    watcher_factory = watcher_command_for_repo or web_app.default_watcher_command
+    operational = OperationalStore(settings.state_dir)
+    operational.recover_interrupted()
+    executor_service = ExecutorSettingsService(
+        operational, executor_adapter or ClaudeExecutorAdapter()
+    )
+    watcher_factory = watcher_command_for_repo or (
+        lambda selected_repo: web_app.default_watcher_command(
+            selected_repo, executor_service.adapter()
+        )
+    )
     codex_factory = codex_command_for_repo or web_app.default_codex_command
     context = web_app.ApplicationContext(
         root,
@@ -163,8 +178,6 @@ def create_authenticated_app(
         settings.session_idle_seconds,
         settings.session_absolute_seconds,
     )
-    operational = OperationalStore(settings.state_dir)
-    operational.recover_interrupted()
     rate_limiter = SlidingWindowRateLimiter()
     usage_service = provider_usage_service or ProviderUsageService(
         usage_refresh_seconds
@@ -912,8 +925,14 @@ def create_authenticated_app(
         )
 
     async def preferences_get(request: Request):
+        stored = await run_in_threadpool(operational.preferences)
+        public_preferences = {
+            key: stored[key]
+            for key in ("browser_notifications", "theme", "log_lines")
+            if key in stored
+        }
         return JSONResponse(
-            {"ok": True, "preferences": await run_in_threadpool(operational.preferences)}
+            {"ok": True, "preferences": public_preferences}
         )
 
     async def preferences_update(request: Request):
@@ -953,10 +972,92 @@ def create_authenticated_app(
             )
         for key, preference in value.items():
             await run_in_threadpool(operational.set_preference, key, preference)
-        preferences = await run_in_threadpool(operational.preferences)
+        stored = await run_in_threadpool(operational.preferences)
+        preferences = {
+            key: stored[key]
+            for key in ("browser_notifications", "theme", "log_lines")
+            if key in stored
+        }
         return JSONResponse(
             {"ok": True, "outcome": "updated", "preferences": preferences}
         )
+
+    async def executor_settings_get(request: Request):
+        return JSONResponse({"ok": True, **executor_service.snapshot()})
+
+    async def executor_settings_update(request: Request):
+        value = await _json_body(request, SETUP_BODY_BYTES)
+        if isinstance(value, JSONResponse):
+            return value
+        try:
+            candidate = executor_service.candidate(value)
+            adapter = candidate.adapter()
+        except ValueError as error:
+            return JSONResponse(
+                {"ok": False, "outcome": "validation", "message": str(error)},
+                status_code=400,
+            )
+
+        factory = lambda selected_repo: web_app.default_watcher_command(
+            selected_repo, adapter
+        )
+        outcome, message = await run_in_threadpool(
+            context.reconfigure_watcher,
+            factory,
+            lambda: executor_service.save(candidate),
+        )
+        status_code = {"updated": 200, "conflict": 409, "error": 500}[outcome]
+        issuer, subject = _audit_user(request)
+        await run_in_threadpool(
+            store.audit,
+            "executor_settings_update",
+            outcome,
+            issuer=issuer,
+            subject=subject,
+            source=_client_source(request),
+            detail=adapter.id,
+        )
+        with context.lease() as active:
+            watcher = active.watcher.snapshot()
+        return JSONResponse(
+            {
+                "ok": outcome == "updated",
+                "outcome": outcome,
+                "message": message,
+                **executor_service.snapshot(),
+                "managed_watcher": watcher,
+            },
+            status_code=status_code,
+        )
+
+    async def executor_models_discover(request: Request):
+        value = await _json_body(request, SETUP_BODY_BYTES)
+        if isinstance(value, JSONResponse):
+            return value
+        if not isinstance(value, dict) or not {"api_base"} <= set(value) <= {
+            "api_base",
+            "api_key_env",
+        }:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "outcome": "validation",
+                    "message": "expected api_base and optional api_key_env",
+                },
+                status_code=400,
+            )
+        try:
+            models = await run_in_threadpool(
+                discover_models,
+                value["api_base"],
+                value.get("api_key_env", ""),
+            )
+        except ValueError as error:
+            return JSONResponse(
+                {"ok": False, "outcome": "validation", "message": str(error)},
+                status_code=400,
+            )
+        return JSONResponse({"ok": True, "models": models})
 
     async def session_revoke(request: Request):
         value = await _json_body(request, web_app.CONTROL_BODY_BYTES)
@@ -1069,6 +1170,8 @@ def create_authenticated_app(
                 if isinstance(latest_event_at, (int, float))
                 else None
             )
+            configured_executor = executor_service.adapter()
+            configured_executable = resolve_executable(configured_executor)
             checks = [
                 {
                     "name": "repository",
@@ -1106,15 +1209,11 @@ def create_authenticated_app(
                 },
                 {
                     "name": "implementation executor",
-                    "ok": bool(executor_adapter and resolve_executable(executor_adapter)),
-                    "detail": (
-                        f"{executor_adapter.display_name}: "
-                        f"{resolve_executable(executor_adapter) or 'not found on PATH'}"
-                        if executor_adapter
-                        else "not configured"
-                    ),
+                    "ok": configured_executable is not None,
+                    "detail": f"{configured_executor.display_name}: "
+                    f"{configured_executable or 'not found on PATH'}",
                     "category": "providers",
-                    "required": executor_adapter is not None,
+                    "required": True,
                 },
                 {
                     "name": "Codex CLI",
@@ -1858,6 +1957,28 @@ def create_authenticated_app(
         Route("/api/preferences", preferences_update, methods=["POST"]),
         Route("/api/v1/preferences", versioned(preferences_get), methods=["GET"]),
         Route("/api/v1/preferences", versioned(preferences_update), methods=["POST"]),
+        Route("/api/executor-settings", executor_settings_get, methods=["GET"]),
+        Route("/api/executor-settings", executor_settings_update, methods=["POST"]),
+        Route(
+            "/api/executor-settings/discover",
+            executor_models_discover,
+            methods=["POST"],
+        ),
+        Route(
+            "/api/v1/executor-settings",
+            versioned(executor_settings_get),
+            methods=["GET"],
+        ),
+        Route(
+            "/api/v1/executor-settings",
+            versioned(executor_settings_update),
+            methods=["POST"],
+        ),
+        Route(
+            "/api/v1/executor-settings/discover",
+            versioned(executor_models_discover),
+            methods=["POST"],
+        ),
         Route("/api/sessions/revoke", session_revoke, methods=["POST"]),
         Route("/api/v1/sessions/revoke", versioned(session_revoke), methods=["POST"]),
         Route(
@@ -1921,6 +2042,7 @@ def create_authenticated_app(
     app.state.operational_store = operational
     app.state.provider_usage = usage_service
     app.state.usage_history = history_service
+    app.state.executor_settings = executor_service
     app.state.settings = settings
     return app
 
@@ -2036,9 +2158,6 @@ def serve_application(args: Any) -> int:
             repositories_root=args.repositories_root,
             relay_log_lines=args.relay_log_lines,
             usage_refresh_seconds=int(args.usage_refresh_seconds),
-            watcher_command_for_repo=(
-                lambda repo: web_app.default_watcher_command(repo, executor)
-            ),
             executor_adapter=executor,
         )
     except ValueError as error:

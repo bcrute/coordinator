@@ -177,6 +177,14 @@ and `..` for the repository paths for exactly this reason.
 from `--config`, which in turn wins over the built-in default. See
 `workflow.example.toml` for a fully commented starting point.
 
+The Settings page can switch the implementation executor and edit its non-secret
+model, endpoint, and turn bounds. These owner-only values persist in Coordinator's
+SQLite state and apply to future watcher starts without restarting the app. A running
+managed watcher must be stopped before changing them. Endpoint secrets are never
+accepted: enter only an inherited environment-variable name, or leave it blank for a
+local endpoint that intentionally performs no authentication. **Discover models**
+queries the bounded OpenAI-compatible `/models` endpoint and fills the model list.
+
 ### Managed terminal activity
 
 The Terminal page shows live agents, safely reported models, and background terminals
@@ -188,12 +196,13 @@ from known model flags, allowlisted model environment values, or the exact Codex
 record associated with an open rollout file; prompts, arbitrary arguments, and general
 environment values are not returned to the browser.
 
-This is observation, not agent configuration. Reusable agent profiles do not yet have a
-dashboard editor: provider executables, API endpoints, executor adapters, and model
-defaults remain TOML/CLI settings. Process presence also does not claim to know an
-agent's internal wait reason; a visible background terminal confirms that the managed
-session owns the work, while semantic messages such as “awaiting background terminal”
-remain provider-owned until exposed as structured events.
+This activity panel is observation, not agent configuration. Executor selection,
+model, endpoint, and bounds live on the Settings page; reusable multi-agent profiles
+and provider executables remain deployment configuration. Process presence also does
+not claim to know an agent's internal wait reason; a visible background terminal
+confirms that the managed session owns the work, while semantic messages such as
+“awaiting background terminal” remain provider-owned until exposed as structured
+events.
 
 ### Provider usage indicators
 
@@ -254,24 +263,26 @@ shown as straight token counts rather than assigned an invented value.
 
 Install mini-swe-agent as a separate tool following its
 [official CLI documentation](https://mini-swe-agent.com/latest/usage/mini/), then
-select it in your ignored `workflow.toml`:
+select it on the Settings page. TOML remains useful for the initial deployment
+default:
 
 ```toml
 executor_adapter = "mini-swe-agent"
-mini_swe_model = "openai/your-local-model"
+mini_swe_model = "your-local-model"
 mini_swe_api_base = "http://127.0.0.1:8000/v1"
 mini_swe_provider = "openai"
-mini_swe_api_key_env = "OPENAI_API_KEY"
+mini_swe_api_key_env = ""
 mini_swe_step_limit = 12
 mini_swe_timeout_seconds = 900
 ```
 
-Export any required endpoint key before starting Coordinator; put only its environment
-variable name in TOML. Start the app normally and check `coordinator doctor --config
-workflow.toml`. The watcher launches one noninteractive mini-swe-agent turn for each
-ready assignment, stores trajectories below `.coordination/runtime/trajectories/`, and
-hands the resulting diff back to Codex for review. This first integration is
-deliberately single-agent: mini-swe-agent does not create or report nested workers here.
+For an authenticated endpoint, export its key before starting Coordinator and put only
+the environment-variable name in TOML or Settings. Start the app normally and check
+`coordinator doctor --config workflow.toml`. The watcher launches one noninteractive
+mini-swe-agent turn for each ready assignment, stores trajectories below
+`.coordination/runtime/trajectories/`, and hands the resulting diff back to Codex for
+review. This first integration is deliberately single-agent: mini-swe-agent does not
+create or report nested workers here.
 
 ## Authenticated OIDC mode
 

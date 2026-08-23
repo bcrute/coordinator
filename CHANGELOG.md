@@ -10,6 +10,8 @@ interface with migration notes.
 
 - Built-in executor adapter seam with an optional, bounded mini-swe-agent runtime for
   local or API-backed implementation models.
+- Persisted Settings-page executor selection, bounded OpenAI-compatible model
+  discovery, and runtime watcher rebinding without storing endpoint secrets.
 - Provider-neutral executor telemetry, per-turn mini-swe-agent trajectories, and
   adapter diagnostics while retaining Claude as the default executor.
 - Risk-based testing guidance, branch/subprocess coverage reporting, and executor

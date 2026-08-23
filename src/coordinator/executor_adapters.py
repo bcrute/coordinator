@@ -177,7 +177,9 @@ def from_namespace(args: object) -> ExecutorAdapter:
             cost_limit=float(getattr(args, "mini_swe_cost_limit", 0.0)),
             timeout_seconds=int(getattr(args, "mini_swe_timeout_seconds", 900)),
         )
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", adapter.api_key_env):
+        if adapter.api_key_env and not re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*", adapter.api_key_env
+        ):
             raise ValueError("mini-swe-agent API-key environment name is invalid")
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", adapter.provider):
             raise ValueError("mini-swe-agent provider name is invalid")

@@ -38,10 +38,11 @@ usage_refresh_seconds = 3600
 # command separately and uncomment the settings below.
 # executor_adapter = "mini-swe-agent"
 # mini_swe_command = "mini"
-# mini_swe_model = "openai/your-local-model"
+# mini_swe_model = "your-local-model"
 # mini_swe_api_base = "http://127.0.0.1:8000/v1"
 # mini_swe_provider = "openai"
-# mini_swe_api_key_env = "OPENAI_API_KEY"
+# Leave blank for a local endpoint with no authentication, or name an inherited key.
+# mini_swe_api_key_env = ""
 # mini_swe_step_limit = 12
 # mini_swe_cost_limit = 0.0
 # mini_swe_timeout_seconds = 900

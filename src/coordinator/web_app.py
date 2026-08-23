@@ -253,6 +253,39 @@ class ApplicationContext:
             )
             return "selected", f"switched the active repository to {raw_path}", new_catalog
 
+    def reconfigure_watcher(
+        self,
+        watcher_command_for_repo: Callable[[Path], list[str] | None],
+        commit: Callable[[], None],
+    ) -> tuple[str, str]:
+        """Replace the future watcher command while no managed watcher is active."""
+
+        with self._lock:
+            active = self._active
+            snapshot = active.watcher.snapshot()
+            if snapshot.get("running") or snapshot.get("state") == "stopping":
+                return (
+                    "conflict",
+                    "stop the managed watcher before changing its executor settings",
+                )
+            try:
+                new_watcher = WatcherManager(
+                    active.repo,
+                    watcher_command_for_repo(active.repo),
+                    self.stop_timeout,
+                    self.start_grace,
+                )
+                commit()
+            except Exception as error:  # noqa: BLE001 - preserve the active manager
+                return "error", f"could not save executor settings: {error}"
+            self._watcher_command_for_repo = watcher_command_for_repo
+            self._active = RepositoryContext(
+                active.repo,
+                new_watcher,
+                active.codex_session,
+            )
+            return "updated", "executor settings saved for future watcher starts"
+
     def shutdown(self) -> None:
         """Idempotently stop whichever managers are currently active.
 
