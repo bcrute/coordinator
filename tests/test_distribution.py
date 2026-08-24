@@ -527,6 +527,7 @@ class PublicCheckoutUnitDiscoveryTests(unittest.TestCase):
             "test_usage_history.py",
             "test_executor_adapters.py",
             "test_executor_settings.py",
+            "test_executor_dispatch.py",
             "test_delegation.py",
             "test_github_ci.py",
             "test_maintenance_cli.py",

@@ -15,7 +15,7 @@ from unittest import mock
 from coordinator.init_project import main as initialize_project
 from coordinator.run_codex_review import run as run_review
 from coordinator.run_codex_review import valid_transition
-from coordinator.run_claude_turn import run as run_claude
+from coordinator.run_claude_turn import clean_error_detail, run as run_claude
 from coordinator.start_claude_team import run as run_team
 from coordinator.watch_coordination import Snapshot, next_action, role_handles
 
@@ -344,9 +344,15 @@ class ClaudeRunnerTests(CoordinationFixture):
     def prepare_handoff(self) -> None:
         self.write_status("none", "idle", "0")
 
+    def test_error_detail_is_bounded_sanitized_and_redacts_environment_secrets(self) -> None:
+        secret = "secret-value-for-test"
+        with mock.patch.dict(os.environ, {"EXAMPLE_API_KEY": secret}):
+            detail = clean_error_detail(["\033[31mfailed ", secret, "\x00\n"])
+        self.assertEqual(detail, "failed [redacted]")
+
     def test_nonzero_execution_is_reported_and_cleans_lock(self) -> None:
         self.prepare_handoff()
-        fake = self.executable("failing-claude", "exit 7\n")
+        fake = self.executable("failing-claude", "printf 'provider unavailable\\n' >&2\nexit 7\n")
 
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
             io.StringIO()
@@ -355,15 +361,23 @@ class ClaudeRunnerTests(CoordinationFixture):
 
         self.assertEqual(result, 7)
         self.assertIn("Claude exited with status 7", error.getvalue())
+        self.assertIn("provider unavailable", error.getvalue())
         self.assertFalse((self.repo / ".coordination/.claude-turn.lock").exists())
         progress = json.loads(
             (self.repo / ".coordination/runtime/claude-progress.json").read_text(
                 encoding="utf-8"
             )
         )
-        self.assertEqual(progress["state"], "completed")
+        self.assertEqual(progress["state"], "failed")
+        self.assertEqual(progress["exit_code"], 7)
+        self.assertEqual(progress["failure_detail"], "provider unavailable")
         self.assertEqual(progress["primary_model"], "opus")
         self.assertEqual(progress["subagent_model"], "sonnet")
+        status = (self.repo / ".coordination/coder/status.md").read_text(encoding="utf-8")
+        report = (self.repo / ".coordination/coder/latest-report.md").read_text(encoding="utf-8")
+        self.assertIn("- State: `blocked`", status)
+        self.assertIn("provider unavailable", status)
+        self.assertIn("executor failed with status 7", report)
 
     def test_zero_exit_requires_a_reviewable_handoff(self) -> None:
         self.prepare_handoff()

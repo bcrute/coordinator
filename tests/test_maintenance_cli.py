@@ -113,3 +113,23 @@ class MaintenanceCLITests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["error"], "database could not be read as SQLite")
+
+    def test_compact_removes_duplicate_events_and_reports_file_sizes(self) -> None:
+        repo = self.root / "project"
+        repo.mkdir()
+        store = OperationalStore(self.state)
+        details = store.sync_snapshot(repo, active_snapshot(), now=1.0)
+        with store._connect() as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM events WHERE run_id = ?", (details["run_id"],)
+            ).fetchone()
+            connection.execute(
+                "INSERT INTO events(event_uid, run_id, created_at, event_type, payload_json) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("old-duplicate", details["run_id"], 2.0, "state_changed", row[0]),
+            )
+        result, payload = self.invoke(["compact"])
+        self.assertEqual(result, 0)
+        self.assertEqual(payload["action"], "compact")
+        self.assertEqual(payload["deleted"], 1)
+        self.assertLessEqual(payload["after_bytes"], payload["before_bytes"])

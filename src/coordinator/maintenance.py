@@ -31,6 +31,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     rebuild.add_argument("repositories", type=Path, nargs="+")
     prune = subcommands.add_parser("prune", help="delete events older than a retention age")
     prune.add_argument("--days", type=float, required=True)
+    subcommands.add_parser("compact", help="remove timer-only duplicate events and vacuum")
     return parser.parse_args(argv)
 
 
@@ -57,11 +58,23 @@ def main(argv: list[str] | None = None) -> int:
                 snapshots.append((repo, build_state(repo)))
             count = store.rebuild(snapshots)
             result = {"ok": True, "action": "rebuild", "repositories": count}
-        else:
+        elif args.action == "prune":
             if args.days <= 0:
                 raise ValueError("--days must be positive")
             count = store.prune_events(time.time() - args.days * 86400)
             result = {"ok": True, "action": "prune", "deleted": count}
+        else:
+            before = store.diagnostics()["database_bytes"]
+            count = store.compact_events()
+            store.vacuum()
+            after = store.diagnostics()["database_bytes"]
+            result = {
+                "ok": True,
+                "action": "compact",
+                "deleted": count,
+                "before_bytes": before,
+                "after_bytes": after,
+            }
     except (OSError, ValueError) as error:
         print(json.dumps({"ok": False, "error": str(error)}))
         return 1

@@ -89,11 +89,36 @@ class OperationalStoreTests(unittest.TestCase):
     def test_advancing_display_timers_do_not_create_state_transitions(self):
         value = snapshot()
         value["runtime"]["timing"] = {"turn": {"seconds": 1}}
+        value["codex_session"]["process_activity"] = {
+            "observed_at_epoch": 10,
+            "agents": [{"state": "active", "elapsed": {"seconds": 1}}],
+            "background_terminals": [{"state": "active", "elapsed": {"seconds": 1}}],
+        }
         first = self.store.sync_snapshot(self.repo, value, now=10)
         value["runtime"]["timing"] = {"turn": {"seconds": 9}}
+        value["codex_session"]["process_activity"]["observed_at_epoch"] = 20
+        value["codex_session"]["process_activity"]["agents"][0]["elapsed"] = {"seconds": 9}
+        value["codex_session"]["process_activity"]["background_terminals"][0]["elapsed"] = {"seconds": 9}
         second = self.store.sync_snapshot(self.repo, value, now=20)
         self.assertFalse(second["changed"])
         self.assertEqual(len(self.store.list_events(first["run_id"])), 1)
+
+        value["codex_session"]["process_activity"]["agents"][0]["state"] = "exiting"
+        self.assertTrue(self.store.sync_snapshot(self.repo, value, now=30)["changed"])
+
+    def test_compaction_removes_historical_timer_only_duplicates(self):
+        value = snapshot()
+        first = self.store.sync_snapshot(self.repo, value, now=10)
+        with sqlite3.connect(self.store.path) as connection:
+            payload = json.dumps(self.store._projection(value), sort_keys=True)
+            connection.execute(
+                "INSERT INTO events(event_uid, run_id, created_at, event_type, payload_json) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("legacy-timer-event", first["run_id"], 20, "state_changed", payload),
+            )
+        self.assertEqual(self.store.compact_events(), 1)
+        self.assertEqual(len(self.store.list_events(first["run_id"])), 1)
+        self.assertEqual(self.store.compact_events(), 0)
 
     def test_objectives_and_agent_hierarchy_are_indexed(self):
         details = self.store.sync_snapshot(self.repo, snapshot())

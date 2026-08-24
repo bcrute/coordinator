@@ -8,7 +8,7 @@ import sys
 from . import __version__
 
 
-COMMANDS = ("serve", "doctor", "init", "data")
+COMMANDS = ("serve", "doctor", "init", "data", "run-turn")
 
 
 def _help() -> argparse.ArgumentParser:
@@ -48,5 +48,9 @@ def main(argv: list[str] | None = None) -> int:
         from .maintenance import main as maintain
 
         return maintain(rest)
+    if command == "run-turn":
+        from .run_executor_turn import main as run_turn
+
+        return run_turn(rest)
     parser.error(f"unknown command: {command}")
     return 2

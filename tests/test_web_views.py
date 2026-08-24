@@ -293,6 +293,9 @@ class VisibilityAndActiveStateTests(unittest.TestCase):
             self.assertIsNotNone(match, "view section not found for: " + route)
             self.assertIn("hidden", match.group(0))
 
+    def test_monitor_makes_a_blocked_inactive_goal_explicit(self):
+        self.assertIn("No executor is active — this goal is blocked.", self.js)
+
     def test_apply_route_toggles_hidden_for_exactly_one_view(self):
         match = re.search(r"function applyRoute\([\s\S]*?\n}\n", self.js)
         self.assertIsNotNone(match, "applyRoute function not found")

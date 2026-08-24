@@ -34,6 +34,7 @@ TEST_OWNERS: dict[str, tuple[str, ...]] = {
     "repositories": ("test_web_repository_switching.py",),
     "run_claude_turn": ("test_workflow.py", "test_workflow_runners.py"),
     "run_codex_review": ("test_workflow.py", "test_workflow_runners.py"),
+    "run_executor_turn": ("test_executor_dispatch.py",),
     "run_mini_swe_turn": ("test_executor_adapters.py",),
     "security": ("test_authenticated_web_app.py",),
     "start_claude_team": ("test_workflow.py", "test_workflow_runners.py"),

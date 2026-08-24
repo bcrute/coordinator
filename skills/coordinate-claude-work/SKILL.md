@@ -48,14 +48,18 @@ by inspection and record them there.
    `.coordination/planner/current-task.md`. Include a stable task ID, state
    `ready`, objective, scope, exclusions, acceptance criteria, required evidence,
    and allowed external actions. Set the review round to `0` for a new task.
-3. Run exactly one implementation handoff. Claude Code remains the default:
+3. Run exactly one implementation handoff through the executor saved on the
+   application's Agents & models screen:
 
    ```bash
-   python3.14 <skill-directory>/scripts/run_claude_turn.py --repo .
+   python3.14 <skill-directory>/scripts/run_executor_turn.py --repo .
    ```
 
-   The script is a thin adapter around Claude Code print mode and safe `auto`
-   permissions. It embeds only `planner/current-task.md` as the authoritative
+   Do not substitute a provider-specific runner: the dispatcher is what makes the
+   application's saved Claude or mini-swe-agent selection authoritative. Claude
+   remains the initial default. Its runner is a thin adapter around Claude Code
+   print mode and safe `auto` permissions. It embeds only
+   `planner/current-task.md` as the authoritative
    coordination packet; Claude Code loads ordinary repository instructions and
    manages its own context, tools, tasks, and agents. The lead defaults to Opus,
    native workers default to Sonnet through `CLAUDE_CODE_SUBAGENT_MODEL`, and a
@@ -69,14 +73,6 @@ by inspection and record them there.
    configured authentication.
    Do not use a permission-bypass flag. Use `--permission-mode default` when the
    environment or user policy requires explicit project permission rules.
-   For a deliberately selected mini-swe-agent executor, use the application watcher
-   configured by `executor_adapter = "mini-swe-agent"`, or run one direct handoff:
-
-   ```bash
-   python3.14 <skill-directory>/scripts/run_mini_swe_turn.py --repo . \
-     --model "<litellm-model>" --api-base "<openai-compatible-base>"
-   ```
-
    mini-swe-agent is an optional external runtime. The adapter invokes it in bounded,
    noninteractive mode, stores a trajectory under `.coordination/runtime/trajectories/`,
    writes coder status/report itself, and exposes no nested workers. Pass credentials

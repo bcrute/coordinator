@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import json
 import os
 import queue
@@ -215,6 +216,8 @@ def write_runtime_progress(
     subagent_model: str,
     orchestration_mode: str = "native-subagents",
     completed_at_epoch: float | None = None,
+    exit_code: int | None = None,
+    failure_detail: str | None = None,
 ) -> None:
     payload: dict[str, object] = {
         "provider_id": "claude",
@@ -232,6 +235,10 @@ def write_runtime_progress(
     }
     if completed_at_epoch is not None:
         payload["completed_at_epoch"] = completed_at_epoch
+    if exit_code is not None:
+        payload["exit_code"] = exit_code
+    if failure_detail:
+        payload["failure_detail"] = failure_detail
     runtime = repo / ".coordination" / "runtime"
     for name in ("executor-progress.json", "claude-progress.json"):
         path = runtime / name
@@ -277,6 +284,67 @@ def read_events(stream: object, destination: queue.Queue[str]) -> None:
         return
     for line in stream:
         destination.put(line)
+
+
+def clean_error_detail(lines: list[str]) -> str:
+    """Keep useful provider diagnostics bounded and safe for JSON/Markdown display."""
+
+    joined = "".join(lines)[-16_384:]
+    without_ansi = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", joined)
+    cleaned = "".join(
+        character
+        for character in without_ansi
+        if character in "\n\t" or ord(character) >= 32
+    )
+    for name, value in os.environ.items():
+        if (
+            len(value) >= 8
+            and any(
+                marker in name.upper()
+                for marker in ("KEY", "TOKEN", "SECRET", "PASSWORD")
+            )
+        ):
+            cleaned = cleaned.replace(value, "[redacted]")
+    return cleaned.strip()
+
+
+def write_failed_handoff(
+    repo: Path,
+    task_id: str,
+    review_round: str | None,
+    starting_ref: str | None,
+    exit_code: int,
+    detail: str,
+) -> None:
+    summary = next(
+        (line.strip() for line in reversed(detail.splitlines()) if line.strip()), ""
+    )
+    summary = summary.replace("`", "'")[:500]
+    reason = f"Executor exited with status {exit_code}"
+    if summary:
+        reason += f": {summary}"
+    coder = repo / ".coordination" / "coder"
+    status = (
+        "# Coder status\n\n"
+        f"- State: `blocked`\n- Task ID: `{task_id}`\n"
+        f"- Review round: `{review_round or '0'}`\n\n"
+        f"## Current activity\n\n{reason}\n"
+    )
+    report = (
+        "# Latest coder report\n\n"
+        f"- Task ID: `{task_id}`\n- Review round: `{review_round or '0'}`\n"
+        f"- Starting ref: `{starting_ref or 'not-recorded'}`\n"
+        f"- Outcome: executor failed with status {exit_code}.\n\n"
+        f"## Blocker\n\n{reason}\n\n"
+        "## Evidence\n\nNo successful implementation handoff was reported.\n"
+    )
+    for path, content in (
+        (coder / "status.md", status),
+        (coder / "latest-report.md", report),
+    ):
+        temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        temporary.write_text(content, encoding="utf-8")
+        temporary.replace(path)
 
 
 def handoff_prompt(
@@ -531,6 +599,7 @@ def run(args: argparse.Namespace) -> int:
             cwd=repo,
             env=child_env,
             stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
         )
@@ -541,6 +610,14 @@ def run(args: argparse.Namespace) -> int:
             daemon=True,
         )
         event_reader.start()
+        error_lines: queue.Queue[str] = queue.Queue()
+        error_reader = threading.Thread(
+            target=read_events,
+            args=(child.stderr, error_lines),
+            daemon=True,
+        )
+        error_reader.start()
+        recent_errors: deque[str] = deque(maxlen=200)
         running_usage = {name: 0 for name in TOKEN_FIELDS}
         final_usage: dict[str, int] | None = None
         seen_message_ids: set[str] = set()
@@ -567,6 +644,13 @@ def run(args: argparse.Namespace) -> int:
                     subagents,
                     default_subagent_model=args.subagent_model,
                 )
+            while True:
+                try:
+                    error_line = error_lines.get_nowait()
+                except queue.Empty:
+                    break
+                recent_errors.append(error_line[:2000])
+                print(error_line, end="", file=sys.stderr, flush=True)
             status = status_path.read_text(encoding="utf-8") if status_path.is_file() else ""
             update = handoff_progress(status, task_id, review_round)
             if update is not None and update != last_progress:
@@ -609,6 +693,7 @@ def run(args: argparse.Namespace) -> int:
             time.sleep(args.progress_interval)
         returncode = child.wait()
         event_reader.join()
+        error_reader.join()
         while True:
             try:
                 line = event_lines.get_nowait()
@@ -621,6 +706,23 @@ def run(args: argparse.Namespace) -> int:
                 seen_message_ids,
                 subagents,
                 default_subagent_model=args.subagent_model,
+            )
+        while True:
+            try:
+                error_line = error_lines.get_nowait()
+            except queue.Empty:
+                break
+            recent_errors.append(error_line[:2000])
+            print(error_line, end="", file=sys.stderr, flush=True)
+        failure_detail = clean_error_detail(list(recent_errors))
+        if returncode != 0:
+            write_failed_handoff(
+                repo,
+                task_id,
+                review_round,
+                field(task, "Starting ref"),
+                returncode,
+                failure_detail,
             )
         status = status_path.read_text(encoding="utf-8") if status_path.is_file() else ""
         update = handoff_progress(status, task_id, review_round)
@@ -642,7 +744,7 @@ def run(args: argparse.Namespace) -> int:
             goal_id,
             task_id,
             review_round,
-            "completed",
+            "completed" if returncode == 0 else "failed",
             turn_started_epoch,
             objective_started_epoch,
             final_tokens,
@@ -651,6 +753,8 @@ def run(args: argparse.Namespace) -> int:
             args.subagent_model,
             orchestration_mode,
             completed_at_epoch=completed_at_epoch,
+            exit_code=returncode if returncode != 0 else None,
+            failure_detail=failure_detail if returncode != 0 else None,
         )
         final_metrics = format_dashboard(
             time.monotonic(),

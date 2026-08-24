@@ -299,7 +299,11 @@ function renderWorkflow(state) {
     fillList("workflow-evidence", completion.evidence, "No evidence recorded.");
     fillList("workflow-limitations", completion.limitations, "No limitations recorded.");
   } else {
-    setText("workflow-detail", text(workflow.detail));
+    var detail = text(workflow.detail);
+    if (workflow.phase === "blocked") {
+      detail = "No executor is active — this goal is blocked. " + detail;
+    }
+    setText("workflow-detail", detail);
   }
 }
 
@@ -1401,7 +1405,9 @@ function renderTerminalProcessActivity(session) {
   );
   setText(
     "terminal-activity-detail",
-    text(activity.detail, "No managed terminal process activity is available.")
+    session.running !== true && agents.length === 0 && terminals.length === 0
+      ? "No managed Codex session, executor, subagent, or background terminal is active."
+      : text(activity.detail, "No managed terminal process activity is available.")
   );
 
   if (agentNode) {

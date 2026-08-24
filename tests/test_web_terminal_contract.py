@@ -210,6 +210,12 @@ class SessionActivityTests(unittest.TestCase):
         self.assertIsNotNone(match, "session renderer not found")
         self.assertIn("renderTerminalProcessActivity(session)", match.group(0))
 
+    def test_inactive_session_explains_that_no_managed_work_is_active(self):
+        self.assertIn(
+            "No managed Codex session, executor, subagent, or background terminal is active.",
+            self.js,
+        )
+
 
 class ResizeTests(unittest.TestCase):
     """Resize requests must be debounced and deduplicated."""

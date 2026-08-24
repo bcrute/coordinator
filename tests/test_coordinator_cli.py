@@ -31,6 +31,7 @@ class CoordinatorCLITests(unittest.TestCase):
         self.assertIn("doctor", output)
         self.assertIn("init", output)
         self.assertIn("data", output)
+        self.assertIn("run-turn", output)
 
         result, output, error = self.invoke(["--version"])
         self.assertEqual(result, 0, error)

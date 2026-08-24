@@ -377,6 +377,17 @@ class OperationalStore:
                 for agent in subagents:
                     if isinstance(agent, dict):
                         agent.pop("elapsed", None)
+        codex_session = stable.get("codex_session")
+        if isinstance(codex_session, dict):
+            activity = codex_session.get("process_activity")
+            if isinstance(activity, dict):
+                activity.pop("observed_at_epoch", None)
+                for collection in ("agents", "background_terminals"):
+                    records = activity.get(collection)
+                    if isinstance(records, list):
+                        for record in records:
+                            if isinstance(record, dict):
+                                record.pop("elapsed", None)
         encoded = json.dumps(stable, separators=(",", ":"), sort_keys=True)
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
@@ -888,6 +899,40 @@ class OperationalStore:
         with self._connect() as connection:
             cursor = connection.execute("DELETE FROM events WHERE created_at < ?", (before,))
         return cursor.rowcount
+
+    def compact_events(self) -> int:
+        """Remove historical timer-only duplicates using today's semantic digest."""
+
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT event_id, run_id, payload_json FROM events ORDER BY event_id"
+            ).fetchall()
+            retained: dict[tuple[str, str], int] = {}
+            duplicates: list[int] = []
+            for row in rows:
+                payload = json.loads(str(row["payload_json"]))
+                if not isinstance(payload, dict):
+                    continue
+                digest = self._transition_digest(payload)
+                key = (str(row["run_id"]), digest)
+                if key in retained:
+                    duplicates.append(int(row["event_id"]))
+                else:
+                    retained[key] = int(row["event_id"])
+            connection.executemany(
+                "DELETE FROM events WHERE event_id = ?",
+                ((event_id,) for event_id in duplicates),
+            )
+            for (run_id, digest), event_id in retained.items():
+                connection.execute(
+                    "UPDATE events SET event_uid = ? WHERE event_id = ?",
+                    (stable_id("event", run_id, digest), event_id),
+                )
+        return len(duplicates)
+
+    def vacuum(self) -> None:
+        with self._connect() as connection:
+            connection.execute("VACUUM")
 
     def backup(self, destination: Path) -> Path:
         target = destination.resolve()
