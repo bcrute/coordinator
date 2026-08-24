@@ -373,6 +373,29 @@ class DashboardBrowserTests(unittest.TestCase):
                             body=json.dumps(history_payload),
                         ),
                     )
+                    def model_catalog(route):
+                        codex = "source=codex" in route.request.url
+                        identifiers = ["gpt-test"] if codex else ["opus", "sonnet"]
+                        models = [
+                            {
+                                "id": identifier,
+                                "label": identifier,
+                                "default": index == 0,
+                                "default_effort": "medium",
+                                "efforts": [
+                                    {"id": effort}
+                                    for effort in ("low", "medium", "high")
+                                ],
+                            }
+                            for index, identifier in enumerate(identifiers)
+                        ]
+                        route.fulfill(
+                            status=200,
+                            content_type="application/json",
+                            body=json.dumps({"ok": True, "models": models}),
+                        )
+
+                    page.route("**/api/executor-settings/models?*", model_catalog)
                     page.goto(url, wait_until="domcontentloaded")
                     page.locator("#usage-codex-value").filter(has_text="70%").wait_for(
                         timeout=10_000
