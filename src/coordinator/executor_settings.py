@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
+import shutil
+import subprocess
 import threading
+import time
 import urllib.error
 import urllib.request
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from typing import Mapping
 from urllib.parse import urlsplit
@@ -24,6 +29,8 @@ EXECUTOR_PREFERENCE_KEY = "executor_configuration_v1"
 MODEL_DISCOVERY_BYTES = 1024 * 1024
 MODEL_DISCOVERY_TIMEOUT_SECONDS = 5.0
 MODEL_NAME_LIMIT = 240
+CLI_MODEL_LIMIT = 100
+EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
 
 def _text(value: object, name: str, *, required: bool = False) -> str:
@@ -53,6 +60,20 @@ def _number(value: object, name: str, minimum: float, maximum: float) -> float:
     return float(value)
 
 
+def _boolean(value: object, name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be a boolean")
+    return value
+
+
+def _effort(value: object, name: str, *, allow_ultra: bool = False) -> str:
+    effort = _text(value, name)
+    allowed = EFFORT_LEVELS | ({"none", "ultra"} if allow_ultra else set())
+    if effort and effort not in allowed:
+        raise ValueError(f"{name} must be one of {', '.join(sorted(allowed))} or blank")
+    return effort
+
+
 def validate_api_base(value: object, *, required: bool = False) -> str:
     api_base = _text(value, "mini_swe_api_base", required=required).rstrip("/")
     if not api_base:
@@ -71,11 +92,17 @@ def validate_api_base(value: object, *, required: bool = False) -> str:
 class ExecutorConfiguration:
     """The non-secret settings required to construct either built-in adapter."""
 
+    codex_model: str = ""
+    codex_effort: str = ""
     executor_adapter: str = "claude"
     claude_model: str = "opus"
+    claude_effort: str = ""
     claude_subagent_model: str = "sonnet"
+    claude_subagent_effort: str = ""
     claude_max_turns: int = 40
+    claude_local_delegation: bool = False
     mini_swe_model: str = ""
+    mini_swe_effort: str = ""
     mini_swe_api_base: str = ""
     mini_swe_provider: str = "openai"
     mini_swe_api_key_env: str = ""
@@ -89,13 +116,25 @@ class ExecutorConfiguration:
             return cls(
                 executor_adapter="claude",
                 claude_model=adapter.model,
+                claude_effort=adapter.effort,
                 claude_subagent_model=adapter.subagent_model,
+                claude_subagent_effort=adapter.subagent_effort,
                 claude_max_turns=adapter.max_turns,
+                claude_local_delegation=adapter.delegation_enabled,
+                mini_swe_model=adapter.delegate_model,
+                mini_swe_effort=adapter.delegate_effort,
+                mini_swe_api_base=adapter.delegate_api_base,
+                mini_swe_provider=adapter.delegate_provider,
+                mini_swe_api_key_env=adapter.delegate_api_key_env,
+                mini_swe_step_limit=adapter.delegate_step_limit,
+                mini_swe_cost_limit=adapter.delegate_cost_limit,
+                mini_swe_timeout_seconds=adapter.delegate_timeout_seconds,
             )
         if isinstance(adapter, MiniSweAgentExecutorAdapter):
             return cls(
                 executor_adapter="mini-swe-agent",
                 mini_swe_model=adapter.model,
+                mini_swe_effort=adapter.effort,
                 mini_swe_api_base=adapter.api_base,
                 mini_swe_provider=adapter.provider,
                 mini_swe_api_key_env=adapter.api_key_env,
@@ -128,20 +167,30 @@ class ExecutorConfiguration:
         model = _text(
             merged["mini_swe_model"],
             "mini_swe_model",
-            required=selected == "mini-swe-agent",
+            required=selected == "mini-swe-agent" or bool(merged["claude_local_delegation"]),
         )
         return cls(
+            codex_model=_text(merged["codex_model"], "codex_model"),
+            codex_effort=_effort(merged["codex_effort"], "codex_effort", allow_ultra=True),
             executor_adapter=selected,
             claude_model=_text(merged["claude_model"], "claude_model", required=True),
+            claude_effort=_effort(merged["claude_effort"], "claude_effort"),
             claude_subagent_model=_text(
                 merged["claude_subagent_model"],
                 "claude_subagent_model",
                 required=True,
             ),
+            claude_subagent_effort=_effort(
+                merged["claude_subagent_effort"], "claude_subagent_effort"
+            ),
             claude_max_turns=_integer(
                 merged["claude_max_turns"], "claude_max_turns", 1, 200
             ),
+            claude_local_delegation=_boolean(
+                merged["claude_local_delegation"], "claude_local_delegation"
+            ),
             mini_swe_model=model,
+            mini_swe_effort=_effort(merged["mini_swe_effort"], "mini_swe_effort"),
             mini_swe_api_base=validate_api_base(merged["mini_swe_api_base"]),
             mini_swe_provider=provider,
             mini_swe_api_key_env=key_env,
@@ -163,11 +212,23 @@ class ExecutorConfiguration:
         if self.executor_adapter == "claude":
             return ClaudeExecutorAdapter(
                 model=self.claude_model,
+                effort=self.claude_effort,
                 subagent_model=self.claude_subagent_model,
+                subagent_effort=self.claude_subagent_effort,
                 max_turns=self.claude_max_turns,
+                delegation_enabled=self.claude_local_delegation,
+                delegate_model=self.mini_swe_model,
+                delegate_effort=self.mini_swe_effort,
+                delegate_api_base=self.mini_swe_api_base,
+                delegate_provider=self.mini_swe_provider,
+                delegate_api_key_env=self.mini_swe_api_key_env,
+                delegate_step_limit=self.mini_swe_step_limit,
+                delegate_cost_limit=self.mini_swe_cost_limit,
+                delegate_timeout_seconds=self.mini_swe_timeout_seconds,
             )
         return MiniSweAgentExecutorAdapter(
             model=self.mini_swe_model,
+            effort=self.mini_swe_effort,
             api_base=self.mini_swe_api_base,
             provider=self.mini_swe_provider,
             api_key_env=self.mini_swe_api_key_env,
@@ -220,6 +281,19 @@ class ExecutorSettingsService:
         adapter = configuration.adapter()
         key_name = configuration.mini_swe_api_key_env
         executable = resolve_executable(adapter)
+        delegation_executable = (
+            resolve_executable(
+                MiniSweAgentExecutorAdapter(
+                    model=configuration.mini_swe_model,
+                    api_base=configuration.mini_swe_api_base,
+                    provider=configuration.mini_swe_provider,
+                    api_key_env=configuration.mini_swe_api_key_env,
+                )
+            )
+            if configuration.executor_adapter == "claude"
+            and configuration.claude_local_delegation
+            else None
+        )
         return {
             "configuration": asdict(configuration),
             "status": {
@@ -228,9 +302,65 @@ class ExecutorSettingsService:
                 "executable": executable,
                 "executable_available": executable is not None,
                 "api_key_env_configured": bool(key_name and os.environ.get(key_name)),
+                "delegation_enabled": configuration.claude_local_delegation,
+                "delegation_model": configuration.mini_swe_model,
+                "delegation_executable": delegation_executable,
+                "delegation_executable_available": delegation_executable is not None,
                 "load_warning": self.load_warning,
+                "roles": {
+                    "reviewer": {
+                        "adapter": "codex-cli",
+                        "display_name": "Codex CLI",
+                        "model": configuration.codex_model or "CLI default",
+                        "effort": configuration.codex_effort or "model default",
+                        "executable_available": resolve_executable_name("codex") is not None,
+                    },
+                    "supervisor": {
+                        "adapter": "claude-cli",
+                        "display_name": "Claude Code",
+                        "model": configuration.claude_model,
+                        "effort": configuration.claude_effort or "model default",
+                        "active": configuration.executor_adapter == "claude",
+                        "executable_available": resolve_executable_name("claude") is not None,
+                    },
+                    "executor": {
+                        "adapter": adapter.id,
+                        "display_name": adapter.display_name,
+                        "model": (
+                            configuration.mini_swe_model
+                            if configuration.executor_adapter == "mini-swe-agent"
+                            or configuration.claude_local_delegation
+                            else configuration.claude_model
+                        ),
+                        "effort": (
+                            configuration.mini_swe_effort or "endpoint default"
+                            if configuration.executor_adapter == "mini-swe-agent"
+                            or configuration.claude_local_delegation
+                            else configuration.claude_effort or "model default"
+                        ),
+                        "native_subagent_model": configuration.claude_subagent_model,
+                        "native_subagent_effort": (
+                            configuration.claude_subagent_effort or "inherit supervisor"
+                        ),
+                        "delegated": configuration.claude_local_delegation,
+                        "executable_available": (
+                            delegation_executable is not None
+                            if configuration.claude_local_delegation
+                            else executable is not None
+                        ),
+                    },
+                },
             },
         }
+
+
+def resolve_executable_name(command: str) -> str | None:
+    """Resolve a fixed CLI name for role-readiness reporting."""
+
+    candidate = os.path.expanduser(command)
+    if os.path.isfile(candidate):
+        return os.path.realpath(candidate)
+    return shutil.which(command)
 
 
 def discover_models(
@@ -279,3 +409,182 @@ def discover_models(
     if not models:
         raise ValueError("model discovery returned no model IDs")
     return models
+
+
+def _model_response_reader(stream: object, output: queue.Queue[object]) -> None:
+    try:
+        for line in stream:  # type: ignore[union-attr]
+            try:
+                output.put(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    finally:
+        output.put(None)
+
+
+def _wait_for_model_response(
+    output: queue.Queue[object], request_id: int, deadline: float
+) -> dict[str, object]:
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError("Codex model discovery timed out")
+        try:
+            message = output.get(timeout=remaining)
+        except queue.Empty as error:
+            raise ValueError("Codex model discovery timed out") from error
+        if message is None:
+            raise ValueError("Codex app server closed during model discovery")
+        if not isinstance(message, dict) or message.get("id") != request_id:
+            continue
+        if "error" in message or not isinstance(message.get("result"), dict):
+            raise ValueError("Codex app server rejected model discovery")
+        return message["result"]  # type: ignore[return-value]
+
+
+def discover_codex_models(
+    command: str = "codex", *, timeout: float = MODEL_DISCOVERY_TIMEOUT_SECONDS
+) -> list[dict[str, object]]:
+    """Read the installed Codex picker's visible models without starting a turn."""
+
+    executable = resolve_executable_name(command)
+    if executable is None:
+        raise ValueError("Codex CLI is not installed or not on PATH")
+    try:
+        process = subprocess.Popen(
+            [executable, "app-server", "--stdio"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            bufsize=1,
+        )
+    except OSError as error:
+        raise ValueError("Codex app server could not be started") from error
+    if process.stdin is None or process.stdout is None:
+        process.kill()
+        raise ValueError("Codex app server streams are unavailable")
+    output: queue.Queue[object] = queue.Queue()
+    reader = threading.Thread(
+        target=_model_response_reader,
+        args=(process.stdout, output),
+        name="coordinator-codex-model-reader",
+        daemon=True,
+    )
+    reader.start()
+    deadline = time.monotonic() + timeout
+    try:
+        process.stdin.write(
+            json.dumps(
+                {
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {"clientInfo": {"name": "coordinator", "version": "1"}},
+                }
+            )
+            + "\n"
+        )
+        process.stdin.flush()
+        _wait_for_model_response(output, 1, deadline)
+        process.stdin.write(json.dumps({"method": "initialized"}) + "\n")
+        process.stdin.write(
+            json.dumps(
+                {
+                    "id": 2,
+                    "method": "model/list",
+                    "params": {"includeHidden": False, "limit": CLI_MODEL_LIMIT},
+                }
+            )
+            + "\n"
+        )
+        process.stdin.flush()
+        result = _wait_for_model_response(output, 2, deadline)
+    except (BrokenPipeError, OSError) as error:
+        raise ValueError("Codex app server closed during model discovery") from error
+    finally:
+        with suppress(ProcessLookupError):
+            process.terminate()
+        try:
+            process.wait(timeout=1.0)
+        except subprocess.TimeoutExpired:
+            with suppress(ProcessLookupError):
+                process.kill()
+            process.wait(timeout=1.0)
+        with suppress(OSError):
+            process.stdin.close()
+        with suppress(OSError):
+            process.stdout.close()
+    entries = result.get("data")
+    if not isinstance(entries, list):
+        raise ValueError("Codex model discovery returned invalid data")
+    models = [
+        {
+            "id": identifier,
+            "label": entry.get("displayName") or identifier,
+            "description": entry.get("description") or "",
+            "default": entry.get("isDefault") is True,
+            "efforts": [
+                {
+                    "id": effort["reasoningEffort"],
+                    "description": effort.get("description") or "",
+                }
+                for effort in entry.get("supportedReasoningEfforts", [])
+                if isinstance(effort, dict)
+                and isinstance(effort.get("reasoningEffort"), str)
+            ],
+            "default_effort": entry.get("defaultReasoningEffort") or "",
+        }
+        for entry in entries
+        if isinstance(entry, dict)
+        and isinstance((identifier := entry.get("id")), str)
+        and identifier
+        and len(identifier) <= MODEL_NAME_LIMIT
+        and entry.get("hidden") is not True
+    ]
+    if not models:
+        raise ValueError("Codex model discovery returned no visible models")
+    return models
+
+
+def discover_claude_models(
+    command: str = "claude", *, timeout: float = MODEL_DISCOVERY_TIMEOUT_SECONDS
+) -> list[dict[str, object]]:
+    """Parse the model aliases advertised by the installed Claude Code CLI."""
+
+    executable = resolve_executable_name(command)
+    if executable is None:
+        raise ValueError("Claude Code is not installed or not on PATH")
+    try:
+        completed = subprocess.run(
+            [executable, "--help"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ValueError("Claude model discovery failed") from error
+    marker = "--model <model>"
+    if completed.returncode != 0 or marker not in completed.stdout:
+        raise ValueError("Claude Code did not advertise model aliases")
+    model_help = completed.stdout.split(marker, 1)[1].split("\n  -", 1)[0]
+    aliases = list(dict.fromkeys(re.findall(r"'([A-Za-z][A-Za-z0-9._-]*)'", model_help)))
+    aliases = [alias for alias in aliases if not alias.startswith("claude-")]
+    if not aliases:
+        raise ValueError("Claude Code did not advertise model aliases")
+    efforts = [
+        {"id": effort, "description": "Claude Code effort level"}
+        for effort in ("low", "medium", "high", "xhigh", "max")
+    ]
+    return [
+        {
+            "id": alias,
+            "label": alias.title(),
+            "description": "Claude Code alias",
+            "efforts": efforts,
+            "default_effort": "",
+        }
+        for alias in aliases
+    ]

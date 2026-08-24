@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import queue
 import shutil
+import sqlite3
+import stat
 import subprocess
 import threading
 import time
 import urllib.error
 import urllib.request
-from contextlib import suppress
+from contextlib import closing, suppress
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
@@ -24,6 +27,10 @@ from . import __version__
 DEFAULT_REFRESH_SECONDS = 3600
 PROVIDER_TIMEOUT_SECONDS = 10.0
 CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+VELOCITY_WINDOW_SECONDS = 6 * 60 * 60
+VELOCITY_HALF_LIFE_SECONDS = 3 * 60 * 60
+MIN_VELOCITY_SPAN_SECONDS = 30 * 60
+VELOCITY_RETENTION_SECONDS = 30 * 24 * 60 * 60
 
 
 class ProviderUsageError(RuntimeError):
@@ -43,6 +50,22 @@ def _iso_timestamp(value: float | int | str | None) -> str | None:
         except (OverflowError, OSError, ValueError):
             return None
     return None
+
+
+def _epoch_timestamp(value: object) -> float | None:
+    normalized = _iso_timestamp(value if isinstance(value, (float, int, str)) else None)
+    if normalized is None:
+        return None
+    return datetime.fromisoformat(normalized).timestamp()
+
+
+def _reset_observation_key(value: object) -> str:
+    """Canonicalize sub-second provider jitter without changing displayed resets."""
+
+    normalized = _iso_timestamp(value if isinstance(value, (float, int, str)) else None)
+    if normalized is None:
+        return value if isinstance(value, str) else ""
+    return datetime.fromisoformat(normalized).replace(microsecond=0).isoformat()
 
 
 def _remaining_percent(used: object) -> float | None:
@@ -158,13 +181,29 @@ def _claude_limit_label(limit: Mapping[str, object]) -> str:
     return group.replace("_", " ").title() if isinstance(group, str) else "Usage"
 
 
+def _claude_window_id(limit: Mapping[str, object]) -> str:
+    kind = limit.get("kind")
+    prefix = kind if isinstance(kind, str) and kind else "limit"
+    identity = json.dumps(
+        {
+            "kind": kind,
+            "group": limit.get("group"),
+            "scope": limit.get("scope"),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
+    return f"{prefix}:{digest}"
+
+
 def _claude_windows(payload: Mapping[str, object]) -> list[dict[str, object]]:
     """Prefer Claude's complete limit list, including named scoped limits."""
 
     windows: list[dict[str, object]] = []
     limits = payload.get("limits")
     if isinstance(limits, list):
-        for index, candidate in enumerate(limits):
+        for candidate in limits:
             if not isinstance(candidate, Mapping):
                 continue
             remaining = _remaining_percent(candidate.get("percent"))
@@ -177,7 +216,7 @@ def _claude_windows(payload: Mapping[str, object]) -> list[dict[str, object]]:
             )
             windows.append(
                 {
-                    "id": f"{kind if isinstance(kind, str) else 'limit'}:{index}",
+                    "id": _claude_window_id(candidate),
                     "label": _claude_limit_label(candidate),
                     "scope": candidate.get("scope"),
                     "kind": kind,
@@ -244,6 +283,281 @@ def _provider_result(
         "windows": windows,
         "message": None if remaining else "No rolling usage windows were returned.",
     }
+
+
+def _rate_forecast(
+    window: Mapping[str, object],
+    now: float,
+    burn_rate: float,
+    *,
+    method: str,
+    sample_count: int,
+    basis_hours: float,
+    confidence: str,
+) -> dict[str, object]:
+    remaining = window.get("remaining_percent")
+    reset_at = _epoch_timestamp(window.get("resets_at"))
+    if (
+        not isinstance(remaining, (int, float))
+        or isinstance(remaining, bool)
+        or reset_at is None
+        or reset_at <= now
+    ):
+        return _unavailable_forecast(sample_count, basis_hours)
+    hours_to_reset = (reset_at - now) / 3600
+    sustainable = float(remaining) / hours_to_reset
+    projected = float(remaining) - burn_rate * hours_to_reset
+    exhausts_at = (
+        _iso_timestamp(now + float(remaining) / burn_rate * 3600)
+        if burn_rate > 0 and projected <= 0
+        else None
+    )
+    return {
+        "method": method,
+        "projected_remaining": round(projected, 1),
+        "burn_rate_percent_per_hour": round(burn_rate, 3),
+        "sustainable_rate_percent_per_hour": round(sustainable, 3),
+        "velocity_ratio": round(burn_rate / sustainable, 2) if sustainable > 0 else None,
+        "sample_count": sample_count,
+        "basis_hours": round(basis_hours, 2),
+        "confidence": confidence,
+        "exhausts_at": exhausts_at,
+    }
+
+
+def _unavailable_forecast(
+    sample_count: int = 0, basis_hours: float = 0.0
+) -> dict[str, object]:
+    return {
+        "method": "unavailable",
+        "projected_remaining": None,
+        "burn_rate_percent_per_hour": None,
+        "sustainable_rate_percent_per_hour": None,
+        "velocity_ratio": None,
+        "sample_count": sample_count,
+        "basis_hours": round(basis_hours, 2),
+        "confidence": "unavailable",
+        "exhausts_at": None,
+    }
+
+
+def _reset_average_forecast(
+    window: Mapping[str, object], now: float
+) -> dict[str, object]:
+    reset_at = _epoch_timestamp(window.get("resets_at"))
+    duration = window.get("duration_minutes")
+    remaining = window.get("remaining_percent")
+    if (
+        reset_at is None
+        or not isinstance(duration, (int, float))
+        or isinstance(duration, bool)
+        or duration <= 0
+        or not isinstance(remaining, (int, float))
+        or isinstance(remaining, bool)
+    ):
+        return _unavailable_forecast()
+    started_at = reset_at - float(duration) * 60
+    elapsed_hours = (now - started_at) / 3600
+    if elapsed_hours <= 0:
+        return _unavailable_forecast()
+    burn_rate = max(0.0, (100.0 - float(remaining)) / elapsed_hours)
+    return _rate_forecast(
+        window,
+        now,
+        burn_rate,
+        method="reset_average",
+        sample_count=1,
+        basis_hours=elapsed_hours,
+        confidence="fallback",
+    )
+
+
+def _rolling_velocity_forecast(
+    window: Mapping[str, object],
+    observations: list[tuple[float, float]],
+    now: float,
+) -> dict[str, object]:
+    points = sorted(
+        (timestamp, remaining)
+        for timestamp, remaining in observations
+        if now - VELOCITY_WINDOW_SECONDS <= timestamp <= now
+    )
+    if len(points) < 2 or points[-1][0] - points[0][0] < MIN_VELOCITY_SPAN_SECONDS:
+        return _reset_average_forecast(window, now)
+    values = [((timestamp - now) / 3600, remaining) for timestamp, remaining in points]
+    weights = [
+        0.5 ** ((now - timestamp) / VELOCITY_HALF_LIFE_SECONDS)
+        for timestamp, _remaining in points
+    ]
+    total_weight = sum(weights)
+    mean_time = sum(weight * value[0] for weight, value in zip(weights, values)) / total_weight
+    mean_remaining = (
+        sum(weight * value[1] for weight, value in zip(weights, values)) / total_weight
+    )
+    denominator = sum(
+        weight * (value[0] - mean_time) ** 2
+        for weight, value in zip(weights, values)
+    )
+    if denominator <= 0:
+        return _reset_average_forecast(window, now)
+    remaining_slope = sum(
+        weight * (value[0] - mean_time) * (value[1] - mean_remaining)
+        for weight, value in zip(weights, values)
+    ) / denominator
+    basis_hours = (points[-1][0] - points[0][0]) / 3600
+    if len(points) >= 5 and basis_hours >= 4:
+        confidence = "high"
+    elif len(points) >= 3 and basis_hours >= 2:
+        confidence = "medium"
+    else:
+        confidence = "low"
+    return _rate_forecast(
+        window,
+        now,
+        max(0.0, -remaining_slope),
+        method="rolling_velocity",
+        sample_count=len(points),
+        basis_hours=basis_hours,
+        confidence=confidence,
+    )
+
+
+class ProviderUsageVelocityStore:
+    """Persist reset-scoped limit observations for rolling velocity forecasts."""
+
+    def __init__(self, state_dir: Path) -> None:
+        self.state_dir = state_dir.resolve()
+        self.path = self.state_dir / "usage.sqlite3"
+        self.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.state_dir.chmod(0o700)
+        details = self.state_dir.stat()
+        if details.st_uid != os.geteuid() or stat.S_IMODE(details.st_mode) & 0o077:
+            raise ValueError("state_dir must be owned by the service user and mode 0700")
+        if self.path.is_symlink():
+            raise ValueError("usage database path must not be a symbolic link")
+        with closing(sqlite3.connect(self.path)) as connection:
+            connection.executescript(
+                """
+                PRAGMA journal_mode = WAL;
+                CREATE TABLE IF NOT EXISTS provider_limit_observations (
+                    provider_id TEXT NOT NULL,
+                    window_id TEXT NOT NULL,
+                    reset_key TEXT NOT NULL,
+                    observed_at REAL NOT NULL,
+                    remaining_percent REAL NOT NULL,
+                    PRIMARY KEY(provider_id, window_id, reset_key, observed_at)
+                );
+                CREATE INDEX IF NOT EXISTS provider_limit_observations_recent
+                    ON provider_limit_observations(
+                        provider_id, window_id, reset_key, observed_at
+                    );
+                """
+            )
+            self._normalize_existing_reset_keys(connection)
+            connection.commit()
+        self.path.chmod(0o600)
+
+    @staticmethod
+    def _normalize_existing_reset_keys(connection: sqlite3.Connection) -> None:
+        """Merge observations written before reset-key canonicalization."""
+
+        rows = connection.execute(
+            """
+            SELECT provider_id, window_id, reset_key, observed_at, remaining_percent
+            FROM provider_limit_observations
+            """
+        ).fetchall()
+        for provider_id, window_id, reset_key, observed_at, remaining in rows:
+            canonical = _reset_observation_key(reset_key)
+            if canonical == reset_key:
+                continue
+            connection.execute(
+                """
+                INSERT INTO provider_limit_observations(
+                    provider_id, window_id, reset_key, observed_at, remaining_percent
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(provider_id, window_id, reset_key, observed_at)
+                DO UPDATE SET remaining_percent=excluded.remaining_percent
+                """,
+                (provider_id, window_id, canonical, observed_at, remaining),
+            )
+            connection.execute(
+                """
+                DELETE FROM provider_limit_observations
+                WHERE provider_id = ? AND window_id = ? AND reset_key = ?
+                  AND observed_at = ?
+                """,
+                (provider_id, window_id, reset_key, observed_at),
+            )
+
+    def enrich(
+        self, provider: dict[str, object], observed_at: float
+    ) -> dict[str, object]:
+        provider_id = str(provider.get("id") or "")
+        windows = provider.get("windows")
+        if not provider_id or not isinstance(windows, list):
+            return provider
+        cutoff = observed_at - VELOCITY_RETENTION_SECONDS
+        with closing(sqlite3.connect(self.path, timeout=10.0)) as connection:
+            connection.execute(
+                "DELETE FROM provider_limit_observations WHERE observed_at < ?", (cutoff,)
+            )
+            for raw_window in windows:
+                if not isinstance(raw_window, dict):
+                    continue
+                window_id = raw_window.get("id")
+                remaining = raw_window.get("remaining_percent")
+                reset_key = raw_window.get("resets_at")
+                if (
+                    not isinstance(window_id, str)
+                    or not window_id
+                    or not isinstance(remaining, (int, float))
+                    or isinstance(remaining, bool)
+                ):
+                    raw_window["forecast"] = _reset_average_forecast(
+                        raw_window, observed_at
+                    )
+                    continue
+                normalized_reset = _reset_observation_key(reset_key)
+                connection.execute(
+                    """
+                    INSERT INTO provider_limit_observations(
+                        provider_id, window_id, reset_key, observed_at, remaining_percent
+                    ) VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(provider_id, window_id, reset_key, observed_at)
+                    DO UPDATE SET remaining_percent=excluded.remaining_percent
+                    """,
+                    (
+                        provider_id,
+                        window_id,
+                        normalized_reset,
+                        observed_at,
+                        float(remaining),
+                    ),
+                )
+                rows = connection.execute(
+                    """
+                    SELECT observed_at, remaining_percent
+                    FROM provider_limit_observations
+                    WHERE provider_id = ? AND window_id = ? AND reset_key = ?
+                      AND observed_at >= ? AND observed_at <= ?
+                    ORDER BY observed_at
+                    """,
+                    (
+                        provider_id,
+                        window_id,
+                        normalized_reset,
+                        observed_at - VELOCITY_WINDOW_SECONDS,
+                        observed_at,
+                    ),
+                ).fetchall()
+                raw_window["forecast"] = _rolling_velocity_forecast(
+                    raw_window,
+                    [(float(row[0]), float(row[1])) for row in rows],
+                    observed_at,
+                )
+            connection.commit()
+        return provider
 
 
 def _write_message(stream: TextIO, message: Mapping[str, object]) -> None:
@@ -471,6 +785,7 @@ class ProviderUsageService:
         *,
         collectors: Mapping[str, Callable[[], dict[str, object]]] | None = None,
         clock: Callable[[], float] = time.time,
+        state_dir: Path | None = None,
     ) -> None:
         if refresh_seconds <= 0:
             raise ValueError("refresh_seconds must be positive")
@@ -480,6 +795,9 @@ class ProviderUsageService:
             or {"codex": collect_codex_usage, "claude": collect_claude_usage}
         )
         self._clock = clock
+        self._velocity_store = (
+            ProviderUsageVelocityStore(state_dir) if state_dir is not None else None
+        )
         self._lock = threading.RLock()
         self._refresh_lock = threading.Lock()
         self._stop = threading.Event()
@@ -510,6 +828,21 @@ class ProviderUsageService:
     def snapshot(self) -> dict[str, object]:
         with self._lock:
             return deepcopy(self._snapshot)
+
+    def _enrich_forecasts(
+        self, provider: dict[str, object], observed_at: float
+    ) -> None:
+        if self._velocity_store is not None:
+            try:
+                self._velocity_store.enrich(provider, observed_at)
+                return
+            except (OSError, sqlite3.Error):
+                provider["forecast_history_status"] = "unavailable"
+        windows = provider.get("windows")
+        if isinstance(windows, list):
+            for window in windows:
+                if isinstance(window, dict):
+                    window["forecast"] = _reset_average_forecast(window, observed_at)
 
     def refresh(self) -> dict[str, object]:
         with self._refresh_lock:
@@ -551,6 +884,7 @@ class ProviderUsageService:
             for result in collected:
                 provider_id = str(result.get("id") or "")
                 if result.get("status") == "available":
+                    self._enrich_forecasts(result, completed)
                     result.update(
                         {
                             "stale": False,

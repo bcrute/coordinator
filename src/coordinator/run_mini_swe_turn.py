@@ -164,6 +164,8 @@ def build_command(
     command.extend(("--config", f"agent.step_limit={args.step_limit}"))
     command.extend(("--config", f"agent.wall_time_limit_seconds={args.timeout_seconds}"))
     command.extend(("--config", "model.cost_tracking=ignore_errors"))
+    if effort := getattr(args, "effort", ""):
+        command.extend(("--config", f"model.model_kwargs.reasoning_effort={effort}"))
     command.extend(("--cost-limit", str(args.cost_limit)))
     if args.api_base:
         command.extend(
@@ -527,6 +529,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--repo", type=Path, default=Path.cwd(), help="project root")
     parser.add_argument("--mini-command", default="mini", help="mini executable")
     parser.add_argument("--model", default="", help="mini-swe-agent/LiteLLM model name")
+    parser.add_argument(
+        "--effort",
+        choices=("low", "medium", "high", "xhigh", "max"),
+        default="",
+        help="LiteLLM reasoning effort for endpoints that support it",
+    )
     parser.add_argument("--config", type=Path, help="base mini-swe-agent YAML config")
     parser.add_argument("--api-base", default="", help="OpenAI-compatible API base URL")
     parser.add_argument("--provider", default="openai", help="LiteLLM custom provider name")

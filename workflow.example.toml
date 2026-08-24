@@ -37,6 +37,9 @@ usage_refresh_seconds = 3600
 # To use a local or API-backed model through mini-swe-agent, install its `mini`
 # command separately and uncomment the settings below.
 # executor_adapter = "mini-swe-agent"
+# Keep executor_adapter = "claude" and enable this to let Claude supervise bounded
+# 8-10 routing-score tasks performed by the configured mini-swe backend through MCP.
+# claude_local_delegation = true
 # mini_swe_command = "mini"
 # mini_swe_model = "your-local-model"
 # mini_swe_api_base = "http://127.0.0.1:8000/v1"

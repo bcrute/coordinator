@@ -15,6 +15,7 @@ dependencies = [
   "Authlib==1.7.2",
   "httpx==0.28.1",
   "joserfc==1.7.4",
+  "mcp==2.0.0",
   "starlette==1.4.0",
   "uvicorn==0.52.1",
   "websockets==17.0.1",

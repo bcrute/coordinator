@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import io
 import json
+import sqlite3
 import subprocess
 import tempfile
 import threading
 import unittest
 import urllib.error
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -18,9 +20,11 @@ from coordinator.authenticated_web_app import create_authenticated_app
 from coordinator.provider_usage import (
     ProviderUsageError,
     ProviderUsageService,
+    ProviderUsageVelocityStore,
     _claude_windows,
     _codex_windows,
     _read_claude_usage,
+    _rolling_velocity_forecast,
     collect_claude_usage,
     collect_codex_usage,
 )
@@ -136,6 +140,28 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(len(claude), 1)
         self.assertEqual(claude[0]["label"], "Claude Code")
         self.assertEqual(claude[0]["remaining_percent"], 100.0)
+
+    def test_claude_window_identity_is_stable_when_provider_order_changes(self) -> None:
+        limits = [
+            {
+                "kind": "weekly_scoped",
+                "group": "weekly",
+                "percent": 10,
+                "scope": {"model": {"display_name": "Fable"}},
+            },
+            {
+                "kind": "weekly_scoped",
+                "group": "weekly",
+                "percent": 20,
+                "scope": {"model": {"display_name": "Opus"}},
+            },
+        ]
+        first = {window["label"]: window["id"] for window in _claude_windows({"limits": limits})}
+        second = {
+            window["label"]: window["id"]
+            for window in _claude_windows({"limits": list(reversed(limits))})
+        }
+        self.assertEqual(first, second)
 
     @mock.patch("coordinator.provider_usage.subprocess.Popen")
     def test_codex_uses_app_server_and_returns_remaining_windows(self, popen) -> None:
@@ -370,6 +396,178 @@ class CollectorTests(unittest.TestCase):
 
 
 class ServiceTests(unittest.TestCase):
+    def test_rolling_velocity_uses_recent_smoothed_slope_and_sustainable_ratio(self) -> None:
+        now = 1_000_000.0
+        forecast = _rolling_velocity_forecast(
+            {
+                "remaining_percent": 50.0,
+                "duration_minutes": 10_080,
+                "resets_at": datetime.fromtimestamp(
+                    now + 4 * 3600, timezone.utc
+                ).isoformat(),
+            },
+            [
+                (now - 5 * 3600, 70.0),
+                (now - 4 * 3600, 66.0),
+                (now - 3 * 3600, 62.0),
+                (now - 2 * 3600, 58.0),
+                (now - 1 * 3600, 54.0),
+                (now, 50.0),
+            ],
+            now,
+        )
+        self.assertEqual(forecast["method"], "rolling_velocity")
+        self.assertEqual(forecast["burn_rate_percent_per_hour"], 4.0)
+        self.assertEqual(forecast["sustainable_rate_percent_per_hour"], 12.5)
+        self.assertEqual(forecast["velocity_ratio"], 0.32)
+        self.assertEqual(forecast["projected_remaining"], 34.0)
+        self.assertEqual(forecast["confidence"], "high")
+
+    def test_velocity_history_survives_restart_and_never_crosses_a_reset(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state_dir = Path(temporary) / "state"
+            now = [1_000_000.0]
+            remaining = [80.0]
+            reset = [
+                datetime.fromtimestamp(now[0] + 24 * 3600, timezone.utc).isoformat()
+            ]
+
+            def collect():
+                return {
+                    "id": "codex",
+                    "name": "Codex",
+                    "status": "available",
+                    "remaining_percent": remaining[0],
+                    "windows": [
+                        {
+                            "id": "codex:weekly",
+                            "label": "Weekly",
+                            "remaining_percent": remaining[0],
+                            "duration_minutes": 10_080,
+                            "resets_at": reset[0],
+                        }
+                    ],
+                }
+
+            service = ProviderUsageService(
+                3600,
+                collectors={"codex": collect},
+                clock=lambda: now[0],
+                state_dir=state_dir,
+            )
+            first = service.refresh()["providers"][0]["windows"][0]["forecast"]
+            self.assertEqual(first["method"], "reset_average")
+
+            now[0] += 3600
+            remaining[0] = 76.0
+            rolling = service.refresh()["providers"][0]["windows"][0]["forecast"]
+            self.assertEqual(rolling["method"], "rolling_velocity")
+            self.assertEqual(rolling["burn_rate_percent_per_hour"], 4.0)
+            self.assertEqual(rolling["sample_count"], 2)
+
+            now[0] += 3600
+            remaining[0] = 100.0
+            reset[0] = datetime.fromtimestamp(
+                now[0] + 7 * 24 * 3600, timezone.utc
+            ).isoformat()
+            after_reset = service.refresh()["providers"][0]["windows"][0]["forecast"]
+            self.assertEqual(after_reset["method"], "unavailable")
+            self.assertIsNone(after_reset["projected_remaining"])
+
+            now[0] += 3600
+            remaining[0] = 96.0
+            restarted = ProviderUsageService(
+                3600,
+                collectors={"codex": collect},
+                clock=lambda: now[0],
+                state_dir=state_dir,
+            )
+            restored = restarted.refresh()["providers"][0]["windows"][0]["forecast"]
+            self.assertEqual(restored["method"], "rolling_velocity")
+            self.assertEqual(restored["sample_count"], 2)
+            self.assertEqual(restored["burn_rate_percent_per_hour"], 4.0)
+
+    def test_fractional_reset_jitter_shares_velocity_history_and_migrates(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state_dir = Path(temporary) / "state"
+            store = ProviderUsageVelocityStore(state_dir)
+            with sqlite3.connect(store.path) as connection:
+                connection.executemany(
+                    """
+                    INSERT INTO provider_limit_observations(
+                        provider_id, window_id, reset_key, observed_at,
+                        remaining_percent
+                    ) VALUES ('claude', 'weekly', ?, ?, ?)
+                    """,
+                    [
+                        ("2026-08-27T21:00:00.431377+00:00", 1_000_000.0, 45.0),
+                        ("2026-08-27T21:00:00.272086+00:00", 1_003_600.0, 43.0),
+                    ],
+                )
+                connection.commit()
+
+            migrated = ProviderUsageVelocityStore(state_dir)
+            provider = migrated.enrich(
+                {
+                    "id": "claude",
+                    "windows": [
+                        {
+                            "id": "weekly",
+                            "remaining_percent": 42.0,
+                            "duration_minutes": 10_080,
+                            "resets_at": "2026-08-27T21:00:00.526340+00:00",
+                        }
+                    ],
+                },
+                1_007_200.0,
+            )
+
+            forecast = provider["windows"][0]["forecast"]
+            self.assertEqual(forecast["method"], "rolling_velocity")
+            self.assertEqual(forecast["sample_count"], 3)
+            with sqlite3.connect(migrated.path) as connection:
+                reset_keys = connection.execute(
+                    "SELECT DISTINCT reset_key FROM provider_limit_observations"
+                ).fetchall()
+            self.assertEqual(reset_keys, [("2026-08-27T21:00:00+00:00",)])
+
+    def test_velocity_store_failure_keeps_the_reset_average_fallback(self) -> None:
+        now = 1_000_000.0
+
+        def collect():
+            return {
+                "id": "codex",
+                "name": "Codex",
+                "status": "available",
+                "remaining_percent": 75.0,
+                "windows": [
+                    {
+                        "id": "codex:weekly",
+                        "remaining_percent": 75.0,
+                        "duration_minutes": 10_080,
+                        "resets_at": datetime.fromtimestamp(
+                            now + 5 * 24 * 3600, timezone.utc
+                        ).isoformat(),
+                    }
+                ],
+            }
+
+        with tempfile.TemporaryDirectory() as temporary:
+            service = ProviderUsageService(
+                3600,
+                collectors={"codex": collect},
+                clock=lambda: now,
+                state_dir=Path(temporary) / "state",
+            )
+            with mock.patch.object(
+                service._velocity_store,
+                "enrich",
+                side_effect=sqlite3.OperationalError("locked"),
+            ):
+                provider = service.refresh()["providers"][0]
+        self.assertEqual(provider["forecast_history_status"], "unavailable")
+        self.assertEqual(provider["windows"][0]["forecast"]["method"], "reset_average")
+
     def test_refresh_is_shared_and_provider_failures_are_bounded(self) -> None:
         def codex():
             return {

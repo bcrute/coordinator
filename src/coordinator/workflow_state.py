@@ -12,6 +12,7 @@ from .coordination_dashboard import one_line, read, section
 
 WATCHER_ROLES = ("executor", "claude", "codex", "both")
 RELAY_LOG_BYTES = 256 * 1024
+DELEGATION_HISTORY_LIMIT = 20
 
 
 def bullets(text: str, heading: str) -> list[str]:
@@ -263,6 +264,61 @@ def subagent_state(metrics: dict[str, object], now: float) -> list[dict[str, obj
     return agents
 
 
+def delegation_state(
+    repo: Path, now: float, limit: int = DELEGATION_HISTORY_LIMIT
+) -> list[dict[str, object]]:
+    """Return bounded MCP worker records without exposing prompts, logs, or patches."""
+
+    directory = repo / ".coordination" / "runtime" / "delegations"
+    try:
+        paths = sorted(
+            directory.glob("d-*.json"),
+            key=lambda path: path.stat().st_mtime_ns,
+            reverse=True,
+        )[: max(0, limit)]
+    except OSError:
+        return []
+    records: list[dict[str, object]] = []
+    for path in paths:
+        value = load_json(path)
+        if not value:
+            continue
+        state = str(value.get("state") or "unknown")
+        ended = now if state in {"starting", "running"} else value.get("completed_at_epoch")
+        usage = value.get("usage") if isinstance(value.get("usage"), dict) else {}
+        changed = value.get("changed_files")
+        records.append(
+            {
+                "id": str(value.get("id") or path.stem),
+                "state": state,
+                "model": str(value.get("model") or "local worker"),
+                "objective": one_line(str(value.get("objective") or "Bounded implementation")),
+                "routing_score": (
+                    value["routing_score"]
+                    if isinstance(value.get("routing_score"), int)
+                    and not isinstance(value.get("routing_score"), bool)
+                    else None
+                ),
+                "routing_rationale": one_line(
+                    str(value.get("routing_rationale") or "not recorded")
+                ),
+                "steps": value["steps"] if isinstance(value.get("steps"), int) else 0,
+                "elapsed": elapsed(value.get("started_at_epoch"), ended),
+                "usage": {
+                    name: usage[name] if isinstance(usage.get(name), int) else 0
+                    for name in TOKEN_FIELDS
+                },
+                "changed_files": (
+                    [str(item) for item in changed if isinstance(item, str)]
+                    if isinstance(changed, list)
+                    else []
+                ),
+                "error": one_line(str(value.get("error") or "")),
+            }
+        )
+    return records
+
+
 def runtime_state(
     repo: Path, task: dict[str, object], goal_id: str, now: float
 ) -> dict[str, object]:
@@ -305,14 +361,25 @@ def watcher_state(repo: Path) -> list[dict[str, object]]:
         if not payload:
             continue
         coordination = payload.get("coordination")
+        lock_present = (runtime / f"watcher-{role}.lock").is_file()
+        reported_state = str(payload.get("watcher_state") or "unknown")
+        detail = one_line(str(payload.get("detail") or ""))
+        watcher_status = reported_state
+        if reported_state in {"running", "waiting"} and not lock_present:
+            watcher_status = "stale"
+            detail = (
+                f"Historical status reported {reported_state}, but no watcher lock is held."
+                + (f" Last detail: {detail}" if detail else "")
+            )
         watchers.append(
             {
                 "role": str(payload.get("role") or role),
-                "watcher_state": str(payload.get("watcher_state") or "unknown"),
-                "detail": one_line(str(payload.get("detail") or "")),
+                "watcher_state": watcher_status,
+                "reported_state": reported_state,
+                "detail": detail,
                 "updated_at": str(payload.get("updated_at") or "not recorded"),
                 "coordination": coordination if isinstance(coordination, dict) else {},
-                "lock_present": (runtime / f"watcher-{role}.lock").is_file(),
+                "lock_present": lock_present,
             }
         )
     return watchers

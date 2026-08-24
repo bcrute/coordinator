@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import sys
 import tempfile
@@ -17,6 +18,8 @@ from coordinator.executor_settings import (
     EXECUTOR_PREFERENCE_KEY,
     ExecutorConfiguration,
     ExecutorSettingsService,
+    discover_claude_models,
+    discover_codex_models,
     discover_models,
 )
 from coordinator.operational_store import OperationalStore
@@ -43,11 +46,17 @@ def fake_usage_service() -> ProviderUsageService:
 
 def mini_payload(**changes: object) -> dict[str, object]:
     payload: dict[str, object] = {
+        "codex_model": "gpt-5.6-sol",
+        "codex_effort": "max",
         "executor_adapter": "mini-swe-agent",
         "claude_model": "opus",
+        "claude_effort": "high",
         "claude_subagent_model": "sonnet",
+        "claude_subagent_effort": "medium",
         "claude_max_turns": 40,
+        "claude_local_delegation": False,
         "mini_swe_model": "Qwen/Qwen3.8-27B",
+        "mini_swe_effort": "low",
         "mini_swe_api_base": "http://127.0.0.1:8000/v1",
         "mini_swe_provider": "openai",
         "mini_swe_api_key_env": "",
@@ -85,7 +94,10 @@ class ExecutorSettingsUnitTests(unittest.TestCase):
             adapter = restored.adapter()
             self.assertIsInstance(adapter, MiniSweAgentExecutorAdapter)
             self.assertEqual(adapter.model, "Qwen/Qwen3.8-27B")
+            self.assertEqual(adapter.effort, "low")
             self.assertEqual(adapter.api_key_env, "")
+            self.assertEqual(restored.configuration().codex_model, "gpt-5.6-sol")
+            self.assertEqual(restored.configuration().codex_effort, "max")
             self.assertEqual(
                 store.preferences()[EXECUTOR_PREFERENCE_KEY]["mini_swe_api_base"],
                 "http://127.0.0.1:8000/v1",
@@ -100,6 +112,23 @@ class ExecutorSettingsUnitTests(unittest.TestCase):
             )
         with self.assertRaisesRegex(ValueError, "1 to 200"):
             ExecutorConfiguration.from_mapping(mini_payload(mini_swe_step_limit=0))
+        with self.assertRaisesRegex(ValueError, "codex_effort"):
+            ExecutorConfiguration.from_mapping(mini_payload(codex_effort="unbounded"))
+
+    def test_claude_can_reuse_the_configured_mini_backend_for_mcp_delegation(self) -> None:
+        configuration = ExecutorConfiguration.from_mapping(
+            mini_payload(
+                executor_adapter="claude",
+                claude_local_delegation=True,
+            )
+        )
+        adapter = configuration.adapter()
+        self.assertIsInstance(adapter, ClaudeExecutorAdapter)
+        self.assertTrue(adapter.delegation_enabled)
+        command = adapter.command(Path("/tmp/project"))
+        self.assertIn("--delegation-enabled", command)
+        self.assertIn("Qwen/Qwen3.8-27B", command)
+        self.assertIn("http://127.0.0.1:8000/v1", command)
 
     def test_model_discovery_accepts_no_key_and_returns_sorted_unique_ids(self) -> None:
         response = FakeResponse(
@@ -116,6 +145,78 @@ class ExecutorSettingsUnitTests(unittest.TestCase):
         request = opened.call_args.args[0]
         self.assertEqual(request.full_url, "http://heavy:8000/v1/models")
         self.assertNotIn("Authorization", request.headers)
+
+    def test_cli_model_discovery_uses_advertised_picker_options(self) -> None:
+        process = mock.MagicMock()
+        process.stdin = io.StringIO()
+        process.stdout = io.StringIO()
+        process.wait.return_value = 0
+        with (
+            mock.patch(
+                "coordinator.executor_settings.resolve_executable_name",
+                return_value="/opt/codex",
+            ),
+            mock.patch("coordinator.executor_settings.subprocess.Popen", return_value=process),
+            mock.patch(
+                "coordinator.executor_settings._wait_for_model_response",
+                side_effect=[
+                    {},
+                    {
+                        "data": [
+                            {
+                                "id": "gpt-frontier",
+                                "displayName": "GPT Frontier",
+                                "description": "Current model",
+                                "isDefault": True,
+                                "hidden": False,
+                                "defaultReasoningEffort": "medium",
+                                "supportedReasoningEfforts": [
+                                    {"reasoningEffort": "low", "description": "Fast"},
+                                    {"reasoningEffort": "high", "description": "Deep"},
+                                ],
+                            },
+                            {"id": "hidden", "hidden": True},
+                        ]
+                    },
+                ],
+            ),
+        ):
+            self.assertEqual(
+                discover_codex_models(),
+                [
+                    {
+                        "id": "gpt-frontier",
+                        "label": "GPT Frontier",
+                        "description": "Current model",
+                        "default": True,
+                        "efforts": [
+                            {"id": "low", "description": "Fast"},
+                            {"id": "high", "description": "Deep"},
+                        ],
+                        "default_effort": "medium",
+                    }
+                ],
+            )
+
+        claude_help = "--model <model> alias (e.g. 'fable', 'opus', or 'sonnet')\n  -n"
+        with (
+            mock.patch(
+                "coordinator.executor_settings.resolve_executable_name",
+                return_value="/opt/claude",
+            ),
+            mock.patch(
+                "coordinator.executor_settings.subprocess.run",
+                return_value=mock.Mock(returncode=0, stdout=claude_help),
+            ),
+        ):
+            self.assertEqual(
+                [model["id"] for model in discover_claude_models()],
+                ["fable", "opus", "sonnet"],
+            )
+            self.assertEqual(
+                [effort["id"] for effort in discover_claude_models()[0]["efforts"]],
+                ["low", "medium", "high", "xhigh", "max"],
+            )
 
 
 class ExecutorSettingsAPITests(unittest.TestCase):
@@ -165,10 +266,16 @@ class ExecutorSettingsAPITests(unittest.TestCase):
                 response.json()["configuration"]["executor_adapter"],
                 "mini-swe-agent",
             )
+            self.assertEqual(
+                response.json()["status"]["roles"]["reviewer"]["model"],
+                "gpt-5.6-sol",
+            )
             command = app.state.context.watcher.command
             self.assertIn("--executor-adapter", command)
             self.assertIn("mini-swe-agent", command)
             self.assertIn("Qwen/Qwen3.8-27B", command)
+            self.assertIn("--codex-model", command)
+            self.assertIn("gpt-5.6-sol", command)
 
         restarted = self.app()
         with TestClient(restarted, base_url="http://127.0.0.1") as client:
@@ -218,6 +325,26 @@ class ExecutorSettingsAPITests(unittest.TestCase):
                 )
             self.assertEqual(discovered.status_code, 200, discovered.text)
             self.assertEqual(discovered.json()["models"], ["Qwen/Qwen3.8-27B"])
+
+    def test_cli_model_catalog_endpoint_is_read_only_and_source_bounded(self) -> None:
+        app = self.app()
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            with mock.patch(
+                "coordinator.authenticated_web_app.discover_codex_models",
+                return_value=[
+                    {
+                        "id": "gpt-frontier",
+                        "label": "GPT Frontier",
+                        "description": "Current",
+                        "default": True,
+                    }
+                ],
+            ):
+                response = client.get("/api/v1/executor-settings/models?source=codex")
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["models"][0]["id"], "gpt-frontier")
+            invalid = client.get("/api/executor-settings/models?source=unknown")
+            self.assertEqual(invalid.status_code, 400, invalid.text)
 
 
 if __name__ == "__main__":

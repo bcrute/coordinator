@@ -36,19 +36,19 @@
         <span class="usage-provider" id="usage-codex" title="Waiting for Codex usage">
           <span class="usage-provider-label">Codex <small id="usage-codex-plan"></small></span>
           <span class="usage-column-heads" aria-hidden="true">
-            <span>Limit / reset</span><span>Left</span><span>Projected</span>
+            <span>Limit / reset</span><span>Left</span><span>Projected / pace</span>
           </span>
           <span class="usage-window-list" id="usage-codex-value" aria-live="polite">
-            <span class="usage-chip"><span class="usage-window-name"><span>Checking</span></span><strong data-tone="neutral">…</strong><strong class="usage-window-projection" data-tone="neutral">…</strong></span>
+            <span class="usage-chip"><span class="usage-window-name"><span>Checking</span></span><strong data-tone="neutral">…</strong><span class="usage-window-forecast"><strong class="usage-window-projection" data-tone="neutral">…</strong><small class="usage-window-velocity">collecting pace</small></span></span>
           </span>
         </span>
         <span class="usage-provider" id="usage-claude" title="Waiting for Claude usage">
           <span class="usage-provider-label">Claude <small id="usage-claude-plan"></small></span>
           <span class="usage-column-heads" aria-hidden="true">
-            <span>Limit / reset</span><span>Left</span><span>Projected</span>
+            <span>Limit / reset</span><span>Left</span><span>Projected / pace</span>
           </span>
           <span class="usage-window-list" id="usage-claude-value" aria-live="polite">
-            <span class="usage-chip"><span class="usage-window-name"><span>Checking</span></span><strong data-tone="neutral">…</strong><strong class="usage-window-projection" data-tone="neutral">…</strong></span>
+            <span class="usage-chip"><span class="usage-window-name"><span>Checking</span></span><strong data-tone="neutral">…</strong><span class="usage-window-forecast"><strong class="usage-window-projection" data-tone="neutral">…</strong><small class="usage-window-velocity">collecting pace</small></span></span>
           </span>
         </span>
         <button
@@ -396,6 +396,16 @@
           </div>
         </section>
 
+        <section class="panel" aria-labelledby="delegations-heading">
+          <header class="panel-head">
+            <h3 id="delegations-heading">Local delegations</h3>
+            <p class="badge" id="delegations-summary">0 recorded</p>
+          </header>
+          <div class="panel-body">
+            <ul class="records" id="delegations"></ul>
+          </div>
+        </section>
+
         <section class="panel" aria-labelledby="watcher-controls-heading">
           <header class="panel-head">
             <h3 id="watcher-controls-heading">Watcher controls</h3>
@@ -564,37 +574,71 @@
 
       <section id="view-settings" class="view" aria-labelledby="view-settings-heading" hidden>
         <h2 class="view-heading" id="view-settings-heading">Settings</h2>
-        <section class="panel" aria-labelledby="executor-settings-heading">
+        <section class="panel panel-wide" aria-labelledby="executor-settings-heading">
           <header class="panel-head">
-            <h3 id="executor-settings-heading">Implementation executor</h3>
+            <div>
+              <h3 id="executor-settings-heading">Agent roles</h3>
+              <p class="note">Configure the models and implementation path used for each bounded turn.</p>
+            </div>
             <p class="badge" id="executor-settings-state">not loaded</p>
           </header>
-          <form class="panel-body settings-form" id="executor-settings-form">
-            <p class="note">Choose the agent used for future bounded watcher turns. Stop the managed watcher before changing this selection.</p>
-            <label>Executor
-              <select name="executor_adapter">
-                <option value="claude">Claude Code</option>
-                <option value="mini-swe-agent">mini-swe-agent</option>
-              </select>
-            </label>
-            <label class="executor-claude">Lead model <input name="claude_model" value="opus" required /></label>
-            <label class="executor-claude">Subagent model <input name="claude_subagent_model" value="sonnet" required /></label>
-            <label class="executor-claude">Maximum turns <input name="claude_max_turns" type="number" min="1" max="200" value="40" required /></label>
-            <label class="executor-mini">OpenAI-compatible endpoint <input name="mini_swe_api_base" type="url" placeholder="Endpoint base URL ending in /v1" /></label>
-            <label class="executor-mini">Model
-              <input name="mini_swe_model" list="executor-model-options" placeholder="Qwen/Qwen3.8-27B" />
-              <datalist id="executor-model-options"></datalist>
-            </label>
-            <label class="executor-mini">LiteLLM provider <input name="mini_swe_provider" value="openai" required /></label>
-            <label class="executor-mini">API-key environment variable <input name="mini_swe_api_key_env" placeholder="blank for an unauthenticated local endpoint" /></label>
-            <label class="executor-mini">Step limit <input name="mini_swe_step_limit" type="number" min="1" max="200" value="12" required /></label>
-            <label class="executor-mini">Wall-time limit (seconds) <input name="mini_swe_timeout_seconds" type="number" min="10" max="86400" value="900" required /></label>
-            <label class="executor-mini">Cost limit <input name="mini_swe_cost_limit" type="number" min="0" step="0.01" value="0" required /></label>
-            <div class="executor-mini executor-actions">
-              <button type="button" class="control-button" id="executor-discover">Discover models</button>
+          <form class="panel-body role-settings" id="executor-settings-form">
+            <p class="role-settings-scope">Codex review and Claude supervision are the currently supported orchestration adapters. Their model names and the implementation strategy below are editable.</p>
+            <div class="role-presets" aria-label="Role presets">
+              <span class="eyebrow">Starting profile</span>
+              <button type="button" class="profile-button" data-role-profile="frontier">Quality</button>
+              <button type="button" class="profile-button" data-role-profile="balanced">Balanced</button>
+              <button type="button" class="profile-button" data-role-profile="local-heavy">Local-heavy</button>
             </div>
-            <button type="submit" class="control-button">Save executor</button>
-            <p class="note form-feedback" id="executor-settings-feedback" role="status">Only the environment-variable name is stored; secret values never enter Coordinator state.</p>
+            <div class="role-flow" aria-label="Configured agent pipeline">
+              <section class="role-card" data-role="reviewer" aria-labelledby="reviewer-role-heading">
+                <header><span class="role-number">1</span><div><h4 id="reviewer-role-heading">Discuss &amp; review</h4><p>Owns goals and accepts each turn.</p></div><span class="role-health" id="reviewer-role-health">unknown</span></header>
+                <div class="role-runtime"><span>Runtime</span><strong>Codex CLI</strong><small>Fixed orchestration adapter</small></div>
+                <label class="role-editable">Reviewer model<select name="codex_model"><option value="">Loading Codex models…</option></select></label>
+                <label class="role-editable">Reviewer effort<select name="codex_effort"><option value="">Model default</option></select></label>
+              </section>
+              <span class="role-arrow" aria-hidden="true">→</span>
+              <section class="role-card" data-role="supervisor" aria-labelledby="supervisor-role-heading">
+                <header><span class="role-number">2</span><div><h4 id="supervisor-role-heading">Architect &amp; supervise</h4><p>Plans implementation and reviews delegation.</p></div><span class="role-health" id="supervisor-role-health">unknown</span></header>
+                <div class="role-runtime"><span>Runtime</span><strong>Claude Code</strong><small>Fixed orchestration adapter</small></div>
+                <label class="role-editable">Supervisor model<select name="claude_model" required><option value="opus">Opus</option><option value="sonnet">Sonnet</option><option value="fable">Fable</option></select></label>
+                <label class="role-editable">Supervisor effort<select name="claude_effort"><option value="">Model default</option></select></label>
+                <label class="role-editable">Native subagent model<select name="claude_subagent_model" required><option value="sonnet">Sonnet</option><option value="opus">Opus</option><option value="fable">Fable</option></select></label>
+                <label class="role-editable">Native subagent effort<select name="claude_subagent_effort"><option value="">Inherit supervisor</option></select></label>
+                <label class="role-editable">Maximum turns<input name="claude_max_turns" type="number" min="1" max="200" value="40" required /></label>
+              </section>
+              <span class="role-arrow" aria-hidden="true">→</span>
+              <section class="role-card" data-role="executor" aria-labelledby="executor-role-heading">
+                <header><span class="role-number">3</span><div><h4 id="executor-role-heading">Implement</h4><p>Writes and tests the bounded change.</p></div><span class="role-health" id="executor-role-health">unknown</span></header>
+                <label class="role-editable">Implementation strategy
+                  <select name="execution_strategy">
+                    <option value="claude">Claude implements directly</option>
+                    <option value="claude-local">Claude delegates eligible work locally</option>
+                    <option value="mini-swe-agent">Local model implements directly</option>
+                  </select>
+                </label>
+                <p class="role-fallback" id="executor-fallback">Fallback: Claude handles the turn.</p>
+              </section>
+            </div>
+            <section class="local-model-settings" id="local-model-settings" aria-labelledby="local-model-heading" hidden>
+              <header><div><h4 id="local-model-heading">Local / API executor</h4><p class="note">OpenAI-compatible endpoint used by mini-swe-agent. Only the environment-variable name is stored.</p></div></header>
+              <div class="settings-form">
+                <label>Endpoint<input name="mini_swe_api_base" type="url" placeholder="Endpoint base URL ending in /v1" /></label>
+                <label>Model<select name="mini_swe_model"><option value="">Discover models from the endpoint…</option></select></label>
+                <label>Reasoning effort<select name="mini_swe_effort"><option value="">Endpoint default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Xhigh</option><option value="max">Max</option></select></label>
+                <label>LiteLLM provider<input name="mini_swe_provider" value="openai" required /></label>
+                <label>API-key environment variable<input name="mini_swe_api_key_env" placeholder="blank for an unauthenticated local endpoint" /></label>
+                <label>Step limit<input name="mini_swe_step_limit" type="number" min="1" max="200" value="12" required /></label>
+                <label>Wall-time limit (seconds)<input name="mini_swe_timeout_seconds" type="number" min="10" max="86400" value="900" required /></label>
+                <label>Cost limit<input name="mini_swe_cost_limit" type="number" min="0" step="0.01" value="0" required /></label>
+                <div class="executor-actions"><button type="button" class="control-button" id="executor-discover">Discover models</button></div>
+              </div>
+            </section>
+            <div class="role-settings-actions">
+              <button type="submit" class="control-button">Save role assignment</button>
+              <button type="button" class="control-button" id="roles-test">Check runtime availability</button>
+            </div>
+            <p class="note form-feedback" id="executor-settings-feedback" role="status">Stop the managed watcher before changing role assignments.</p>
           </form>
         </section>
         <section class="panel" aria-labelledby="guardrails-heading">

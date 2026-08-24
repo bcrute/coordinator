@@ -35,6 +35,7 @@ VIEW_PANEL_IDS = {
     "agents": [
         "coder-heading",
         "subagents-heading",
+        "delegations-heading",
         "watcher-controls-heading",
         "watchers-heading",
     ],
@@ -127,7 +128,7 @@ class ProviderUsageHeaderTests(unittest.TestCase):
             self.css,
         )
         self.assertIn(".usage-provider:first-child", self.css)
-        self.assertEqual(self.html.count("<span>Projected</span>"), 2)
+        self.assertEqual(self.html.count("<span>Projected / pace</span>"), 2)
         self.assertNotIn('id="usage-forecast-list"', self.html)
 
     def test_provider_limits_are_top_right_and_resets_are_inline(self):
@@ -142,10 +143,24 @@ class ProviderUsageHeaderTests(unittest.TestCase):
         )
         self.assertIn('reset.textContent = "· " + usageResetShort', self.js)
 
-    def test_reset_and_linear_pace_projection_have_rendering_hooks(self):
-        for function in ("usageResetShort", "usagePaceForecast", "usageWindowChip"):
+    def test_reset_and_velocity_projection_have_rendering_hooks(self):
+        for function in (
+            "usageResetShort",
+            "usagePaceForecast",
+            "usageVelocityLabel",
+            "usageForecastDetail",
+            "usageWindowChip",
+        ):
             self.assertIn(f"function {function}", self.js)
         self.assertIn('projection.className = "usage-window-projection"', self.js)
+        self.assertIn('velocity.className = "usage-window-velocity"', self.js)
+        self.assertIn("rolling_velocity", self.js)
+        self.assertIn("Projected / pace", self.html)
+
+    def test_stale_watcher_records_are_hidden_from_the_dashboard(self):
+        renderer = re.search(r"function renderWatchers\(state\) \{[\s\S]*?\n\}", self.js)
+        self.assertIsNotNone(renderer)
+        self.assertIn('entry.watcher_state !== "stale"', renderer.group(0))
         self.assertIn('.usage-chip strong[data-tone="ok"]', self.css)
         self.assertIn('.usage-chip strong[data-tone="warn"]', self.css)
         self.assertIn('.usage-chip strong[data-tone="bad"]', self.css)
@@ -227,6 +242,36 @@ class PanelGroupingTests(unittest.TestCase):
                     panel_id, seen, "panel id duplicated across views: " + panel_id
                 )
                 seen[panel_id] = route
+
+
+class DelegationViewTests(unittest.TestCase):
+    def setUp(self):
+        self.js = read(WEB_DIR / "app.js")
+        self.html = read(WEB_DIR / "index.html")
+
+    def test_settings_exposes_role_pipeline_and_agents_render_decision_evidence(self):
+        self.assertIn('name="codex_model"', self.html)
+        self.assertIn('name="execution_strategy"', self.html)
+        self.assertIn('value="claude-local"', self.html)
+        self.assertIn('data-role="reviewer"', self.html)
+        self.assertIn('data-role="supervisor"', self.html)
+        self.assertIn('data-role="executor"', self.html)
+        self.assertNotIn('disabled aria-label="Reviewer runtime"', self.html)
+        self.assertIn('class="role-editable">Reviewer model', self.html)
+        self.assertIn('Reviewer model<select name="codex_model"', self.html)
+        self.assertIn('Reviewer effort<select name="codex_effort"', self.html)
+        self.assertIn('Supervisor effort<select name="claude_effort"', self.html)
+        self.assertIn('Native subagent effort<select name="claude_subagent_effort"', self.html)
+        self.assertIn('Reasoning effort<select name="mini_swe_effort"', self.html)
+        self.assertNotIn('input name="codex_model"', self.html)
+        self.assertIn('/api/executor-settings/models?source=codex', self.js)
+        self.assertIn("Unsaved role changes.", self.js)
+        self.assertIn("strategy === \"claude-local\"", self.js)
+        self.assertIn('id="delegations"', self.html)
+        self.assertIn("function renderDelegations", self.js)
+        self.assertIn('text(entry.routing_score, "—") + "/10"', self.js)
+        self.assertIn("entry.routing_rationale", self.js)
+        self.assertIn("renderDelegations(list(state.delegations))", self.js)
 
 
 class VisibilityAndActiveStateTests(unittest.TestCase):

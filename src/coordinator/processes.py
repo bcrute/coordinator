@@ -21,7 +21,10 @@ ACTIVE_STATES = ("starting", "running")
 
 
 def default_watcher_command(
-    root: Path, executor: ExecutorAdapter | None = None
+    root: Path,
+    executor: ExecutorAdapter | None = None,
+    reviewer_model: str = "",
+    reviewer_effort: str = "",
 ) -> list[str]:
     """Build the fixed automatic both-watcher command for `root`."""
 
@@ -37,6 +40,10 @@ def default_watcher_command(
     ]
     if executor is not None:
         command.extend(executor.watcher_arguments())
+    if reviewer_model:
+        command.extend(("--codex-model", reviewer_model))
+    if reviewer_effort:
+        command.extend(("--codex-effort", reviewer_effort))
     return command
 
 def moment(value: float | None) -> str | None:

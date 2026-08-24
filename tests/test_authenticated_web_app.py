@@ -13,6 +13,7 @@ import time
 import unittest
 from contextlib import closing
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from authlib.integrations.base_client.errors import OAuthError
@@ -39,6 +40,7 @@ from coordinator.authenticated_web_app import (
     TERMINAL_OUTPUT_CHUNK_CHARS,
     _terminal_output_chunks,
 )
+import coordinator.authenticated_web_app as authenticated_runtime
 
 
 class FakeOIDCClient:
@@ -1355,6 +1357,41 @@ class LocalAppTests(unittest.TestCase):
 
 
 class SettingsValidationTests(unittest.TestCase):
+    def test_server_has_a_bounded_graceful_shutdown_deadline(self) -> None:
+        settings = LocalSettings(
+            external_url="http://127.0.0.1:8765",
+            state_dir=Path("/tmp/coordinator-test-state"),
+            trusted_hosts=("127.0.0.1",),
+        )
+        args = SimpleNamespace(
+            auth_mode="local",
+            host="127.0.0.1",
+            port=8765,
+            quiet=True,
+            forwarded_allow_ips="127.0.0.1",
+            repo=Path.cwd(),
+            repositories_root=Path.cwd().parent,
+            relay_log_lines=200,
+            usage_refresh_seconds=3600,
+        )
+        server = mock.Mock()
+        with (
+            mock.patch.object(authenticated_runtime, "from_namespace", return_value=object()),
+            mock.patch.object(
+                authenticated_runtime, "local_settings_from_args", return_value=settings
+            ),
+            mock.patch.object(
+                authenticated_runtime, "create_authenticated_app", return_value=object()
+            ),
+            mock.patch("uvicorn.Config", return_value="config") as config,
+            mock.patch("uvicorn.Server", return_value=server),
+        ):
+            result = authenticated_runtime.serve_application(args)
+
+        self.assertEqual(result, 0)
+        self.assertEqual(config.call_args.kwargs["timeout_graceful_shutdown"], 10)
+        server.run.assert_called_once_with(sockets=None)
+
     def test_client_secret_is_redacted_from_settings_repr(self) -> None:
         settings = OIDCSettings(
             issuer="https://idp.example/application/o/coordinator/",

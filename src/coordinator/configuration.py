@@ -18,6 +18,7 @@ CONFIG_KEYS = {
     "relay_log_lines",
     "usage_refresh_seconds",
     "executor_adapter",
+    "claude_local_delegation",
     "mini_swe_command",
     "mini_swe_model",
     "mini_swe_config",
@@ -192,7 +193,7 @@ def load_config(path: Path) -> dict[str, object]:
             raise ValueError("--config mini_swe_cost_limit must be a non-negative number")
         settings["mini_swe_cost_limit"] = float(value)
 
-    for key in ("insecure_oidc_http", "terminal_enabled"):
+    for key in ("insecure_oidc_http", "terminal_enabled", "claude_local_delegation"):
         if key in data:
             value = data[key]
             if not isinstance(value, bool):
@@ -260,6 +261,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=("claude", "mini-swe-agent"),
         default=None,
         help="implementation runtime launched by the watcher (default: claude)",
+    )
+    parser.add_argument(
+        "--claude-local-delegation",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="let Claude delegate high-confidence bounded work through Coordinator MCP",
     )
     parser.add_argument("--mini-swe-command", default=None)
     parser.add_argument("--mini-swe-model", default=None)
@@ -355,6 +362,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "usage_refresh_seconds", args.usage_refresh_seconds, 3600
     )
     args.executor_adapter = resolved("executor_adapter", args.executor_adapter, "claude")
+    args.claude_local_delegation = bool(
+        resolved("claude_local_delegation", args.claude_local_delegation, False)
+    )
     args.mini_swe_command = resolved("mini_swe_command", args.mini_swe_command, "mini")
     args.mini_swe_model = resolved("mini_swe_model", args.mini_swe_model, "")
     args.mini_swe_config = resolved("mini_swe_config", args.mini_swe_config, None)

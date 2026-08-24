@@ -129,6 +129,8 @@ recoverable, network-ready application is tracked in
 recorded in the ADR series, including
 [`ADR 0003`](docs/adr/0003-professional-application-core.md) and the
 [`executor-adapter decision`](docs/adr/0004-executor-adapters-and-mini-swe-agent.md).
+Claude-to-local-model delegation is recorded in
+[`ADR 0005`](docs/adr/0005-mcp-supervisor-delegation.md).
 
 ## Settings
 
@@ -145,6 +147,7 @@ command-line flag always overrides the matching config value.
 | `relay_log_lines`    | `200`                                | Number of `runtime/relay.log` lines returned by `/api/state`. |
 | `usage_refresh_seconds` | `3600`                            | Server-side refresh interval for cached Codex and Claude rolling-limit usage. Collection does not create model turns. |
 | `executor_adapter`   | `claude`                              | Implementation runtime: `claude` or `mini-swe-agent`. |
+| `claude_local_delegation` | `false`                          | When Claude is the executor, expose the configured mini-swe-agent backend through a bounded local MCP tool. |
 | `mini_swe_command` / `mini_swe_model` | `mini` / provider configuration | mini-swe-agent executable and optional LiteLLM model name. |
 | `mini_swe_config`    | none                                  | Optional base mini-swe-agent YAML. Relative paths resolve beside the Coordinator TOML file. |
 | `mini_swe_api_base` / `mini_swe_provider` | none / `openai`      | Optional OpenAI-compatible endpoint and LiteLLM custom-provider name. |
@@ -196,13 +199,26 @@ from known model flags, allowlisted model environment values, or the exact Codex
 record associated with an open rollout file; prompts, arbitrary arguments, and general
 environment values are not returned to the browser.
 
-This activity panel is observation, not agent configuration. Executor selection,
-model, endpoint, and bounds live on the Settings page; reusable multi-agent profiles
-and provider executables remain deployment configuration. Process presence also does
+This activity panel is observation, not agent configuration. The Settings page's
+three-stage role pipeline controls the Codex reviewer model, Claude supervisor model,
+their independent effort levels, the native Claude subagent model and effort,
+implementation strategy, local endpoint, and execution bounds. Quality,
+balanced, and local-heavy buttons provide editable starting profiles. CLI executable
+locations remain deployment configuration. Process presence also does
 not claim to know an agent's internal wait reason; a visible background terminal
 confirms that the managed session owns the work, while semantic messages such as
 “awaiting background terminal” remain provider-owned until exposed as structured
 events.
+
+Model fields are controlled selectors rather than free-form text. Codex options come
+from the installed CLI's authenticated picker, Claude options come from the aliases
+advertised by the installed Claude Code version, and local/API options come from the
+configured endpoint's `/models` response.
+Codex effort options follow the selected model's installed picker metadata. Claude's
+lead and session-scoped `coordinator-worker` subagent use separate native effort
+settings. The local/API effort override is passed through LiteLLM as
+`reasoning_effort`; leave it at **Endpoint default** when that endpoint does not
+support this parameter.
 
 ### Provider usage indicators
 
@@ -283,6 +299,49 @@ mini-swe-agent turn for each ready assignment, stores trajectories below
 `.coordination/runtime/trajectories/`, and hands the resulting diff back to Codex for
 review. This first integration is deliberately single-agent: mini-swe-agent does not
 create or report nested workers here.
+
+### Claude-supervised local delegation through MCP
+
+To keep Claude as the coding supervisor while assigning routine implementation to the
+configured local model, choose **Claude delegates eligible work locally** in the
+Settings role pipeline, then configure the mini-swe-agent model and endpoint.
+The watcher injects an invocation-scoped local stdio MCP server into Claude Code; it
+does not modify the target repository's `.mcp.json` or the user's global Claude
+configuration.
+
+Routing is intentionally explicit. Architecture/product decisions, ambiguous work,
+authentication or security-boundary changes, data migrations, destructive or external
+actions, and tasks without deterministic verification stay with Claude. Eligible work
+is scored 0–2 for specification completeness, edit locality, deterministic
+verification, reversibility, and low blast radius. Scores 8–10 may be delegated; a
+score of 7 must first be decomposed, and 0–6 stays with Claude. Very small fixes stay
+in Claude to avoid startup overhead, while large tasks are split before routing.
+
+Each accepted MCP call requires the score, rationale, narrow allowed path patterns,
+and at least one shell-free validation argument array. Coordinator runs mini-swe-agent
+in a detached temporary Git worktree, checks the changed paths, runs the validations,
+saves a binary-safe patch and compact telemetry under
+`.coordination/runtime/delegations/`, removes the worktree, and returns the patch to
+Claude. Claude must review and apply it; the tool never changes the supervisor's
+working tree. The Agents page shows recent local workers, model, score, rationale,
+timer, steps, tokens, and changed-file count.
+
+The closest reviewed pre-packaged project was `cc-delegate`, but it also brings its
+own worker hierarchy, persistence, polling, and status surface. Coordinator uses the
+official MCP Python SDK and its existing mini-swe adapter instead of installing a
+second overlapping orchestration system.
+
+### Provider-limit velocity
+
+The header records successful provider-limit observations in the owner-only usage
+SQLite database. After two observations spanning at least 30 minutes in the same reset
+cycle, its projected percentage remaining uses a recency-weighted slope over the last
+six hours. The smaller line beneath the projection is the current percentage-point
+burn rate per hour; the tooltip includes its ratio to the sustainable rate required to
+reach reset without exhausting the allowance. Until enough observations exist, the UI
+labels the original reset-average calculation as a fallback. Reset changes start a new
+series, history survives application restarts, and old observations are retained for
+30 days.
 
 ## Authenticated OIDC mode
 

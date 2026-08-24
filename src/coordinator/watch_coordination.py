@@ -132,7 +132,9 @@ def agent_command(
         str(args.repo),
         "--codex-command",
         args.codex_command,
-    ]
+    ] + (["--model", args.codex_model] if args.codex_model else []) + (
+        ["--effort", args.codex_effort] if args.codex_effort else []
+    )
 
 
 def role_handles(role: str, action: str) -> bool:
@@ -314,14 +316,35 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--claude-command", default="claude")
     parser.add_argument("--codex-command", default="codex")
+    parser.add_argument("--codex-model", default="")
+    parser.add_argument(
+        "--codex-effort",
+        choices=("none", "low", "medium", "high", "xhigh", "max", "ultra"),
+        default="",
+    )
     parser.add_argument(
         "--claude-permission-mode",
         choices=("auto", "default", "acceptEdits", "plan", "dontAsk"),
         default="auto",
     )
     parser.add_argument("--claude-model", default="opus")
+    parser.add_argument(
+        "--claude-effort",
+        choices=("low", "medium", "high", "xhigh", "max"),
+        default="",
+    )
     parser.add_argument("--claude-subagent-model", default="sonnet")
+    parser.add_argument(
+        "--claude-subagent-effort",
+        choices=("low", "medium", "high", "xhigh", "max"),
+        default="",
+    )
     parser.add_argument("--claude-max-turns", type=int, default=40)
+    parser.add_argument(
+        "--claude-local-delegation",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
     parser.add_argument(
         "--executor-adapter",
         choices=EXECUTOR_ADAPTERS,
@@ -330,6 +353,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--mini-swe-command", default="mini")
     parser.add_argument("--mini-swe-model", default="")
+    parser.add_argument(
+        "--mini-swe-effort",
+        choices=("low", "medium", "high", "xhigh", "max"),
+        default="",
+    )
     parser.add_argument("--mini-swe-config", type=Path)
     parser.add_argument("--mini-swe-api-base", default="")
     parser.add_argument("--mini-swe-provider", default="openai")

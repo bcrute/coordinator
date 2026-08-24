@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sys
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -8,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills" / "coordinate-claude-work"
 sys.path.insert(0, str(SKILL / "scripts"))
 
-from web_app import completion_state, workflow_state
+from web_app import completion_state, delegation_state, watcher_state, workflow_state
 
 
 COMPLETION_TEXT = """# Overall goal completion
@@ -263,6 +265,77 @@ class WorkflowStateFallbackTests(unittest.TestCase):
         self.assertFalse(result["coder_current"])
         self.assertFalse(result["runtime_current"])
         self.assertFalse(result["completion_current"])
+
+
+class DelegationStateTests(unittest.TestCase):
+    def test_runtime_jobs_are_bounded_and_keep_routing_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            jobs = repo / ".coordination/runtime/delegations"
+            jobs.mkdir(parents=True)
+            (jobs / "d-example.json").write_text(
+                json.dumps(
+                    {
+                        "id": "d-example",
+                        "state": "running",
+                        "model": "openai/local-qwen",
+                        "objective": "Update a focused parser.",
+                        "routing_score": 9,
+                        "routing_rationale": "Exact files and deterministic tests.",
+                        "started_at_epoch": 90,
+                        "steps": 3,
+                        "usage": {"output_tokens": 25},
+                        "changed_files": ["src/parser.py"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = delegation_state(repo, 100)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["routing_score"], 9)
+        self.assertEqual(result[0]["elapsed"]["seconds"], 10)
+        self.assertEqual(result[0]["usage"]["output_tokens"], 25)
+
+
+class WatcherStateTests(unittest.TestCase):
+    def test_unlocked_active_status_is_historical_not_running(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            runtime = repo / ".coordination/runtime"
+            runtime.mkdir(parents=True)
+            (runtime / "watcher-claude-status.json").write_text(
+                json.dumps(
+                    {
+                        "role": "claude",
+                        "watcher_state": "running",
+                        "detail": "launching an old handoff",
+                        "updated_at": "2026-08-19T00:00:00+00:00",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = watcher_state(repo)
+
+        self.assertEqual(result[0]["watcher_state"], "stale")
+        self.assertEqual(result[0]["reported_state"], "running")
+        self.assertFalse(result[0]["lock_present"])
+        self.assertIn("no watcher lock is held", result[0]["detail"])
+
+    def test_locked_active_status_remains_running(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            runtime = repo / ".coordination/runtime"
+            runtime.mkdir(parents=True)
+            (runtime / "watcher-both-status.json").write_text(
+                json.dumps({"role": "both", "watcher_state": "running"}),
+                encoding="utf-8",
+            )
+            (runtime / "watcher-both.lock").write_text("pid=123\n", encoding="utf-8")
+            result = watcher_state(repo)
+
+        self.assertEqual(result[0]["watcher_state"], "running")
+        self.assertTrue(result[0]["lock_present"])
 
 
 if __name__ == "__main__":

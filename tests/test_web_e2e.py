@@ -283,6 +283,16 @@ class DashboardBrowserTests(unittest.TestCase):
                                         "used_percent": 20,
                                         "duration_minutes": 300,
                                         "resets_at": reset_after(session, timedelta(hours=2)),
+                                        "forecast": {
+                                            "method": "rolling_velocity",
+                                            "projected_remaining": 32,
+                                            "burn_rate_percent_per_hour": 6.25,
+                                            "sustainable_rate_percent_per_hour": 8,
+                                            "velocity_ratio": 0.78,
+                                            "sample_count": 6,
+                                            "basis_hours": 5,
+                                            "confidence": "high",
+                                        },
                                     },
                                     {
                                         "id": "weekly:1",
@@ -389,7 +399,7 @@ class DashboardBrowserTests(unittest.TestCase):
                     ).filter(has_text="100%").wait_for(timeout=10_000)
                     projection_expectations = (
                         ("#usage-codex-value .usage-chip", 0, "-110%", "bad"),
-                        ("#usage-claude-value .usage-chip", 0, "50%", "ok"),
+                        ("#usage-claude-value .usage-chip", 0, "32%", "ok"),
                         ("#usage-claude-value .usage-chip", 1, "10%", "warn"),
                         ("#usage-claude-value .usage-chip", 2, "—", "neutral"),
                     )
@@ -404,6 +414,16 @@ class DashboardBrowserTests(unittest.TestCase):
                         page.locator("#usage-codex-value .usage-chip").first.get_attribute(
                             "title"
                         ),
+                    )
+                    self.assertEqual(
+                        page.locator("#usage-claude-value .usage-window-velocity")
+                        .first.inner_text(),
+                        "6.3%/h",
+                    )
+                    self.assertIn(
+                        "0.78× sustainable pace",
+                        page.locator("#usage-claude-value .usage-chip")
+                        .first.get_attribute("title"),
                     )
                     page.locator("#nav-usage").click()
                     page.locator("#usage-history-tabs .provider-tab").filter(
@@ -529,6 +549,44 @@ class DashboardBrowserTests(unittest.TestCase):
                     ).wait_for(timeout=10_000)
 
                     page.locator("#nav-settings").click()
+                    reviewer_model = page.locator(
+                        '#executor-settings-form select[name="codex_model"]'
+                    )
+                    page.wait_for_function(
+                        "() => document.querySelector("
+                        "'#executor-settings-form select[name=\"codex_model\"]'"
+                        ").options.length > 1",
+                        timeout=10_000,
+                    )
+                    reviewer_model.select_option(index=1)
+                    self.assertNotEqual(reviewer_model.input_value(), "")
+                    reviewer_effort = page.locator(
+                        '#executor-settings-form select[name="codex_effort"]'
+                    )
+                    reviewer_effort.select_option("high")
+                    self.assertEqual(reviewer_effort.input_value(), "high")
+                    page.locator("#executor-settings-feedback").filter(
+                        has_text="Unsaved role changes"
+                    ).wait_for(timeout=10_000)
+                    page.locator('[data-role-profile="local-heavy"]').click()
+                    self.assertEqual(
+                        page.locator(
+                            '#executor-settings-form select[name="execution_strategy"]'
+                        ).input_value(),
+                        "claude-local",
+                    )
+                    self.assertTrue(page.locator("#local-model-settings").is_visible())
+                    page.locator("#executor-fallback").filter(
+                        has_text="Claude keeps rejected"
+                    ).wait_for(timeout=10_000)
+                    page.locator('[data-role-profile="frontier"]').click()
+                    self.assertFalse(page.locator("#local-model-settings").is_visible())
+                    self.assertEqual(
+                        page.locator(
+                            '#executor-settings-form select[name="claude_effort"]'
+                        ).input_value(),
+                        "high",
+                    )
                     page.locator('#preferences-form select[name="theme"]').select_option("dark")
                     page.locator("#preferences-form button").click()
                     page.locator("#preferences-feedback").filter(

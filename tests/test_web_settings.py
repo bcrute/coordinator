@@ -56,6 +56,7 @@ class ConfigValuesTests(unittest.TestCase):
                 port = 9090
                 relay_log_lines = 50
                 usage_refresh_seconds = 1800
+                claude_local_delegation = true
                 quiet = true
                 """,
             )
@@ -66,6 +67,7 @@ class ConfigValuesTests(unittest.TestCase):
             self.assertEqual(args.port, 9090)
             self.assertEqual(args.relay_log_lines, 50)
             self.assertEqual(args.usage_refresh_seconds, 1800)
+            self.assertTrue(args.claude_local_delegation)
             self.assertTrue(args.quiet)
 
     def test_absolute_config_paths_are_kept_as_is(self) -> None:

@@ -61,6 +61,7 @@ var selectedRunEvents = [];
 var preferences = { browser_notifications: false, theme: "system", log_lines: 200 };
 var preferencesLoaded = false;
 var executorSettingsLoaded = false;
+var roleModelCatalogs = { codex: [], claude: [] };
 var lastNotificationKey = "";
 var shortcutPrefix = false;
 
@@ -172,6 +173,7 @@ function tone(state) {
     value === "initialized" ||
     value === "ok" ||
     value === "revoked" ||
+    value === "ready_for_review" ||
     value === "running" ||
     value === "success"
   ) {
@@ -199,13 +201,15 @@ function tone(state) {
   if (
     value === "idle" ||
     value === "unknown" ||
+    value === "stale" ||
     value === "stopped" ||
     value === "stopping" ||
     value === "exited" ||
     value === "not_reviewed" ||
     value === "waiting_for_claude" ||
     value === "waiting_for_codex" ||
-    value === "inactive"
+    value === "inactive" ||
+    value === "needs_review"
   ) {
     return "warn";
   }
@@ -522,13 +526,75 @@ function renderSubagents(agents) {
   );
 }
 
+function renderDelegations(values) {
+  var node = el("delegations");
+  var entries = values.filter(function (entry) {
+    return entry && typeof entry === "object";
+  });
+  var running = entries.filter(function (entry) {
+    return entry.state === "starting" || entry.state === "running";
+  }).length;
+  setText(
+    "delegations-summary",
+    entries.length === 0 ? "none recorded" : running + " running / " + entries.length + " recent"
+  );
+  if (!node) return;
+  if (entries.length === 0) {
+    node.replaceChildren(item("is-empty", "No local MCP delegations recorded."));
+    return;
+  }
+  node.replaceChildren.apply(
+    node,
+    entries.map(function (entry) {
+      var usage = record(entry.usage);
+      var row = document.createElement("li");
+      var head = document.createElement("p");
+      head.className = "record-head";
+      var badge = span("badge", text(entry.state, "unknown"));
+      var mood = tone(entry.state);
+      if (mood) badge.setAttribute("data-tone", mood);
+      head.appendChild(badge);
+      head.appendChild(span("record-title", text(entry.objective, "Bounded implementation")));
+      row.appendChild(head);
+      var meta = document.createElement("p");
+      meta.className = "record-meta";
+      meta.textContent =
+        text(entry.model, "local worker") +
+        " · route " + text(entry.routing_score, "—") + "/10" +
+        " · step " + count(entry.steps) +
+        " · " + clock(entry.elapsed) +
+        " · generated " + count(usage.output_tokens) +
+        " · " + list(entry.changed_files).length + " files";
+      row.appendChild(meta);
+      var rationale = document.createElement("p");
+      rationale.className = "record-meta";
+      rationale.textContent = text(entry.routing_rationale, "Routing rationale not recorded.");
+      row.appendChild(rationale);
+      if (entry.error) {
+        var error = document.createElement("p");
+        error.className = "record-meta";
+        error.textContent = "Error: " + text(entry.error);
+        row.appendChild(error);
+      }
+      return row;
+    })
+  );
+}
+
 function renderWatchers(state) {
   var node = el("watchers");
   var entries = list(state.watchers).filter(function (entry) {
-    return entry && typeof entry === "object";
+    return entry && typeof entry === "object" && entry.watcher_state !== "stale";
   });
 
-  setText("watchers-summary", entries.length === 0 ? "none recorded" : entries.length + " recorded");
+  var activeCount = entries.filter(function (entry) {
+    return entry.lock_present === true &&
+      (entry.watcher_state === "running" || entry.watcher_state === "waiting");
+  }).length;
+  setText(
+    "watchers-summary",
+    entries.length === 0 ? "none recorded" : activeCount + " active · " + entries.length + " recorded"
+  );
   if (!node) {
     return;
   }
@@ -1614,6 +1680,7 @@ function render(state) {
   renderCoder(state);
   renderReview(state);
   renderRuntime(state);
+  renderDelegations(list(state.delegations));
   renderWatchers(state);
   renderManaged(state);
   renderLog(state);
@@ -1660,25 +1727,67 @@ function usageResetShort(value) {
 
 function usagePaceForecast(windowValue, nowMilliseconds) {
   var details = record(windowValue);
+  var reported = record(details.forecast);
+  if (reported.method === "unavailable") {
+    return { tone: "neutral", remaining: null, method: "unavailable" };
+  }
+  if (typeof reported.projected_remaining === "number" &&
+      Number.isFinite(reported.projected_remaining)) {
+    var reportedRemaining = reported.projected_remaining;
+    return {
+      tone: reportedRemaining <= 0 ? "bad" : reportedRemaining <= 20 ? "warn" : "ok",
+      remaining: reportedRemaining,
+      method: text(reported.method, "rolling_velocity"),
+      burnRate: reported.burn_rate_percent_per_hour,
+      sustainableRate: reported.sustainable_rate_percent_per_hour,
+      velocityRatio: reported.velocity_ratio,
+      sampleCount: reported.sample_count,
+      basisHours: reported.basis_hours,
+      confidence: text(reported.confidence, "unknown"),
+    };
+  }
   var reset = new Date(details.resets_at);
   var duration = details.duration_minutes;
   var used = details.used_percent;
   if (typeof details.resets_at !== "string" ||
       !Number.isFinite(reset.getTime()) || typeof duration !== "number" ||
       duration <= 0 || typeof used !== "number") {
-    return { tone: "neutral", remaining: null };
+    return { tone: "neutral", remaining: null, method: "unavailable" };
   }
   var durationMilliseconds = duration * 60 * 1000;
   var elapsed = durationMilliseconds - (reset.getTime() - nowMilliseconds);
   var projectedUsed = elapsed <= 0 ? used : used * durationMilliseconds / elapsed;
   var projectedRemaining = 100 - projectedUsed;
   if (projectedRemaining <= 0) {
-    return { tone: "bad", remaining: projectedRemaining };
+    return { tone: "bad", remaining: projectedRemaining, method: "reset_average",
+      burnRate: elapsed <= 0 ? 0 : used / (elapsed / 3600000), confidence: "fallback" };
   }
   if (projectedRemaining <= 20) {
-    return { tone: "warn", remaining: projectedRemaining };
+    return { tone: "warn", remaining: projectedRemaining, method: "reset_average",
+      burnRate: elapsed <= 0 ? 0 : used / (elapsed / 3600000), confidence: "fallback" };
   }
-  return { tone: "ok", remaining: projectedRemaining };
+  return { tone: "ok", remaining: projectedRemaining, method: "reset_average",
+    burnRate: elapsed <= 0 ? 0 : used / (elapsed / 3600000), confidence: "fallback" };
+}
+
+function usageVelocityLabel(forecast) {
+  if (typeof forecast.burnRate !== "number" || !Number.isFinite(forecast.burnRate)) {
+    return "collecting pace";
+  }
+  var prefix = forecast.method === "rolling_velocity" ? "" : "avg ";
+  return prefix + forecast.burnRate.toFixed(forecast.burnRate < 0.1 ? 2 : 1) + "%/h";
+}
+
+function usageForecastDetail(forecast) {
+  if (forecast.method !== "rolling_velocity") {
+    return "reset-average fallback while collecting rolling observations";
+  }
+  var detail = "rolling velocity over " + Number(forecast.basisHours || 0).toFixed(1) +
+    "h from " + Number(forecast.sampleCount || 0) + " observations";
+  if (typeof forecast.velocityRatio === "number" && Number.isFinite(forecast.velocityRatio)) {
+    detail += "; " + forecast.velocityRatio.toFixed(2) + "× sustainable pace";
+  }
+  return detail + "; " + forecast.confidence + " confidence";
 }
 
 function usageWindowChip(windowValue) {
@@ -1689,7 +1798,9 @@ function usageWindowChip(windowValue) {
   var label = document.createElement("span");
   var reset = document.createElement("small");
   var value = document.createElement("strong");
+  var forecastCell = document.createElement("span");
   var projection = document.createElement("strong");
+  var velocity = document.createElement("small");
   var forecast = usagePaceForecast(details, Date.now());
   chip.className = "usage-chip";
   name.className = "usage-window-name";
@@ -1701,10 +1812,15 @@ function usageWindowChip(windowValue) {
   projection.className = "usage-window-projection";
   projection.dataset.tone = forecast.tone;
   projection.textContent = usagePercent(forecast.remaining);
+  forecastCell.className = "usage-window-forecast";
+  velocity.className = "usage-window-velocity";
+  velocity.textContent = usageVelocityLabel(forecast);
+  forecastCell.append(projection, velocity);
   name.append(label, reset);
-  chip.append(name, value, projection);
+  chip.append(name, value, forecastCell);
   chip.title = label.textContent + ": " + value.textContent + " remaining; " +
-    projection.textContent + " projected remaining at reset; " + usageReset(details.resets_at);
+    projection.textContent + " projected remaining at reset; " +
+    usageForecastDetail(forecast) + "; " + usageReset(details.resets_at);
   return chip;
 }
 
@@ -2257,12 +2373,162 @@ function loadPreferences() {
 function toggleExecutorFields() {
   var form = el("executor-settings-form");
   if (!form) return;
-  var mini = form.elements.namedItem("executor_adapter").value === "mini-swe-agent";
-  Array.prototype.forEach.call(document.querySelectorAll(".executor-claude"), function (node) {
-    node.hidden = mini;
+  var strategy = form.elements.namedItem("execution_strategy").value;
+  var local = strategy !== "claude";
+  el("local-model-settings").hidden = !local;
+  var supervisor = document.querySelector('.role-card[data-role="supervisor"]');
+  if (supervisor) supervisor.dataset.inactive = strategy === "mini-swe-agent" ? "true" : "false";
+  setText(
+    "executor-fallback",
+    strategy === "claude-local"
+      ? "Fallback: Claude keeps rejected, risky, or failed local work."
+      : strategy === "mini-swe-agent"
+        ? "Fallback: none; a failed local turn stops for review."
+        : "Fallback: Claude handles the turn directly."
+  );
+}
+
+function setRoleHealth(nodeId, status) {
+  var node = el(nodeId);
+  if (!node) return;
+  if (status.active === false) {
+    node.textContent = "not in path";
+    node.dataset.tone = "neutral";
+  } else if (status.executable_available === true) {
+    node.textContent = "CLI found";
+    node.dataset.tone = "ok";
+  } else {
+    node.textContent = "missing";
+    node.dataset.tone = "bad";
+  }
+}
+
+function ensureModelOption(control, value) {
+  if (!control || control.tagName !== "SELECT") return;
+  var exists = Array.prototype.some.call(control.options, function (option) {
+    return option.value === String(value);
   });
-  Array.prototype.forEach.call(document.querySelectorAll(".executor-mini"), function (node) {
-    node.hidden = !mini;
+  if (!exists) {
+    var option = document.createElement("option");
+    option.value = String(value);
+    option.textContent = String(value) + " (saved; not currently advertised)";
+    option.dataset.stale = "true";
+    control.appendChild(option);
+  }
+}
+
+function populateModelSelect(control, models, options) {
+  if (!control) return;
+  var settings = options || {};
+  var selected = control.value;
+  var entries = [];
+  if (settings.allowDefault) {
+    var defaultModel = models.find(function (model) { return record(model).default === true; });
+    var defaultLabel = defaultModel ? text(record(defaultModel).label, text(record(defaultModel).id, "")) : "provider default";
+    var fallback = document.createElement("option");
+    fallback.value = "";
+    fallback.textContent = "CLI default (" + defaultLabel + ")";
+    entries.push(fallback);
+  }
+  models.forEach(function (rawModel) {
+    var model = record(rawModel);
+    var identifier = text(model.id, "");
+    if (!identifier) return;
+    var option = document.createElement("option");
+    option.value = identifier;
+    option.textContent = text(model.label, identifier);
+    if (model.description) option.title = text(model.description, "");
+    entries.push(option);
+  });
+  if (selected && !entries.some(function (option) { return option.value === selected; })) {
+    var stale = document.createElement("option");
+    stale.value = selected;
+    stale.textContent = selected + " (saved; not currently advertised)";
+    stale.dataset.stale = "true";
+    entries.push(stale);
+  }
+  control.replaceChildren.apply(control, entries);
+  if (entries.some(function (option) { return option.value === selected; })) control.value = selected;
+}
+
+function populateEffortSelect(control, modelControl, models, options) {
+  if (!control || !modelControl) return;
+  var settings = options || {};
+  var selected = control.value;
+  var model = models.find(function (candidate) {
+    return text(record(candidate).id, "") === modelControl.value;
+  });
+  if (!model && modelControl.value === "") {
+    model = models.find(function (candidate) { return record(candidate).default === true; });
+  }
+  var modelRecord = record(model);
+  var defaultEffort = text(modelRecord.default_effort, "");
+  var fallback = document.createElement("option");
+  fallback.value = "";
+  fallback.textContent = settings.inherit
+    ? "Inherit supervisor"
+    : "Model default" + (defaultEffort ? " (" + defaultEffort + ")" : "");
+  var entries = [fallback];
+  list(modelRecord.efforts).forEach(function (rawEffort) {
+    var effort = record(rawEffort);
+    var identifier = text(effort.id, "");
+    if (!identifier) return;
+    var option = document.createElement("option");
+    option.value = identifier;
+    option.textContent = identifier === "xhigh" ? "Xhigh" : identifier.charAt(0).toUpperCase() + identifier.slice(1);
+    if (effort.description) option.title = text(effort.description, "");
+    entries.push(option);
+  });
+  if (selected && !entries.some(function (option) { return option.value === selected; })) {
+    var stale = document.createElement("option");
+    stale.value = selected;
+    stale.textContent = selected + " (saved; unsupported by selected model)";
+    stale.dataset.stale = "true";
+    entries.push(stale);
+  }
+  control.replaceChildren.apply(control, entries);
+  if (entries.some(function (option) { return option.value === selected; })) control.value = selected;
+}
+
+function refreshRoleEfforts(form) {
+  populateEffortSelect(
+    form.elements.namedItem("codex_effort"),
+    form.elements.namedItem("codex_model"),
+    roleModelCatalogs.codex
+  );
+  populateEffortSelect(
+    form.elements.namedItem("claude_effort"),
+    form.elements.namedItem("claude_model"),
+    roleModelCatalogs.claude
+  );
+  populateEffortSelect(
+    form.elements.namedItem("claude_subagent_effort"),
+    form.elements.namedItem("claude_subagent_model"),
+    roleModelCatalogs.claude,
+    { inherit: true }
+  );
+}
+
+function loadRoleModelCatalogs() {
+  var form = el("executor-settings-form");
+  if (!form) return Promise.resolve();
+  return Promise.all([
+    apiGet("/api/executor-settings/models?source=codex"),
+    apiGet("/api/executor-settings/models?source=claude"),
+  ]).then(function (catalogs) {
+    roleModelCatalogs.codex = list(catalogs[0].models);
+    roleModelCatalogs.claude = list(catalogs[1].models);
+    populateModelSelect(
+      form.elements.namedItem("codex_model"),
+      roleModelCatalogs.codex,
+      { allowDefault: true }
+    );
+    var claudeModels = roleModelCatalogs.claude;
+    populateModelSelect(form.elements.namedItem("claude_model"), claudeModels);
+    populateModelSelect(form.elements.namedItem("claude_subagent_model"), claudeModels);
+    refreshRoleEfforts(form);
+  }).catch(function (error) {
+    setText("executor-settings-feedback", "Could not load installed CLI models: " + describe(error));
   });
 }
 
@@ -2273,14 +2539,28 @@ function renderExecutorSettings(payload) {
   if (!form) return;
   Object.keys(configuration).forEach(function (name) {
     var control = form.elements.namedItem(name);
-    if (control) control.value = String(configuration[name]);
+    ensureModelOption(control, configuration[name]);
+    if (control && control.type === "checkbox") control.checked = configuration[name] === true;
+    else if (control) control.value = String(configuration[name]);
   });
+  var strategy = configuration.executor_adapter === "mini-swe-agent"
+    ? "mini-swe-agent"
+    : configuration.claude_local_delegation === true ? "claude-local" : "claude";
+  form.elements.namedItem("execution_strategy").value = strategy;
   toggleExecutorFields();
-  var available = status.executable_available === true;
   var state = el("executor-settings-state");
-  state.textContent = text(status.display_name, text(status.adapter, "executor")) +
-    (available ? " · ready" : " · executable missing");
-  state.dataset.tone = available ? "ok" : "bad";
+  var roles = record(status.roles);
+  var reviewerRole = record(roles.reviewer);
+  var supervisorRole = record(roles.supervisor);
+  var executorRole = record(roles.executor);
+  var pipelineReady = reviewerRole.executable_available === true &&
+    executorRole.executable_available === true &&
+    (supervisorRole.active === false || supervisorRole.executable_available === true);
+  state.textContent = pipelineReady ? "pipeline available" : "setup required";
+  state.dataset.tone = pipelineReady ? "ok" : "bad";
+  setRoleHealth("reviewer-role-health", reviewerRole);
+  setRoleHealth("supervisor-role-health", supervisorRole);
+  setRoleHealth("executor-role-health", executorRole);
   if (status.load_warning) {
     setText("executor-settings-feedback", text(status.load_warning, "Stored settings were ignored."));
   }
@@ -2290,18 +2570,26 @@ function loadExecutorSettings() {
   return apiGet("/api/executor-settings").then(function (payload) {
     executorSettingsLoaded = true;
     renderExecutorSettings(payload);
+    return loadRoleModelCatalogs();
   }).catch(function (error) {
     setText("executor-settings-feedback", "Could not load executor settings: " + describe(error));
   });
 }
 
 function executorSettingsPayload(form) {
+  var strategy = form.elements.namedItem("execution_strategy").value;
   return {
-    executor_adapter: form.elements.namedItem("executor_adapter").value,
+    codex_model: form.elements.namedItem("codex_model").value.trim(),
+    codex_effort: form.elements.namedItem("codex_effort").value,
+    executor_adapter: strategy === "mini-swe-agent" ? "mini-swe-agent" : "claude",
     claude_model: form.elements.namedItem("claude_model").value.trim(),
+    claude_effort: form.elements.namedItem("claude_effort").value,
     claude_subagent_model: form.elements.namedItem("claude_subagent_model").value.trim(),
+    claude_subagent_effort: form.elements.namedItem("claude_subagent_effort").value,
     claude_max_turns: Number(form.elements.namedItem("claude_max_turns").value),
+    claude_local_delegation: strategy === "claude-local",
     mini_swe_model: form.elements.namedItem("mini_swe_model").value.trim(),
+    mini_swe_effort: form.elements.namedItem("mini_swe_effort").value,
     mini_swe_api_base: form.elements.namedItem("mini_swe_api_base").value.trim(),
     mini_swe_provider: form.elements.namedItem("mini_swe_provider").value.trim(),
     mini_swe_api_key_env: form.elements.namedItem("mini_swe_api_key_env").value.trim(),
@@ -2309,6 +2597,25 @@ function executorSettingsPayload(form) {
     mini_swe_cost_limit: Number(form.elements.namedItem("mini_swe_cost_limit").value),
     mini_swe_timeout_seconds: Number(form.elements.namedItem("mini_swe_timeout_seconds").value),
   };
+}
+
+function applyRoleProfile(name, form) {
+  var profiles = {
+    frontier: { strategy: "claude", claude: "opus", effort: "high", subagent: "sonnet", subagentEffort: "high" },
+    balanced: { strategy: "claude", claude: "sonnet", effort: "high", subagent: "sonnet", subagentEffort: "medium" },
+    "local-heavy": { strategy: "claude-local", claude: "sonnet", effort: "high", subagent: "sonnet", subagentEffort: "medium" },
+  };
+  var profile = profiles[name];
+  if (!profile) return;
+  form.elements.namedItem("execution_strategy").value = profile.strategy;
+  form.elements.namedItem("claude_model").value = profile.claude;
+  form.elements.namedItem("claude_subagent_model").value = profile.subagent;
+  refreshRoleEfforts(form);
+  form.elements.namedItem("claude_effort").value = profile.effort;
+  form.elements.namedItem("claude_subagent_effort").value = profile.subagentEffort;
+  toggleExecutorFields();
+  form.dataset.dirty = "true";
+  setText("executor-settings-feedback", "Profile applied. Review the models, then save the role assignment.");
 }
 
 function wireLogout() {
@@ -2845,7 +3152,31 @@ function wireDailyDriver() {
   });
   var executorForm = el("executor-settings-form");
   if (executorForm) {
-    executorForm.elements.namedItem("executor_adapter").addEventListener("change", toggleExecutorFields);
+    executorForm.addEventListener("input", function () {
+      executorForm.dataset.dirty = "true";
+      setText("executor-settings-feedback", "Unsaved role changes.");
+    });
+    executorForm.addEventListener("change", function () {
+      executorForm.dataset.dirty = "true";
+      setText("executor-settings-feedback", "Unsaved role changes.");
+    });
+    executorForm.elements.namedItem("execution_strategy").addEventListener("change", toggleExecutorFields);
+    var effortForModel = {
+      codex_model: "codex_effort",
+      claude_model: "claude_effort",
+      claude_subagent_model: "claude_subagent_effort",
+    };
+    Object.keys(effortForModel).forEach(function (name) {
+      executorForm.elements.namedItem(name).addEventListener("change", function () {
+        executorForm.elements.namedItem(effortForModel[name]).value = "";
+        refreshRoleEfforts(executorForm);
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll("[data-role-profile]"), function (button) {
+      button.addEventListener("click", function () {
+        applyRoleProfile(button.dataset.roleProfile, executorForm);
+      });
+    });
     executorForm.addEventListener("submit", function (event) {
       event.preventDefault();
       setText("executor-settings-feedback", "Saving executor settings…");
@@ -2854,6 +3185,7 @@ function wireDailyDriver() {
           throw new Error(text(result.payload.message, "save failed"));
         }
         renderExecutorSettings(result.payload);
+        executorForm.dataset.dirty = "false";
         setText("executor-settings-feedback", text(result.payload.message, "Executor settings saved."));
         restartStateFeed();
       }).catch(function (error) {
@@ -2871,17 +3203,43 @@ function wireDailyDriver() {
     }).then(function (result) {
       if (result.status !== 200) throw new Error(text(result.payload.message, "discovery failed"));
       var models = list(result.payload.models);
-      var options = el("executor-model-options");
-      options.replaceChildren.apply(options, models.map(function (model) {
-        var option = document.createElement("option");
-        option.value = text(model, "");
-        return option;
-      }));
+      populateModelSelect(
+        executorForm.elements.namedItem("mini_swe_model"),
+        models.map(function (model) {
+          return { id: text(model, ""), label: text(model, ""), description: "Endpoint model" };
+        })
+      );
       if (models.length === 1) executorForm.elements.namedItem("mini_swe_model").value = models[0];
       setText("executor-settings-feedback", "Discovered " + models.length + " model" + (models.length === 1 ? "." : "s."));
     }).catch(function (error) {
       setText("executor-settings-feedback", "Could not discover models: " + describe(error));
     }).then(function () { discover.disabled = false; });
+  });
+  var rolesTest = el("roles-test");
+  if (rolesTest && executorForm) rolesTest.addEventListener("click", function () {
+    rolesTest.disabled = true;
+    setText("executor-settings-feedback", "Checking configured runtimes…");
+    apiGet("/api/executor-settings").then(function (payload) {
+      renderExecutorSettings(payload);
+      var strategy = executorForm.elements.namedItem("execution_strategy").value;
+      if (strategy === "claude") return null;
+      return apiPost("/api/executor-settings/discover", {
+        api_base: executorForm.elements.namedItem("mini_swe_api_base").value.trim(),
+        api_key_env: executorForm.elements.namedItem("mini_swe_api_key_env").value.trim(),
+      }).then(function (result) {
+        if (result.status !== 200) throw new Error(text(result.payload.message, "local endpoint unavailable"));
+        return list(result.payload.models).length;
+      });
+    }).then(function (models) {
+      setText(
+        "executor-settings-feedback",
+        models === null
+          ? "CLI readiness updated."
+          : "CLI readiness updated; local endpoint returned " + models + " model" + (models === 1 ? "." : "s.")
+      );
+    }).catch(function (error) {
+      setText("executor-settings-feedback", "Runtime check failed: " + describe(error));
+    }).then(function () { rolesTest.disabled = false; });
   });
   loadPreferences();
   loadExecutorSettings();

@@ -18,6 +18,8 @@ TEST_OWNERS: dict[str, tuple[str, ...]] = {
     "codex_session": ("test_codex_session.py", "test_authenticated_web_app.py"),
     "configuration": ("test_web_settings.py",),
     "coordination_dashboard": ("test_workflow.py",),
+    "delegation": ("test_delegation.py",),
+    "delegation_mcp": ("test_delegation.py",),
     "doctor": ("test_coordinator_cli.py",),
     "executor_adapters": ("test_executor_adapters.py",),
     "executor_settings": ("test_executor_settings.py",),

@@ -141,6 +141,7 @@ class CodexReviewRunnerTests(CoordinationFixture):
         values = {
             "repo": self.repo,
             "codex_command": "/bin/true",
+            "model": "",
             "dry_run": True,
         }
         values.update(overrides)
@@ -153,6 +154,18 @@ class CodexReviewRunnerTests(CoordinationFixture):
         self.assertIn("<coordination review prompt>", output.getvalue())
         self.assertNotIn("You own the overall objective", output.getvalue())
         self.assertFalse((self.repo / ".coordination/.codex-review.lock").exists())
+
+    def test_review_dry_run_passes_the_selected_model_to_codex(self) -> None:
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            result = run_review(self.arguments(model="gpt-5.6-sol"))
+        self.assertEqual(result, 0)
+        self.assertIn("--model gpt-5.6-sol", output.getvalue())
+
+    def test_review_dry_run_passes_reasoning_effort_to_codex(self) -> None:
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            result = run_review(self.arguments(model="gpt-5.6-sol", effort="max"))
+        self.assertEqual(result, 0)
+        self.assertIn('model_reasoning_effort="max"', output.getvalue())
 
     def test_review_refuses_missing_stale_and_already_reviewed_handoffs(self) -> None:
         report = self.repo / ".coordination/coder/latest-report.md"

@@ -8,6 +8,18 @@ interface with migration notes.
 
 ### Added
 
+- A three-stage role-assignment UI for Codex review, Claude supervision, and direct or
+  delegated implementation, including editable presets, persisted reviewer model
+  selection, runtime readiness checks, and local endpoint discovery.
+- Controlled model selectors populated from Codex's authenticated app-server picker,
+  Claude Code's installed alias list, and each configured OpenAI-compatible endpoint.
+- Independent effort selectors for Codex review, Claude supervision, Claude's native
+  implementation subagent, and compatible LiteLLM-backed executors, carried through
+  the watcher into each provider's real invocation.
+- Claude-supervised local implementation through an invocation-scoped stdio MCP
+  server, with an enforced 8–10 routing threshold, isolated Git worktrees, explicit
+  path/test contracts, compact patches, and dashboard-visible routing evidence.
+
 - Built-in executor adapter seam with an optional, bounded mini-swe-agent runtime for
   local or API-backed implementation models.
 - Persisted Settings-page executor selection, bounded OpenAI-compatible model
@@ -30,8 +42,11 @@ interface with migration notes.
 
 ### Changed
 
-- Provider usage pace projections now remain in the same percentage-left frame as the
-  header: zero or negative means the current pace exhausts the allowance before reset.
+- Provider usage projections now use a reset-aware, six-hour weighted velocity from
+  persisted hourly observations, show the current percentage-point burn rate, compare
+  it with the sustainable pace, and retain the reset-average estimate only as a
+  clearly labeled startup fallback. Zero or negative projected allowance means the
+  current pace exhausts it before reset.
 - Codex GPT-5.6 API-equivalent values now use OpenAI's published Standard short- and
   long-context rates, and a pricing revision revalues previously imported history.
 - Historical usage records preserve five-minute, one-hour, and unclassified cache
@@ -39,6 +54,14 @@ interface with migration notes.
 
 ### Fixed
 
+- Claude reset timestamps are canonicalized before velocity-history grouping, so
+  harmless sub-second API jitter no longer strands every sample in a separate reset
+  cycle; existing observations are migrated automatically.
+- Historical watcher status files can no longer claim a watcher is currently running
+  when the corresponding watcher lock is absent; stale records remain available to
+  diagnostics but are omitted from the dashboard.
+- Web-server shutdown now has a bounded graceful deadline so open event streams cannot
+  indefinitely stall a service restart.
 - Transient provider-limit refresh failures now retain the last successful header
   values with a stale warning instead of replacing them with unavailable placeholders.
 - Clearing the browser terminal now discards its retained server replay buffer, so

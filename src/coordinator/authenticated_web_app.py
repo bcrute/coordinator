@@ -35,7 +35,12 @@ from .executor_adapters import (
     from_namespace,
     resolve_executable,
 )
-from .executor_settings import ExecutorSettingsService, discover_models
+from .executor_settings import (
+    ExecutorSettingsService,
+    discover_claude_models,
+    discover_codex_models,
+    discover_models,
+)
 from .github_ci import configure_github_ci
 from .operational_store import GuardrailPolicy, OperationalStore, evaluate_guardrails
 from .provider_usage import DEFAULT_REFRESH_SECONDS, ProviderUsageService
@@ -95,6 +100,7 @@ from .security import (
 BACKCHANNEL_LOGOUT_EVENT = "http://schemas.openid.net/event/backchannel-logout"
 BACKCHANNEL_LOGOUT_MAX_AGE_SECONDS = 300
 TERMINAL_OUTPUT_CHUNK_CHARS = 64 * 1024
+GRACEFUL_SHUTDOWN_SECONDS = 10
 
 
 def _terminal_output_chunks(
@@ -161,7 +167,10 @@ def create_authenticated_app(
     executor_required = executor_adapter is not None
     watcher_factory = watcher_command_for_repo or (
         lambda selected_repo: web_app.default_watcher_command(
-            selected_repo, executor_service.adapter()
+            selected_repo,
+            executor_service.adapter(),
+            executor_service.configuration().codex_model,
+            executor_service.configuration().codex_effort,
         )
     )
     codex_factory = codex_command_for_repo or web_app.default_codex_command
@@ -181,7 +190,7 @@ def create_authenticated_app(
     )
     rate_limiter = SlidingWindowRateLimiter()
     usage_service = provider_usage_service or ProviderUsageService(
-        usage_refresh_seconds
+        usage_refresh_seconds, state_dir=settings.state_dir
     )
     history_service = usage_history_service or UsageHistoryService(settings.state_dir)
     terminal_attachment_lock = threading.Lock()
@@ -212,6 +221,7 @@ def create_authenticated_app(
         if runtime.is_dir():
             paths.extend(sorted(runtime.glob("watcher-*-status.json")))
             paths.extend(sorted(runtime.glob("*.lock")))
+            paths.extend(sorted((runtime / "delegations").glob("d-*.json")))
         files: list[tuple[str, int, int]] = []
         for path in paths:
             try:
@@ -1000,7 +1010,7 @@ def create_authenticated_app(
             )
 
         factory = lambda selected_repo: web_app.default_watcher_command(
-            selected_repo, adapter
+            selected_repo, adapter, candidate.codex_model, candidate.codex_effort
         )
         outcome, message = await run_in_threadpool(
             context.reconfigure_watcher,
@@ -1059,6 +1069,30 @@ def create_authenticated_app(
                 status_code=400,
             )
         return JSONResponse({"ok": True, "models": models})
+
+    async def executor_cli_models(request: Request):
+        source = request.query_params.get("source", "")
+        discoverer = {
+            "codex": discover_codex_models,
+            "claude": discover_claude_models,
+        }.get(source)
+        if discoverer is None:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "outcome": "validation",
+                    "message": "source must be codex or claude",
+                },
+                status_code=400,
+            )
+        try:
+            models = await run_in_threadpool(discoverer)
+        except ValueError as error:
+            return JSONResponse(
+                {"ok": False, "outcome": "unavailable", "message": str(error)},
+                status_code=503,
+            )
+        return JSONResponse({"ok": True, "source": source, "models": models})
 
     async def session_revoke(request: Request):
         value = await _json_body(request, web_app.CONTROL_BODY_BYTES)
@@ -1966,6 +2000,11 @@ def create_authenticated_app(
             methods=["POST"],
         ),
         Route(
+            "/api/executor-settings/models",
+            executor_cli_models,
+            methods=["GET"],
+        ),
+        Route(
             "/api/v1/executor-settings",
             versioned(executor_settings_get),
             methods=["GET"],
@@ -1979,6 +2018,11 @@ def create_authenticated_app(
             "/api/v1/executor-settings/discover",
             versioned(executor_models_discover),
             methods=["POST"],
+        ),
+        Route(
+            "/api/v1/executor-settings/models",
+            versioned(executor_cli_models),
+            methods=["GET"],
         ),
         Route("/api/sessions/revoke", session_revoke, methods=["POST"]),
         Route("/api/v1/sessions/revoke", versioned(session_revoke), methods=["POST"]),
@@ -2179,6 +2223,7 @@ def serve_application(args: Any) -> int:
         forwarded_allow_ips=(
             args.forwarded_allow_ips if isinstance(settings, OIDCSettings) else ""
         ),
+        timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
     )
     server = uvicorn.Server(config)
     try:

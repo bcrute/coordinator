@@ -176,6 +176,10 @@ this subgoal passed. End after writing the coordination files."""
         "--cd",
         str(repo),
     ]
+    if model := getattr(args, "model", ""):
+        command.extend(("--model", model))
+    if effort := getattr(args, "effort", ""):
+        command.extend(("-c", f'model_reasoning_effort="{effort}"'))
     outside_git = not is_git_worktree(repo)
     if outside_git:
         command.append("--skip-git-repo-check")
@@ -214,6 +218,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=Path.cwd(), help="project root")
     parser.add_argument("--codex-command", default="codex", help="Codex executable")
+    parser.add_argument("--model", default="", help="Codex reviewer model (CLI default if blank)")
+    parser.add_argument(
+        "--effort",
+        choices=("none", "low", "medium", "high", "xhigh", "max", "ultra"),
+        default="",
+        help="Codex reasoning effort (model default if blank)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="validate without invoking Codex")
     return parser.parse_args()
 

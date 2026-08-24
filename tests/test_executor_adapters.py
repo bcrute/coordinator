@@ -166,6 +166,7 @@ class AdapterContractTests(unittest.TestCase):
         adapter = MiniSweAgentExecutorAdapter(
             command_name="mini-local",
             model="openai/local-coder",
+            effort="medium",
             api_base="http://127.0.0.1:8000/v1",
             api_key_env="LOCAL_MODEL_KEY",
             step_limit=7,
@@ -177,6 +178,15 @@ class AdapterContractTests(unittest.TestCase):
         self.assertNotIn("secret-value", command)
         self.assertIn("7", command)
         self.assertIn("120", command)
+        self.assertEqual(command[command.index("--effort") + 1], "medium")
+
+    def test_claude_adapter_carries_independent_lead_and_subagent_effort(self) -> None:
+        adapter = ClaudeExecutorAdapter(
+            model="opus", effort="max", subagent_model="sonnet", subagent_effort="medium"
+        )
+        command = adapter.command(Path("/tmp/project"))
+        self.assertEqual(command[command.index("--effort") + 1], "max")
+        self.assertEqual(command[command.index("--subagent-effort") + 1], "medium")
 
     def test_namespace_defaults_to_claude_and_can_select_mini(self) -> None:
         self.assertEqual(from_namespace(Namespace()).id, "claude")
@@ -201,6 +211,14 @@ class AdapterContractTests(unittest.TestCase):
             with self.subTest(values=values):
                 with self.assertRaisesRegex(ValueError, message):
                     from_namespace(Namespace(executor_adapter="mini-swe-agent", **values))
+        with self.assertRaisesRegex(ValueError, "model is required"):
+            from_namespace(
+                Namespace(
+                    executor_adapter="claude",
+                    claude_local_delegation=True,
+                    mini_swe_model="",
+                )
+            )
 
         with self.assertRaisesRegex(ValueError, "unknown executor adapter"):
             from_namespace(Namespace(executor_adapter="unknown"))
@@ -212,11 +230,17 @@ class AdapterContractTests(unittest.TestCase):
             api_base="http://127.0.0.1:8000/v1",
             step_limit=6,
         )
-        command = default_watcher_command(Path("/tmp/project"), adapter)
+        command = default_watcher_command(
+            Path("/tmp/project"),
+            adapter,
+            reviewer_model="gpt-5.6-sol",
+            reviewer_effort="high",
+        )
         self.assertIn("--executor-adapter", command)
         self.assertIn("mini-swe-agent", command)
         self.assertIn("--mini-swe-api-base", command)
         self.assertIn("http://127.0.0.1:8000/v1", command)
+        self.assertEqual(command[-4:], ["--codex-model", "gpt-5.6-sol", "--codex-effort", "high"])
 
     def test_watcher_selects_mini_runner_for_ready_assignment(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -293,6 +317,20 @@ class MiniTrajectoryTests(unittest.TestCase):
         self.assertIn("agent.wall_time_limit_seconds=300", command)
         self.assertIn("model.cost_tracking=ignore_errors", command)
         self.assertIn("model.model_kwargs.api_base=http://127.0.0.1:8000/v1", command)
+
+    def test_command_passes_reasoning_effort_as_a_litellm_model_option(self) -> None:
+        args = Namespace(
+            model="openai/local",
+            effort="high",
+            config=None,
+            step_limit=8,
+            timeout_seconds=300,
+            cost_limit=0.0,
+            api_base="",
+            provider="openai",
+        )
+        command = build_command(args, "/usr/bin/mini", "task", Path("run.json"))
+        self.assertIn("model.model_kwargs.reasoning_effort=high", command)
 
     def test_runner_cli_rejects_unsafe_or_unbounded_configuration(self) -> None:
         invalid = (

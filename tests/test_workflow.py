@@ -110,7 +110,13 @@ class WorkflowTests(unittest.TestCase):
             target = Path(directory)
             self.assertEqual(self.run_init(target).returncode, 0)
             result = subprocess.run(
-                [sys.executable, str(RUN), "--repo", str(target), "--dry-run"],
+                [
+                    sys.executable,
+                    str(RUN),
+                    "--repo",
+                    str(target),
+                    "--dry-run",
+                ],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -124,7 +130,17 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(self.run_init(target).returncode, 0)
             self.activate(target)
             result = subprocess.run(
-                [sys.executable, str(RUN), "--repo", str(target), "--dry-run"],
+                [
+                    sys.executable,
+                    str(RUN),
+                    "--repo",
+                    str(target),
+                    "--effort",
+                    "high",
+                    "--subagent-effort",
+                    "medium",
+                    "--dry-run",
+                ],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -138,6 +154,8 @@ class WorkflowTests(unittest.TestCase):
             self.assertIn("--model opus", result.stdout)
             self.assertIn("--max-turns 40", result.stdout)
             self.assertIn("native subagent model: sonnet", result.stdout)
+            self.assertIn("--effort high", result.stdout)
+            self.assertIn('"effort":"medium"', result.stdout)
 
     def test_runner_dry_run_succeeds_without_a_resolvable_claude_executable(self) -> None:
         missing = "claude-absent-for-workflow-tests"
@@ -203,7 +221,7 @@ class WorkflowTests(unittest.TestCase):
         )
         prompt = handoff_prompt("EVENTS-001", "0", task)
         self.assertIn("<active-assignment>\n" + task.rstrip(), prompt)
-        self.assertIn("native Sonnet subagents proactively", prompt)
+        self.assertIn("`coordinator-worker` native subagent proactively", prompt)
         self.assertIn("Do not preload the coordination history", prompt)
         self.assertNotIn(".coordination/PROJECT.md", prompt)
         self.assertNotIn(".coordination/planner/goal.md", prompt)
@@ -745,6 +763,7 @@ class WebAppTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        (runtime / "watcher-both.lock").write_text("pid=123 role=both\n", encoding="utf-8")
         (runtime / "relay.log").write_text(
             "".join(f"relay line {index}\n" for index in range(500)), encoding="utf-8"
         )
@@ -1475,6 +1494,7 @@ class WatcherControlTests(unittest.TestCase):
         self.assertFalse(managed["lock_present"])
         self.assertEqual(len(state["watchers"]), 1)
         self.assertEqual(state["watchers"][0]["role"], "both")
+        self.assertEqual(state["watchers"][0]["watcher_state"], "stale")
 
         status, payload = self.post_json(f"{base}/api/watcher/start")
         self.assertEqual(status, 200)

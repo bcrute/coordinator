@@ -279,16 +279,41 @@ def read_events(stream: object, destination: queue.Queue[str]) -> None:
         destination.put(line)
 
 
-def handoff_prompt(task_id: str, review_round: str | None, task: str, team: bool = False) -> str:
+def handoff_prompt(
+    task_id: str,
+    review_round: str | None,
+    task: str,
+    team: bool = False,
+    local_delegation: bool = False,
+) -> str:
     orchestration = (
         "Use Claude Code's native agent-team support when parallel collaboration would "
         "materially help. The lead owns integration and may run at most two teammates "
         "concurrently."
         if team
-        else "Use Claude Code's native Sonnet subagents proactively when genuinely "
+        else "Use the configured `coordinator-worker` native subagent proactively when genuinely "
         "independent investigation, implementation, or verification would benefit. "
         "The lead owns integration and may run at most two subagents concurrently."
     )
+    delegation = ""
+    if local_delegation:
+        delegation = """
+Coordinator exposes `delegate_implementation` through the
+`coordinator-delegation` MCP server. Prefer it over native subagents only when all
+hard gates pass: the work contains no architecture or product decision, ambiguous
+requirement, authentication/security-boundary change, data migration, destructive or
+external action, and it has a deterministic review path. Keep fixes requiring roughly
+five minutes or less in the lead; split work expected to exceed roughly 45 minutes.
+
+For eligible work, score 0-2 each for specification completeness, edit locality,
+deterministic verification, reversibility, and low blast radius. Delegate at 8-10;
+at 7, first split it into a smaller task; at 0-6, retain it. Pass the score and a
+concise rationale to the tool along with narrow allowed paths and shell-free
+validation argument arrays. Review the returned patch and evidence before applying
+it, and independently verify the integrated result. The local worker never owns
+integration or the final handoff. Native subagents remain available for genuinely
+reasoning-heavy investigation or parallel work.
+"""
     return f"""Implement exactly one bounded handoff: task {task_id}, review round {review_round}.
 
 Claude Code already loads the repository's normal instructions and manages its own
@@ -299,6 +324,7 @@ assignment embedded below as the authoritative task packet.
 
 {orchestration} Keep trivial or sequential work in the lead. Do not create a second
 coordination system or manually mirror native agent task state.
+{delegation}
 
 Before product edits, replace `.coordination/coder/status.md` with a concise status
 for this task and state `implementing`; a one-sentence `## Current activity` is
@@ -314,8 +340,59 @@ explicitly authorizes it.
 """
 
 
+def delegation_mcp_configuration(args: argparse.Namespace, repo: Path) -> str:
+    """Build one invocation-scoped stdio server config without secret values."""
+
+    server_args = [
+        "-m",
+        "coordinator.delegation_mcp",
+        "--repo",
+        str(repo),
+        "--mini-command",
+        args.delegate_mini_command,
+        "--model",
+        args.delegate_model,
+        "--effort",
+        getattr(args, "delegate_effort", ""),
+        "--provider",
+        args.delegate_provider,
+        "--api-key-env",
+        args.delegate_api_key_env,
+        "--step-limit",
+        str(args.delegate_step_limit),
+        "--cost-limit",
+        str(args.delegate_cost_limit),
+        "--timeout-seconds",
+        str(args.delegate_timeout_seconds),
+    ]
+    if args.delegate_config is not None:
+        server_args.extend(("--config", str(args.delegate_config)))
+    if args.delegate_api_base:
+        server_args.extend(("--api-base", args.delegate_api_base))
+    return json.dumps(
+        {
+            "mcpServers": {
+                "coordinator-delegation": {
+                    "type": "stdio",
+                    "command": sys.executable,
+                    "args": server_args,
+                    "timeout": (args.delegate_timeout_seconds + 180) * 1000,
+                    "alwaysLoad": True,
+                }
+            }
+        },
+        separators=(",", ":"),
+    )
+
+
 def run(args: argparse.Namespace) -> int:
     repo = args.repo.resolve()
+    delegation_enabled = bool(getattr(args, "delegation_enabled", False))
+    orchestration_mode = (
+        "native-subagents+mcp-local-routing"
+        if delegation_enabled
+        else "native-subagents"
+    )
     goal_path = repo / ".coordination" / "planner" / "goal.md"
     task_path = repo / ".coordination" / "planner" / "current-task.md"
     if not goal_path.is_file():
@@ -368,7 +445,12 @@ def run(args: argparse.Namespace) -> int:
         print(f"error: Claude Code command not found: {args.claude_command}", file=sys.stderr)
         return 127
 
-    prompt = handoff_prompt(task_id, review_round, task)
+    prompt = handoff_prompt(
+        task_id,
+        review_round,
+        task,
+        local_delegation=delegation_enabled,
+    )
 
     command = [
         executable or args.claude_command,
@@ -383,11 +465,40 @@ def run(args: argparse.Namespace) -> int:
         "stream-json",
         "--verbose",
         "--forward-subagent-text",
-        prompt,
     ]
+    effort = getattr(args, "effort", "")
+    subagent_effort = getattr(args, "subagent_effort", "")
+    if effort:
+        command.extend(("--effort", effort))
+    worker = {
+        "coordinator-worker": {
+            "description": "Bounded implementation, investigation, or verification worker",
+            "prompt": (
+                "Complete only the narrowly delegated task. Report evidence and changed paths "
+                "to the lead; the lead owns integration and final coordination state."
+            ),
+            "model": args.subagent_model,
+        }
+    }
+    if subagent_effort:
+        worker["coordinator-worker"]["effort"] = subagent_effort
+    command.extend(("--agents", json.dumps(worker, separators=(",", ":"))))
+    if delegation_enabled:
+        command.extend(
+            (
+                "--mcp-config",
+                delegation_mcp_configuration(args, repo),
+                "--allowedTools=mcp__coordinator-delegation__delegate_implementation",
+            )
+        )
+    command.append(prompt)
     if args.dry_run:
         print("Would run one Claude turn:")
-        print(f"Lead model: {args.model}; native subagent model: {args.subagent_model}")
+        print(
+            f"Lead model: {args.model} ({effort or 'default'} effort); "
+            f"native subagent model: {args.subagent_model} "
+            f"({subagent_effort or 'inherited'} effort)"
+        )
         print(" ".join(command[:-1] + ["<coordination prompt>"]))
         return 0
 
@@ -477,6 +588,7 @@ def run(args: argparse.Namespace) -> int:
                 subagents,
                 args.model,
                 args.subagent_model,
+                orchestration_mode,
             )
             if live_dashboard and last_progress is not None:
                 now_monotonic = time.monotonic()
@@ -537,6 +649,7 @@ def run(args: argparse.Namespace) -> int:
             subagents,
             args.model,
             args.subagent_model,
+            orchestration_mode,
             completed_at_epoch=completed_at_epoch,
         )
         final_metrics = format_dashboard(
@@ -607,11 +720,38 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--model", default="opus", help="Claude lead model")
     parser.add_argument(
+        "--effort",
+        choices=("low", "medium", "high", "xhigh", "max"),
+        default="",
+        help="Claude lead effort (model default if blank)",
+    )
+    parser.add_argument(
         "--subagent-model",
         default="sonnet",
         help="model selected through CLAUDE_CODE_SUBAGENT_MODEL",
     )
+    parser.add_argument(
+        "--subagent-effort",
+        choices=("low", "medium", "high", "xhigh", "max"),
+        default="",
+        help="coordinator-worker effort (inherits the lead if blank)",
+    )
     parser.add_argument("--max-turns", type=int, default=40, help="runaway safety cap")
+    parser.add_argument("--delegation-enabled", action="store_true")
+    parser.add_argument("--delegate-mini-command", default="mini")
+    parser.add_argument("--delegate-model", default="")
+    parser.add_argument(
+        "--delegate-effort",
+        choices=("low", "medium", "high", "xhigh", "max"),
+        default="",
+    )
+    parser.add_argument("--delegate-config", type=Path)
+    parser.add_argument("--delegate-api-base", default="")
+    parser.add_argument("--delegate-provider", default="openai")
+    parser.add_argument("--delegate-api-key-env", default="")
+    parser.add_argument("--delegate-step-limit", type=int, default=12)
+    parser.add_argument("--delegate-cost-limit", type=float, default=0.0)
+    parser.add_argument("--delegate-timeout-seconds", type=int, default=900)
     parser.add_argument(
         "--progress-interval",
         type=float,
@@ -624,6 +764,12 @@ def parse_args() -> argparse.Namespace:
         parser.error("--max-turns must be positive")
     if args.progress_interval <= 0:
         parser.error("--progress-interval must be positive")
+    if args.delegate_step_limit <= 0 or args.delegate_timeout_seconds <= 0:
+        parser.error("delegation step and timeout limits must be positive")
+    if args.delegate_cost_limit < 0:
+        parser.error("--delegate-cost-limit must not be negative")
+    if args.delegation_enabled and not args.delegate_model:
+        parser.error("--delegate-model is required when delegation is enabled")
     return args
 
 

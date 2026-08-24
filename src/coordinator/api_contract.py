@@ -168,6 +168,12 @@ def openapi_document() -> dict[str, Any]:
                 request_schema="ExecutorDiscovery",
             )
         },
+        "/api/v1/executor-settings/models": {
+            "get": _operation(
+                "List models advertised by an installed orchestration CLI",
+                "ExecutorCliModelList",
+            )
+        },
         "/api/v1/diagnostics": {
             "get": _operation("Bounded operational diagnostics", "Diagnostics")
         },
@@ -316,6 +322,43 @@ def openapi_document() -> dict[str, Any]:
             },
             "additionalProperties": False,
         },
+        "ExecutorCliModelList": {
+            "type": "object",
+            "required": ["ok", "source", "models"],
+            "properties": {
+                "ok": {"const": True},
+                "source": {"enum": ["codex", "claude"]},
+                "models": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "required": ["id", "label", "description"],
+                        "properties": {
+                            "id": {"type": "string", "minLength": 1},
+                            "label": {"type": "string", "minLength": 1},
+                            "description": {"type": "string"},
+                            "default": {"type": "boolean"},
+                            "default_effort": {"type": "string"},
+                            "efforts": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "required": ["id", "description"],
+                                    "properties": {
+                                        "id": {"type": "string", "minLength": 1},
+                                        "description": {"type": "string"},
+                                    },
+                                    "additionalProperties": False,
+                                },
+                            },
+                        },
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "additionalProperties": False,
+        },
         "Diagnostics": {
             "type": "object",
             "required": ["ok", "mode", "summary", "checks"],
@@ -342,11 +385,17 @@ def openapi_document() -> dict[str, Any]:
         "ExecutorSettingsPatch": {
             "type": "object",
             "properties": {
+                "codex_model": {"type": "string"},
+                "codex_effort": {"type": "string"},
                 "executor_adapter": {"enum": ["claude", "mini-swe-agent"]},
                 "claude_model": {"type": "string", "minLength": 1},
+                "claude_effort": {"type": "string"},
                 "claude_subagent_model": {"type": "string", "minLength": 1},
+                "claude_subagent_effort": {"type": "string"},
                 "claude_max_turns": {"type": "integer", "minimum": 1, "maximum": 200},
+                "claude_local_delegation": {"type": "boolean"},
                 "mini_swe_model": {"type": "string"},
+                "mini_swe_effort": {"type": "string"},
                 "mini_swe_api_base": {"type": "string"},
                 "mini_swe_provider": {"type": "string", "minLength": 1},
                 "mini_swe_api_key_env": {"type": "string"},
