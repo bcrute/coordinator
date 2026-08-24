@@ -55,9 +55,15 @@ by inspection and record them there.
    python3.14 <skill-directory>/scripts/run_executor_turn.py --repo .
    ```
 
-   Do not substitute a provider-specific runner: the dispatcher is what makes the
-   application's saved Claude or mini-swe-agent selection authoritative. Claude
-   remains the initial default. Its runner is a thin adapter around Claude Code
+   The dispatcher reads the non-secret executor snapshot at
+   `.coordination/runtime/executor-settings.json`; it never opens Coordinator's
+   global database. The app refreshes this ignored project-local snapshot when a
+   repository is selected or executor settings change. Do not substitute a
+   provider-specific runner: the dispatcher is what makes the application's saved
+   Claude or mini-swe-agent selection authoritative. If, and only if, the owner
+   explicitly requests a different executor for this one handoff, pass
+   `--executor claude` or `--executor mini-swe-agent`; this does not mutate saved
+   settings. Claude remains the initial default. Its runner is a thin adapter around Claude Code
    print mode and safe `auto` permissions. It embeds only
    `planner/current-task.md` as the authoritative
    coordination packet; Claude Code loads ordinary repository instructions and

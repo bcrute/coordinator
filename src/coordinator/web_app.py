@@ -130,6 +130,7 @@ class ApplicationContext:
         watcher_command_for_repo: Callable[[Path], list[str] | None],
         codex_command_for_repo: Callable[[Path], list[str]],
         codex_resume_command_for_repo: Callable[[Path], list[str]] | None = None,
+        prepare_repo: Callable[[Path], None] | None = None,
         stop_timeout: float = STOP_TIMEOUT_SECONDS,
         start_grace: float = START_GRACE_SECONDS,
     ) -> None:
@@ -137,9 +138,12 @@ class ApplicationContext:
         self._watcher_command_for_repo = watcher_command_for_repo
         self._codex_command_for_repo = codex_command_for_repo
         self._codex_resume_command_for_repo = codex_resume_command_for_repo
+        self._prepare_repo = prepare_repo
         self.stop_timeout = stop_timeout
         self.start_grace = start_grace
         self._lock = threading.RLock()
+        if prepare_repo is not None:
+            prepare_repo(repo)
         self._active = RepositoryContext(
             repo,
             WatcherManager(repo, watcher_command_for_repo(repo), stop_timeout, start_grace),
@@ -224,6 +228,8 @@ class ApplicationContext:
                 return "unchanged", f"{raw_path} is already the active repository", catalog
 
             try:
+                if self._prepare_repo is not None:
+                    self._prepare_repo(target)
                 new_watcher = WatcherManager(
                     target,
                     self._watcher_command_for_repo(target),

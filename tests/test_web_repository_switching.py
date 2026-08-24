@@ -19,6 +19,12 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
+from coordinator.executor_settings import (
+    ExecutorConfiguration,
+    load_project_executor_settings,
+    publish_project_executor_settings,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills" / "coordinate-claude-work"
 INIT = SKILL / "scripts" / "init_project.py"
@@ -306,6 +312,13 @@ class RepositorySwitchingTests(unittest.TestCase):
         repo_b = root / "b-repo"
         self.init_repo(repo_a, "A")
         self.init_repo(repo_b, "B")
+        publish_project_executor_settings(
+            repo_b,
+            ExecutorConfiguration(
+                executor_adapter="mini-swe-agent",
+                mini_swe_model="stale-selection",
+            ),
+        )
         server, base = self.serve_with_server(repo_a, repositories_root=root)
         host = base.split("//", 1)[1]
 
@@ -329,6 +342,10 @@ class RepositorySwitchingTests(unittest.TestCase):
             list(server.context.snapshot().codex_session.command), list(expected)
         )
         self.assertEqual(server.context.snapshot().watcher.repo, repo_b.resolve())
+        self.assertEqual(
+            load_project_executor_settings(repo_b).executor_adapter,
+            "claude",
+        )
 
     def test_select_stops_running_fake_codex_and_app_owned_watcher(self) -> None:
         root = self.root()

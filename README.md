@@ -182,10 +182,16 @@ from `--config`, which in turn wins over the built-in default. See
 
 The Settings page can switch the implementation executor and edit its non-secret
 model, endpoint, and turn bounds. These owner-only values persist in Coordinator's
-SQLite state and apply to future watcher starts without restarting the app. A running
-managed watcher must be stopped before changing them. Endpoint secrets are never
-accepted: enter only an inherited environment-variable name, or leave it blank for a
-local endpoint that intentionally performs no authentication. **Discover models**
+SQLite state and apply to future watcher starts without restarting the app. A managed
+watcher must be stopped before its command can be changed. For interactive handoffs,
+the app also publishes the selected non-secret configuration to the active target's
+ignored `.coordination/runtime/executor-settings.json`. Project agents read that
+snapshot and never need access to the global SQLite state directory. An explicit
+one-turn `coordinator run-turn --executor claude` or `--executor mini-swe-agent`
+override selects a runtime without changing either saved setting.
+Endpoint secrets are never accepted: enter only an inherited environment-variable
+name, or leave it blank for a local endpoint that intentionally performs no
+authentication. **Discover models**
 queries the bounded OpenAI-compatible `/models` endpoint and fills the model list.
 
 ### Managed terminal activity

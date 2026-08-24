@@ -9,36 +9,28 @@ import os
 import subprocess
 from pathlib import Path
 
-from .executor_adapters import ClaudeExecutorAdapter
-from .executor_settings import EXECUTOR_PREFERENCE_KEY, ExecutorSettingsService
-from .operational_store import OperationalStore
-
-
-def default_state_dir() -> Path:
-    root = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state")))
-    return root / "coordinator"
+from .executor_settings import load_project_executor_settings
 
 
 def run(args: argparse.Namespace) -> int:
     repo = args.repo.expanduser().resolve()
-    state_dir = args.state_dir.expanduser().resolve()
-    database = state_dir / "operations.sqlite3"
     if not repo.is_dir():
         print(json.dumps({"ok": False, "error": f"repository does not exist: {repo}"}))
         return 2
-    if not database.is_file():
-        print(json.dumps({"ok": False, "error": f"Coordinator settings do not exist: {database}"}))
+    try:
+        configuration = load_project_executor_settings(repo)
+    except (OSError, ValueError) as error:
+        print(json.dumps({"ok": False, "error": str(error)}))
         return 2
-
-    store = OperationalStore(state_dir)
-    if EXECUTOR_PREFERENCE_KEY not in store.preferences():
-        print(json.dumps({"ok": False, "error": "no executor is saved in Coordinator settings"}))
-        return 2
-    service = ExecutorSettingsService(store, ClaudeExecutorAdapter())
-    if service.load_warning:
-        print(json.dumps({"ok": False, "error": service.load_warning}))
-        return 2
-    adapter = service.adapter()
+    if args.executor != "configured":
+        try:
+            configuration = type(configuration).from_mapping(
+                {"executor_adapter": args.executor}, configuration
+            )
+        except ValueError as error:
+            print(json.dumps({"ok": False, "error": str(error)}))
+            return 2
+    adapter = configuration.adapter()
     command = adapter.command(repo)
     print(f"Configured executor: {adapter.display_name}", flush=True)
     if args.dry_run:
@@ -56,7 +48,12 @@ def run(args: argparse.Namespace) -> int:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=Path.cwd(), help="project root")
-    parser.add_argument("--state-dir", type=Path, default=default_state_dir())
+    parser.add_argument(
+        "--executor",
+        choices=("configured", "claude", "mini-swe-agent"),
+        default="configured",
+        help="use project settings, or an owner-requested one-turn executor override",
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
 

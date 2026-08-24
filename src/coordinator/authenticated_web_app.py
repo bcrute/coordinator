@@ -37,6 +37,7 @@ from .executor_adapters import (
 )
 from .executor_settings import (
     ExecutorSettingsService,
+    publish_project_executor_settings,
     discover_claude_models,
     discover_codex_models,
     discover_models,
@@ -184,6 +185,9 @@ def create_authenticated_app(
         watcher_command_for_repo=watcher_factory,
         codex_command_for_repo=codex_factory,
         codex_resume_command_for_repo=resume_factory,
+        prepare_repo=lambda selected_repo: publish_project_executor_settings(
+            selected_repo, executor_service.configuration()
+        ),
         stop_timeout=stop_timeout,
         start_grace=start_grace,
     )
@@ -1017,10 +1021,21 @@ def create_authenticated_app(
         factory = lambda selected_repo: web_app.default_watcher_command(
             selected_repo, adapter, candidate.codex_model, candidate.codex_effort
         )
+        previous = executor_service.configuration()
+
+        def save_candidate() -> None:
+            target = context.repo
+            publish_project_executor_settings(target, candidate)
+            try:
+                executor_service.save(candidate)
+            except Exception:
+                publish_project_executor_settings(target, previous)
+                raise
+
         outcome, message = await run_in_threadpool(
             context.reconfigure_watcher,
             factory,
-            lambda: executor_service.save(candidate),
+            save_candidate,
         )
         status_code = {"updated": 200, "conflict": 409, "error": 500}[outcome]
         issuer, subject = _audit_user(request)
@@ -1462,6 +1477,12 @@ def create_authenticated_app(
             )
             if result.returncode != 0:
                 return "error", "Coordination initialization failed.", {}
+            try:
+                publish_project_executor_settings(
+                    active.repo, executor_service.configuration()
+                )
+            except (OSError, ValueError):
+                return "error", "Could not publish project executor settings.", {}
             try:
                 ci_status = configure_github_ci(
                     active.repo, ci_action, interactive=False

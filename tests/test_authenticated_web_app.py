@@ -748,6 +748,16 @@ class LocalAppTests(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 200, response.text)
             self.assertTrue((created / ".coordination").is_dir())
+            executor_snapshot = (
+                created / ".coordination" / "runtime" / "executor-settings.json"
+            )
+            self.assertTrue(executor_snapshot.is_file())
+            self.assertEqual(
+                json.loads(executor_snapshot.read_text(encoding="utf-8"))["configuration"][
+                    "executor_adapter"
+                ],
+                "claude",
+            )
             self.assertEqual(response.json()["ci"]["outcome"], "installed")
             self.assertTrue(
                 (created / ".github" / "workflows" / "coordinator.yml").is_file()

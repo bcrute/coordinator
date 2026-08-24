@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -21,6 +22,9 @@ from coordinator.executor_settings import (
     discover_claude_models,
     discover_codex_models,
     discover_models,
+    load_project_executor_settings,
+    project_executor_settings_path,
+    publish_project_executor_settings,
 )
 from coordinator.operational_store import OperationalStore
 from coordinator.provider_usage import ProviderUsageService
@@ -83,6 +87,64 @@ class FakeResponse:
 
 
 class ExecutorSettingsUnitTests(unittest.TestCase):
+    def test_project_snapshot_is_bounded_non_secret_and_atomically_replaceable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / ".coordination/runtime").mkdir(parents=True)
+            (repo / ".coordination/README.md").write_text("ready\n", encoding="utf-8")
+            first = ExecutorConfiguration()
+            path = publish_project_executor_settings(repo, first)
+            self.assertEqual(path, project_executor_settings_path(repo))
+            self.assertEqual(load_project_executor_settings(repo), first)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertNotIn("secret", path.read_text(encoding="utf-8").lower())
+
+            second = ExecutorConfiguration(
+                executor_adapter="mini-swe-agent",
+                mini_swe_model="Qwen/Qwen3.8-27B",
+            )
+            publish_project_executor_settings(repo, second)
+            self.assertEqual(load_project_executor_settings(repo), second)
+            self.assertEqual(list(path.parent.glob(".*.tmp")), [])
+            publish_project_executor_settings(repo, first, replace=False)
+            self.assertEqual(load_project_executor_settings(repo), second)
+
+    def test_project_snapshot_refuses_uninitialized_and_symlink_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            self.assertIsNone(
+                publish_project_executor_settings(repo, ExecutorConfiguration())
+            )
+            (repo / ".coordination/runtime").mkdir(parents=True)
+            (repo / ".coordination/README.md").write_text("ready\n", encoding="utf-8")
+            outside = Path(tmp) / "outside.json"
+            outside.write_text("untouched\n", encoding="utf-8")
+            path = project_executor_settings_path(repo)
+            os.symlink(outside, path)
+            with self.assertRaisesRegex(ValueError, "symbolic link"):
+                publish_project_executor_settings(repo, ExecutorConfiguration())
+            self.assertEqual(outside.read_text(encoding="utf-8"), "untouched\n")
+
+    def test_project_snapshot_rejects_malformed_and_oversized_documents(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / ".coordination/runtime").mkdir(parents=True)
+            (repo / ".coordination/README.md").write_text("ready\n", encoding="utf-8")
+            path = project_executor_settings_path(repo)
+            path.write_text("not json", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "not valid JSON"):
+                load_project_executor_settings(repo)
+            path.write_text(
+                json.dumps({"schema_version": 999, "configuration": {}}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "unsupported schema"):
+                load_project_executor_settings(repo)
+            path.write_text("x" * (64 * 1024 + 1), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "too large"):
+                load_project_executor_settings(repo)
+
     def test_configuration_persists_non_secret_adapter_settings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = OperationalStore(Path(tmp))
@@ -253,8 +315,16 @@ class ExecutorSettingsAPITests(unittest.TestCase):
         return {"X-CSRF-Token": csrf, "Origin": "http://127.0.0.1"}
 
     def test_update_rebinds_future_watcher_and_survives_app_restart(self) -> None:
+        (self.repo / ".coordination/runtime").mkdir(parents=True)
+        (self.repo / ".coordination/README.md").write_text(
+            "# Coordination\n", encoding="utf-8"
+        )
         app = self.app()
         with TestClient(app, base_url="http://127.0.0.1") as client:
+            self.assertEqual(
+                load_project_executor_settings(self.repo).executor_adapter,
+                "claude",
+            )
             csrf = client.get("/api/state").json()["security"]["csrf_token"]
             response = client.post(
                 "/api/executor-settings",
@@ -276,6 +346,10 @@ class ExecutorSettingsAPITests(unittest.TestCase):
             self.assertIn("Qwen/Qwen3.8-27B", command)
             self.assertIn("--codex-model", command)
             self.assertIn("gpt-5.6-sol", command)
+            self.assertEqual(
+                load_project_executor_settings(self.repo).executor_adapter,
+                "mini-swe-agent",
+            )
 
         restarted = self.app()
         with TestClient(restarted, base_url="http://127.0.0.1") as client:

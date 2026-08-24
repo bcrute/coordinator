@@ -8,6 +8,7 @@ import shutil
 import sys
 from pathlib import Path
 
+from .executor_settings import ExecutorConfiguration, publish_project_executor_settings
 from .github_ci import configure_github_ci
 
 
@@ -83,6 +84,15 @@ def install(args: argparse.Namespace) -> int:
             print(f"  {path.relative_to(target)}")
     else:
         print("Coordination workflow is already current; no files changed.")
+
+    try:
+        publish_project_executor_settings(target, ExecutorConfiguration(), replace=False)
+    except (OSError, ValueError) as error:
+        print(
+            f"error: project executor settings could not be initialized: {error}",
+            file=sys.stderr,
+        )
+        return 2
 
     try:
         ci_status = configure_github_ci(target, args.github_ci)

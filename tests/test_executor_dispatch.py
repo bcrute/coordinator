@@ -5,14 +5,16 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import json
 import tempfile
 import unittest
-from dataclasses import asdict
 from pathlib import Path
 from unittest import mock
 
-from coordinator.executor_settings import EXECUTOR_PREFERENCE_KEY, ExecutorConfiguration
-from coordinator.operational_store import OperationalStore
+from coordinator.executor_settings import (
+    ExecutorConfiguration,
+    publish_project_executor_settings,
+)
 from coordinator.run_executor_turn import run
 
 
@@ -22,26 +24,24 @@ class ExecutorDispatchTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.repo = self.root / "repo"
         self.repo.mkdir()
-        self.state = self.root / "state"
+        coordination = self.repo / ".coordination"
+        (coordination / "runtime").mkdir(parents=True)
+        (coordination / "README.md").write_text("# Coordination\n", encoding="utf-8")
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def arguments(self, *, dry_run: bool = False) -> argparse.Namespace:
-        return argparse.Namespace(repo=self.repo, state_dir=self.state, dry_run=dry_run)
+    def arguments(
+        self, *, dry_run: bool = False, executor: str = "configured"
+    ) -> argparse.Namespace:
+        return argparse.Namespace(repo=self.repo, executor=executor, dry_run=dry_run)
 
     def test_refuses_to_invent_missing_settings(self) -> None:
         with contextlib.redirect_stdout(io.StringIO()) as output:
             result = run(self.arguments())
         self.assertEqual(result, 2)
         self.assertIn("settings do not exist", output.getvalue())
-        self.assertFalse((self.state / "operations.sqlite3").exists())
-
-        OperationalStore(self.state)
-        with contextlib.redirect_stdout(io.StringIO()) as output:
-            result = run(self.arguments())
-        self.assertEqual(result, 2)
-        self.assertIn("no executor is saved", output.getvalue())
+        self.assertFalse((self.root / "state").exists())
 
     def test_saved_mini_executor_is_the_dispatched_command(self) -> None:
         configuration = ExecutorConfiguration(
@@ -49,8 +49,7 @@ class ExecutorDispatchTests(unittest.TestCase):
             mini_swe_model="Qwen/Qwen3.8-27B",
             mini_swe_api_base="http://qwen.test:8000/v1",
         )
-        store = OperationalStore(self.state)
-        store.set_preference(EXECUTOR_PREFERENCE_KEY, asdict(configuration))
+        publish_project_executor_settings(self.repo, configuration)
         completed = mock.Mock(returncode=7)
         with mock.patch(
             "coordinator.run_executor_turn.subprocess.run", return_value=completed
@@ -68,14 +67,40 @@ class ExecutorDispatchTests(unittest.TestCase):
         self.assertIn("Configured executor: mini-swe-agent", output.getvalue())
 
     def test_dry_run_reports_selection_without_starting_process(self) -> None:
-        store = OperationalStore(self.state)
-        store.set_preference(EXECUTOR_PREFERENCE_KEY, asdict(ExecutorConfiguration()))
+        publish_project_executor_settings(self.repo, ExecutorConfiguration())
         with mock.patch("coordinator.run_executor_turn.subprocess.run") as invoke:
             with contextlib.redirect_stdout(io.StringIO()) as output:
                 result = run(self.arguments(dry_run=True))
         self.assertEqual(result, 0)
         invoke.assert_not_called()
         self.assertIn("coordinator.run_claude_turn", output.getvalue())
+
+    def test_owner_requested_override_does_not_mutate_project_settings(self) -> None:
+        configured = ExecutorConfiguration(
+            executor_adapter="mini-swe-agent",
+            mini_swe_model="Qwen/Qwen3.8-27B",
+        )
+        publish_project_executor_settings(self.repo, configured)
+        with mock.patch("coordinator.run_executor_turn.subprocess.run") as invoke:
+            run(self.arguments(executor="claude"))
+        self.assertIn("coordinator.run_claude_turn", invoke.call_args.args[0])
+        self.assertEqual(
+            ExecutorConfiguration.from_mapping(
+                json.loads(
+                    (self.repo / ".coordination/runtime/executor-settings.json").read_text()
+                )["configuration"]
+            ).executor_adapter,
+            "mini-swe-agent",
+        )
+
+    def test_override_still_validates_required_executor_configuration(self) -> None:
+        publish_project_executor_settings(self.repo, ExecutorConfiguration())
+        with mock.patch("coordinator.run_executor_turn.subprocess.run") as invoke:
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                result = run(self.arguments(executor="mini-swe-agent"))
+        self.assertEqual(result, 2)
+        self.assertIn("mini_swe_model must not be empty", output.getvalue())
+        invoke.assert_not_called()
 
 
 if __name__ == "__main__":

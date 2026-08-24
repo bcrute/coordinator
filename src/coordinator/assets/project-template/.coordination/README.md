@@ -23,6 +23,8 @@ Repository-level `AGENTS.md` and `CLAUDE.md` remain binding.
 - `coder/latest-report.md`: the executor's most recent handoff.
 - `reviews/latest.md`: Codex's verdict on that handoff.
 - `reviews/completion.md`: Codex's user-facing overall-goal result.
+- `runtime/executor-settings.json`: ignored, non-secret projection of the app's
+  selected executor and model settings for project-local handoff commands.
 
 ## State machine
 
@@ -38,6 +40,9 @@ Every executor invocation is one implementation handoff. Codex reviews its compl
 result, then requests corrections, assigns the next subgoal, or sets the overall
 goal to `done`. A watcher treats those file states as signals; it never invents a
 task or a verdict itself.
+
+Project agents never open Coordinator's global session, audit, or usage databases.
+The handoff dispatcher reads only the project-local executor settings projection.
 
 ## Watchers
 

@@ -14,6 +14,7 @@ import urllib.error
 import urllib.request
 from contextlib import suppress
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Mapping
 from urllib.parse import urlsplit
 
@@ -26,6 +27,9 @@ from .executor_adapters import (
 from .operational_store import OperationalStore
 
 EXECUTOR_PREFERENCE_KEY = "executor_configuration_v1"
+PROJECT_EXECUTOR_SETTINGS = Path(".coordination/runtime/executor-settings.json")
+PROJECT_EXECUTOR_SETTINGS_VERSION = 1
+PROJECT_EXECUTOR_SETTINGS_BYTES = 64 * 1024
 MODEL_DISCOVERY_BYTES = 1024 * 1024
 MODEL_DISCOVERY_TIMEOUT_SECONDS = 5.0
 MODEL_NAME_LIMIT = 240
@@ -236,6 +240,97 @@ class ExecutorConfiguration:
             cost_limit=self.mini_swe_cost_limit,
             timeout_seconds=self.mini_swe_timeout_seconds,
         )
+
+
+def project_executor_settings_path(repo: Path) -> Path:
+    """Return the fixed handoff-facing settings path inside `repo`."""
+
+    return repo.resolve() / PROJECT_EXECUTOR_SETTINGS
+
+
+def publish_project_executor_settings(
+    repo: Path,
+    configuration: ExecutorConfiguration,
+    *,
+    replace: bool = True,
+) -> Path | None:
+    """Atomically publish non-secret executor settings inside an initialized repo.
+
+    The global operational database remains the application's source of truth,
+    but project agents never need to open it. Uninitialized repositories are a
+    truthful no-op because creating coordination state is an explicit action.
+    """
+
+    root = repo.resolve()
+    coordination = root / ".coordination"
+    if not (coordination / "README.md").is_file():
+        return None
+    if coordination.is_symlink():
+        raise ValueError("coordination directory must not be a symbolic link")
+    runtime = coordination / "runtime"
+    if runtime.exists() and (runtime.is_symlink() or not runtime.is_dir()):
+        raise ValueError("coordination runtime must be a real directory")
+    runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
+    destination = project_executor_settings_path(root)
+    if destination.is_symlink():
+        raise ValueError("project executor settings must not be a symbolic link")
+    if destination.exists() and not replace:
+        return destination
+    payload = {
+        "schema_version": PROJECT_EXECUTOR_SETTINGS_VERSION,
+        "configuration": asdict(configuration),
+    }
+    encoded = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    temporary = runtime / (
+        f".{destination.name}.{os.getpid()}.{threading.get_ident()}.{time.time_ns()}.tmp"
+    )
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+        )
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = None
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, destination)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        with suppress(FileNotFoundError):
+            temporary.unlink()
+    return destination
+
+
+def load_project_executor_settings(repo: Path) -> ExecutorConfiguration:
+    """Load and validate the bounded project-local executor snapshot."""
+
+    root = repo.resolve()
+    coordination = root / ".coordination"
+    runtime = coordination / "runtime"
+    path = project_executor_settings_path(root)
+    if coordination.is_symlink() or runtime.is_symlink():
+        raise ValueError("project executor settings must remain inside the repository")
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"project executor settings do not exist: {path}")
+    raw = path.read_bytes()
+    if len(raw) > PROJECT_EXECUTOR_SETTINGS_BYTES:
+        raise ValueError("project executor settings are too large")
+    try:
+        payload = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("project executor settings are not valid JSON") from error
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"schema_version", "configuration"}
+        or payload.get("schema_version") != PROJECT_EXECUTOR_SETTINGS_VERSION
+        or not isinstance(payload.get("configuration"), dict)
+    ):
+        raise ValueError("project executor settings have an unsupported schema")
+    return ExecutorConfiguration.from_mapping(payload["configuration"])
 
 
 class ExecutorSettingsService:
