@@ -182,10 +182,10 @@ from `--config`, which in turn wins over the built-in default. See
 `workflow.example.toml` for a fully commented starting point.
 
 The Settings page can switch the implementation executor and edit its non-secret
-model, endpoint, turn bounds, and Codex starting permissions. The Codex sandbox
-selector supports read-only, repository-write, and full-filesystem modes; its
-approval selector supports on-request or never. Coordinator passes the saved values
-to both new and resumed Codex sessions without using the CLI's bypass flag. These
+model, endpoint, turn bounds, and Codex starting permissions. The single Codex
+selector mirrors the CLI's **Ask for approval**, **Approve for me**, and **Full
+Access** menu. Coordinator passes the saved preset to both new and resumed Codex
+sessions without using the CLI's bypass flag. These
 owner-only values persist in Coordinator's SQLite state and apply without restarting
 the app. The Codex session and managed watcher must be stopped before their commands
 can be changed. For interactive handoffs,
@@ -212,7 +212,7 @@ environment values are not returned to the browser.
 
 This activity panel is observation, not agent configuration. The Settings page's
 three-stage role pipeline controls the Codex reviewer model, Claude supervisor model,
-their independent effort levels, Codex's starting sandbox and approval policy, the native Claude subagent model and effort,
+their independent effort levels, Codex's starting permission preset, the native Claude subagent model and effort,
 implementation strategy, local endpoint, and execution bounds. Quality,
 balanced, and local-heavy buttons provide editable starting profiles. CLI executable
 locations remain deployment configuration. Process presence also does

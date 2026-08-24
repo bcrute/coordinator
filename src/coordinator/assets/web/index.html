@@ -600,20 +600,14 @@
                 <div class="role-runtime"><span>Runtime</span><strong>Codex CLI</strong><small>Fixed orchestration adapter</small></div>
                 <label class="role-editable">Reviewer model<select name="codex_model"><option value="">Loading Codex models…</option></select></label>
                 <label class="role-editable">Reviewer effort<select name="codex_effort"><option value="">Model default</option></select></label>
-                <label class="role-editable">Filesystem access
-                  <select name="codex_sandbox">
-                    <option value="read-only">Read only</option>
-                    <option value="workspace-write" selected>Write selected repository</option>
-                    <option value="danger-full-access">Full filesystem access</option>
+                <label class="role-editable">Starting permissions
+                  <select name="codex_permission_mode">
+                    <option value="ask-for-approval" selected>Ask for approval</option>
+                    <option value="approve-for-me">Approve for me</option>
+                    <option value="full-access">Full Access</option>
                   </select>
                 </label>
-                <label class="role-editable">Command approvals
-                  <select name="codex_approval_policy">
-                    <option value="on-request" selected>Ask when needed</option>
-                    <option value="never">Never ask</option>
-                  </select>
-                </label>
-                <p class="role-fallback">Applied automatically to new and resumed browser sessions. Full access with no approvals is intentionally explicit.</p>
+                <p class="role-fallback">Matches Codex's three-option permissions menu and applies automatically to new and resumed browser sessions.</p>
               </section>
               <span class="role-arrow" aria-hidden="true">→</span>
               <section class="role-card" data-role="supervisor" aria-labelledby="supervisor-role-heading">

@@ -53,8 +53,7 @@ def mini_payload(**changes: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "codex_model": "gpt-5.6-sol",
         "codex_effort": "max",
-        "codex_sandbox": "danger-full-access",
-        "codex_approval_policy": "never",
+        "codex_permission_mode": "full-access",
         "executor_adapter": "mini-swe-agent",
         "claude_model": "opus",
         "claude_effort": "high",
@@ -90,6 +89,23 @@ class FakeResponse:
 
 
 class ExecutorSettingsUnitTests(unittest.TestCase):
+    def test_codex_permission_menu_presets_map_to_supported_cli_flags(self) -> None:
+        repo = Path("/tmp/project")
+        self.assertEqual(
+            default_codex_command(repo, "ask-for-approval")[1:-2],
+            ["--sandbox", "workspace-write", "--ask-for-approval", "on-request"],
+        )
+        self.assertEqual(
+            default_codex_command(repo, "approve-for-me")[1:-2],
+            ["--approve-for-me"],
+        )
+        self.assertEqual(
+            default_codex_command(repo, "full-access")[1:-2],
+            ["--sandbox", "danger-full-access", "--ask-for-approval", "never"],
+        )
+        with self.assertRaisesRegex(ValueError, "unknown Codex permission mode"):
+            default_codex_command(repo, "invented")
+
     def test_project_snapshot_is_bounded_non_secret_and_atomically_replaceable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
@@ -163,8 +179,7 @@ class ExecutorSettingsUnitTests(unittest.TestCase):
             self.assertEqual(adapter.api_key_env, "")
             self.assertEqual(restored.configuration().codex_model, "gpt-5.6-sol")
             self.assertEqual(restored.configuration().codex_effort, "max")
-            self.assertEqual(restored.configuration().codex_sandbox, "danger-full-access")
-            self.assertEqual(restored.configuration().codex_approval_policy, "never")
+            self.assertEqual(restored.configuration().codex_permission_mode, "full-access")
             self.assertEqual(
                 store.preferences()[EXECUTOR_PREFERENCE_KEY]["mini_swe_api_base"],
                 "http://127.0.0.1:8000/v1",
@@ -181,12 +196,32 @@ class ExecutorSettingsUnitTests(unittest.TestCase):
             ExecutorConfiguration.from_mapping(mini_payload(mini_swe_step_limit=0))
         with self.assertRaisesRegex(ValueError, "codex_effort"):
             ExecutorConfiguration.from_mapping(mini_payload(codex_effort="unbounded"))
-        with self.assertRaisesRegex(ValueError, "codex_sandbox"):
-            ExecutorConfiguration.from_mapping(mini_payload(codex_sandbox="unbounded"))
-        with self.assertRaisesRegex(ValueError, "codex_approval_policy"):
+        with self.assertRaisesRegex(ValueError, "codex_permission_mode"):
             ExecutorConfiguration.from_mapping(
-                mini_payload(codex_approval_policy="sometimes")
+                mini_payload(codex_permission_mode="sometimes")
             )
+
+    def test_legacy_split_permission_settings_migrate_to_menu_presets(self) -> None:
+        base = mini_payload()
+        base.pop("codex_permission_mode")
+        self.assertEqual(
+            ExecutorConfiguration.from_mapping(
+                {**base, "codex_sandbox": "workspace-write", "codex_approval_policy": "on-request"}
+            ).codex_permission_mode,
+            "ask-for-approval",
+        )
+        self.assertEqual(
+            ExecutorConfiguration.from_mapping(
+                {**base, "codex_sandbox": "workspace-write", "codex_approval_policy": "never"}
+            ).codex_permission_mode,
+            "approve-for-me",
+        )
+        self.assertEqual(
+            ExecutorConfiguration.from_mapping(
+                {**base, "codex_sandbox": "danger-full-access", "codex_approval_policy": "never"}
+            ).codex_permission_mode,
+            "full-access",
+        )
 
     def test_claude_can_reuse_the_configured_mini_backend_for_mcp_delegation(self) -> None:
         configuration = ExecutorConfiguration.from_mapping(
@@ -391,11 +426,11 @@ class ExecutorSettingsAPITests(unittest.TestCase):
             session = app.state.context.codex_session
             self.assertEqual(
                 list(session.command),
-                default_codex_command(self.repo, "danger-full-access", "never"),
+                default_codex_command(self.repo, "full-access"),
             )
             self.assertEqual(
                 list(session.resume_command),
-                default_codex_resume_command(self.repo, "danger-full-access", "never"),
+                default_codex_resume_command(self.repo, "full-access"),
             )
 
     def test_running_watcher_blocks_changes_and_discovery_is_bounded(self) -> None:

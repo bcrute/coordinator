@@ -179,16 +179,14 @@ def create_authenticated_app(
         configuration = executor_service.configuration()
         return web_app.default_codex_command(
             selected_repo,
-            configuration.codex_sandbox,
-            configuration.codex_approval_policy,
+            configuration.codex_permission_mode,
         )
 
     def configured_codex_resume_command(selected_repo: Path) -> list[str]:
         configuration = executor_service.configuration()
         return web_app.default_codex_resume_command(
             selected_repo,
-            configuration.codex_sandbox,
-            configuration.codex_approval_policy,
+            configuration.codex_permission_mode,
         )
 
     codex_factory = codex_command_for_repo or configured_codex_command
@@ -1038,11 +1036,11 @@ def create_authenticated_app(
             selected_repo, adapter, candidate.codex_model, candidate.codex_effort
         )
         codex_candidate_factory = lambda selected_repo: web_app.default_codex_command(
-            selected_repo, candidate.codex_sandbox, candidate.codex_approval_policy
+            selected_repo, candidate.codex_permission_mode
         )
         resume_candidate_factory = (
             lambda selected_repo: web_app.default_codex_resume_command(
-                selected_repo, candidate.codex_sandbox, candidate.codex_approval_policy
+                selected_repo, candidate.codex_permission_mode
             )
         )
         previous = executor_service.configuration()

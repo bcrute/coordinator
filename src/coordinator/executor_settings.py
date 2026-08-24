@@ -35,8 +35,9 @@ MODEL_DISCOVERY_TIMEOUT_SECONDS = 5.0
 MODEL_NAME_LIMIT = 240
 CLI_MODEL_LIMIT = 100
 EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
-CODEX_SANDBOX_MODES = frozenset({"read-only", "workspace-write", "danger-full-access"})
-CODEX_APPROVAL_POLICIES = frozenset({"on-request", "never"})
+CODEX_PERMISSION_MODES = frozenset(
+    {"ask-for-approval", "approve-for-me", "full-access"}
+)
 
 
 def _text(value: object, name: str, *, required: bool = False) -> str:
@@ -100,8 +101,7 @@ class ExecutorConfiguration:
 
     codex_model: str = ""
     codex_effort: str = ""
-    codex_sandbox: str = "workspace-write"
-    codex_approval_policy: str = "on-request"
+    codex_permission_mode: str = "ask-for-approval"
     executor_adapter: str = "claude"
     claude_model: str = "opus"
     claude_effort: str = ""
@@ -158,11 +158,24 @@ class ExecutorConfiguration:
         value: Mapping[str, object],
         fallback: "ExecutorConfiguration | None" = None,
     ) -> "ExecutorConfiguration":
+        normalized = dict(value)
+        legacy_sandbox = normalized.pop("codex_sandbox", None)
+        legacy_approval = normalized.pop("codex_approval_policy", None)
+        if "codex_permission_mode" not in normalized and (
+            legacy_sandbox is not None or legacy_approval is not None
+        ):
+            normalized["codex_permission_mode"] = (
+                "full-access"
+                if legacy_sandbox == "danger-full-access" and legacy_approval == "never"
+                else "approve-for-me"
+                if legacy_approval == "never"
+                else "ask-for-approval"
+            )
         allowed = set(cls.__dataclass_fields__)
-        if set(value) - allowed:
+        if set(normalized) - allowed:
             raise ValueError("executor settings contain unknown fields")
         baseline = fallback or cls()
-        merged = {**asdict(baseline), **dict(value)}
+        merged = {**asdict(baseline), **normalized}
         selected = _text(merged["executor_adapter"], "executor_adapter", required=True)
         if selected not in {"claude", "mini-swe-agent"}:
             raise ValueError("executor_adapter must be claude or mini-swe-agent")
@@ -177,23 +190,17 @@ class ExecutorConfiguration:
             "mini_swe_model",
             required=selected == "mini-swe-agent" or bool(merged["claude_local_delegation"]),
         )
-        codex_sandbox = _text(merged["codex_sandbox"], "codex_sandbox", required=True)
-        if codex_sandbox not in CODEX_SANDBOX_MODES:
-            raise ValueError(
-                f"codex_sandbox must be one of {', '.join(sorted(CODEX_SANDBOX_MODES))}"
-            )
-        codex_approval_policy = _text(
-            merged["codex_approval_policy"], "codex_approval_policy", required=True
+        codex_permission_mode = _text(
+            merged["codex_permission_mode"], "codex_permission_mode", required=True
         )
-        if codex_approval_policy not in CODEX_APPROVAL_POLICIES:
+        if codex_permission_mode not in CODEX_PERMISSION_MODES:
             raise ValueError(
-                "codex_approval_policy must be on-request or never"
+                "codex_permission_mode must be ask-for-approval, approve-for-me, or full-access"
             )
         return cls(
             codex_model=_text(merged["codex_model"], "codex_model"),
             codex_effort=_effort(merged["codex_effort"], "codex_effort", allow_ultra=True),
-            codex_sandbox=codex_sandbox,
-            codex_approval_policy=codex_approval_policy,
+            codex_permission_mode=codex_permission_mode,
             executor_adapter=selected,
             claude_model=_text(merged["claude_model"], "claude_model", required=True),
             claude_effort=_effort(merged["claude_effort"], "claude_effort"),

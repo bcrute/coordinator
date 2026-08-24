@@ -57,8 +57,7 @@ REPOSITORY_SELECT_PATH = "/api/repository/select"
 REPOSITORY_SELECT_BODY_BYTES = 64 * 1024
 def default_codex_command(
     root: Path,
-    sandbox: str = "workspace-write",
-    approval_policy: str = "on-request",
+    permission_mode: str = "ask-for-approval",
 ) -> list[str]:
     """Build the one fixed, non-configurable codex launch command for `root`.
 
@@ -67,21 +66,12 @@ def default_codex_command(
     construction time only.
     """
     executable = shutil.which("codex") or "codex"
-    return [
-        executable,
-        "--sandbox",
-        sandbox,
-        "--ask-for-approval",
-        approval_policy,
-        "-C",
-        str(root),
-    ]
+    return [executable, *codex_permission_arguments(permission_mode), "-C", str(root)]
 
 
 def default_codex_resume_command(
     root: Path,
-    sandbox: str = "workspace-write",
-    approval_policy: str = "on-request",
+    permission_mode: str = "ask-for-approval",
 ) -> list[str]:
     """Build the fixed command which resumes the latest session for `root`."""
     executable = shutil.which("codex") or "codex"
@@ -89,13 +79,22 @@ def default_codex_resume_command(
         executable,
         "resume",
         "--last",
-        "--sandbox",
-        sandbox,
-        "--ask-for-approval",
-        approval_policy,
+        *codex_permission_arguments(permission_mode),
         "-C",
         str(root),
     ]
+
+
+def codex_permission_arguments(permission_mode: str) -> list[str]:
+    """Translate the three Codex TUI permission presets to supported CLI flags."""
+
+    if permission_mode == "ask-for-approval":
+        return ["--sandbox", "workspace-write", "--ask-for-approval", "on-request"]
+    if permission_mode == "approve-for-me":
+        return ["--approve-for-me"]
+    if permission_mode == "full-access":
+        return ["--sandbox", "danger-full-access", "--ask-for-approval", "never"]
+    raise ValueError(f"unknown Codex permission mode: {permission_mode}")
 
 
 
