@@ -21,8 +21,8 @@ confirmed the app runs in the foreground).
 ```
 
 - The process logs to standard output/error and serves until you stop it.
-- `Ctrl-C` stops the server. If the app itself started an automatic watcher
-  (via the Agents view's Start control), stopping the server also stops that
+- `Ctrl-C` stops the server. If the app itself started an executor watcher
+  (with the Codex terminal or via the Agents view's Start control), stopping the server also stops that
   watcher; a watcher you started yourself in a separate terminal is left
   running.
 - Uvicorn access logs are disabled in both modes. In OIDC mode this also keeps

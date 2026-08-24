@@ -3,6 +3,7 @@
 - Task ID: `none`
 - State: `idle`
 - Review round: `0`
+- Executor: `configured`
 - Starting ref: `not recorded`
 
 ## Objective

@@ -21,11 +21,13 @@ from .coordination_dashboard import leave as leave_dashboard
 from .coordination_dashboard import render as render_dashboard
 from .executor_adapters import EXECUTOR_ADAPTERS, ExecutorAdapter, from_namespace
 from .executor_adapters import resolve_executable as resolve_executor_executable
+from .executor_settings import ExecutorConfiguration, load_project_executor_settings
 
 
 ACTIVE_TASK_STATES = {"ready", "changes_requested"}
 REVIEWABLE_CODER_STATES = {"review", "blocked"}
 FINAL_VERDICTS = {"accepted", "changes_requested", "blocked"}
+TASK_EXECUTORS = {"configured", *EXECUTOR_ADAPTERS}
 
 
 def field(text: str, name: str) -> str | None:
@@ -44,6 +46,7 @@ class Snapshot:
     task_id: str | None
     task_state: str | None
     task_round: str | None
+    task_executor: str | None
     coder_task_id: str | None
     coder_state: str | None
     coder_round: str | None
@@ -63,6 +66,7 @@ def snapshot(repo: Path) -> Snapshot:
         field(task, "Task ID"),
         field(task, "State"),
         field(task, "Review round"),
+        field(task, "Executor") or "configured",
         field(coder, "Task ID"),
         field(coder, "State"),
         field(coder, "Review round"),
@@ -85,6 +89,8 @@ def next_action(state: Snapshot) -> tuple[str, str]:
         return "error", "overall goal is active but Codex has not assigned a subgoal"
     if state.task_state not in ACTIVE_TASK_STATES:
         return "error", f"active goal has non-runnable task state: {state.task_state!r}"
+    if state.task_executor not in TASK_EXECUTORS:
+        return "error", f"unknown task executor: {state.task_executor!r}"
 
     same_coder_handoff = (
         state.coder_task_id == state.task_id and state.coder_round == state.task_round
@@ -140,6 +146,22 @@ def agent_command(
 def role_handles(role: str, action: str) -> bool:
     # ``claude`` remains a compatibility alias for the implementation side.
     return role == "both" or role == action or (role == "claude" and action == "executor")
+
+
+def task_executor(
+    repo: Path, requested: str | None, configured: ExecutorAdapter
+) -> ExecutorAdapter:
+    """Resolve a validated one-handoff override without changing saved settings."""
+
+    selected = requested or "configured"
+    if selected == "configured":
+        return configured
+    if selected not in EXECUTOR_ADAPTERS:
+        raise ValueError(f"unknown task executor: {selected!r}")
+    configuration = load_project_executor_settings(repo)
+    return ExecutorConfiguration.from_mapping(
+        {"executor_adapter": selected}, configuration
+    ).adapter()
 
 
 def watch(args: argparse.Namespace) -> int:
@@ -226,7 +248,26 @@ def watch(args: argparse.Namespace) -> int:
             write_status(args.repo, args.role, state, "running", f"launching {action}: {detail}")
             if not dashboard:
                 print(f"Signal: {detail}; launching {action}", flush=True)
-            command = agent_command(args, action, executor)
+            selected_executor = executor
+            if action == "executor":
+                try:
+                    selected_executor = task_executor(
+                        args.repo, state.task_executor, executor
+                    )
+                except ValueError as error:
+                    failed_detail = f"cannot resolve task executor: {error}"
+                    write_status(args.repo, args.role, state, "error", failed_detail)
+                    print(f"Coordination state error: {failed_detail}", file=sys.stderr)
+                    return 3
+                if resolve_executor_executable(selected_executor) is None:
+                    failed_detail = (
+                        f"{selected_executor.display_name} command not found: "
+                        f"{selected_executor.executable()}"
+                    )
+                    write_status(args.repo, args.role, state, "error", failed_detail)
+                    print(f"error: {failed_detail}", file=sys.stderr)
+                    return 127
+            command = agent_command(args, action, selected_executor)
             if args.dry_run:
                 print(" ".join(command))
                 return 0

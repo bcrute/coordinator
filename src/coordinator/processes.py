@@ -14,7 +14,7 @@ from pathlib import Path
 from .executor_adapters import ExecutorAdapter
 from .repositories import is_initialized
 
-MANAGED_ROLE = "both"
+MANAGED_ROLE = "executor"
 STOP_TIMEOUT_SECONDS = 10.0
 START_GRACE_SECONDS = 1.0
 ACTIVE_STATES = ("starting", "running")
@@ -26,7 +26,7 @@ def default_watcher_command(
     reviewer_model: str = "",
     reviewer_effort: str = "",
 ) -> list[str]:
-    """Build the fixed automatic both-watcher command for `root`."""
+    """Build the fixed app-owned executor watcher command for `root`."""
 
     command = [
         sys.executable,

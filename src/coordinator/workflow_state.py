@@ -107,6 +107,7 @@ def task_state(text: str) -> dict[str, object]:
         "id": field(text, "Task ID") or "none",
         "state": field(text, "State") or "unknown",
         "review_round": field(text, "Review round") or "0",
+        "executor": field(text, "Executor") or "configured",
         "starting_ref": field(text, "Starting ref") or "not recorded",
         "objective": one_line(section(text, "Objective")),
         "in_scope": bullets(text, "In scope"),

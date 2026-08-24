@@ -116,8 +116,9 @@ If you want Codex to shape the files from a project discussion first:
    `skills/coordinate-claude-work/SKILL.md`).
 4. Once `.coordination/` exists, the live state feed updates the dashboard and
    the **Agents** view's watcher **Start** control becomes available. You can
-   then start the automatic watcher that
-   relays executor and Codex turns for you.
+   then start the executor watcher, or restart the Codex terminal to have the
+   app start both together. The app-owned watcher launches implementation turns
+   while that interactive Codex session assigns and reviews them.
 
 See `skills/coordinate-claude-work/SKILL.md` for the full procedure Codex
 follows, including watched goal mode, native Claude teams, and the review

@@ -47,23 +47,24 @@ by inspection and record them there.
    subgoal to
    `.coordination/planner/current-task.md`. Include a stable task ID, state
    `ready`, objective, scope, exclusions, acceptance criteria, required evidence,
-   and allowed external actions. Set the review round to `0` for a new task.
-3. Run exactly one implementation handoff through the executor saved on the
-   application's Agents & models screen:
+   allowed external actions, and `Executor: configured`. Set the review round to
+   `0` for a new task. If, and only if, the owner explicitly requests a different
+   executor for this handoff, set `Executor` to `claude` or `mini-swe-agent`.
+3. Signal exactly one implementation handoff by atomically completing the planner
+   assignment above. Do not run `run_executor_turn.py`, a provider-specific
+   runner, or any other executor subprocess from the interactive Codex session.
+   The app-owned executor watcher observes the task/round signal and launches the
+   selected adapter outside Codex's sandbox. Wait for the matching coder status to
+   become `review` or `blocked`, then continue this same interactive session with
+   the review. If the watcher is unavailable, report that operational condition;
+   do not bypass it with a direct model call.
 
-   ```bash
-   python3.14 <skill-directory>/scripts/run_executor_turn.py --repo .
-   ```
-
-   The dispatcher reads the non-secret executor snapshot at
+   The watcher reads the non-secret executor snapshot at
    `.coordination/runtime/executor-settings.json`; it never opens Coordinator's
    global database. The app refreshes this ignored project-local snapshot when a
-   repository is selected or executor settings change. Do not substitute a
-   provider-specific runner: the dispatcher is what makes the application's saved
-   Claude or mini-swe-agent selection authoritative. If, and only if, the owner
-   explicitly requests a different executor for this one handoff, pass
-   `--executor claude` or `--executor mini-swe-agent`; this does not mutate saved
-   settings. Claude remains the initial default. Its runner is a thin adapter around Claude Code
+   repository is selected or executor settings change. The task's validated
+   `Executor` field can override that snapshot for one handoff without mutating
+   saved settings. Claude remains the initial default. Its runner is a thin adapter around Claude Code
    print mode and safe `auto` permissions. It embeds only
    `planner/current-task.md` as the authoritative
    coordination packet; Claude Code loads ordinary repository instructions and
@@ -90,8 +91,9 @@ by inspection and record them there.
    `changes_requested`, or `blocked`. Name the task ID, review round, examined
    ref/worktree, findings ordered by severity, commands run, and next action.
 6. For `changes_requested`, update the same assignment with the review findings,
-   increment the review round, set state `changes_requested`, and run one more
-   executor turn. Keep the same task ID while the objective is unchanged.
+   increment the review round, set state `changes_requested`, preserve or explicitly
+   change its `Executor`, and let the app-owned watcher run one more executor turn.
+   Keep the same task ID while the objective is unchanged.
 7. For an accepted subgoal, either assign the next bounded subgoal with a new task
    ID and review round `0`, or—only when the overall completion criteria are
    satisfied—set the current task to `accepted`, set the overall goal to `done`,
@@ -104,8 +106,13 @@ Claude's internal model turns with coordination handoffs.
 
 ## Run watched goal mode
 
-After writing an active overall goal and the first subgoal, run both relays in the
-current Codex turn:
+The web app starts an executor-only watcher with an initialized repository's Codex
+terminal session. That watcher launches implementations; the interactive Codex
+session remains the planner/reviewer. Stopping that terminal session also stops the
+app-owned watcher. This split is required so executor network and CLI access are not
+inherited from Codex's sandbox.
+
+For a standalone, non-web workflow, both relays can still be run explicitly:
 
 ```bash
 python3.14 <skill-directory>/scripts/watch_coordination.py --repo . --role both
@@ -247,11 +254,11 @@ that matching Codex completion record — not a coder's own claim — is what ma
 "done" authoritative.
 
 The watcher controls are deliberately narrow: start and stop for one fixed
-command, the automatic `both` watcher for that repository with `--no-dashboard`.
+command, the automatic `executor` watcher for that repository with `--no-dashboard`.
 Outside the explicit Setup action, the web app never selects a subgoal, writes
 a verdict, or edits coordination files. A watcher start request is refused
 without creating a process while
-`runtime/watcher-both.lock` is held, so a watcher already running in a terminal is
+`runtime/watcher-executor.lock` is held, so a watcher already running in a terminal is
 untouched. Ctrl-C stops the server and closing it stops only a watcher the app
 itself started.
 

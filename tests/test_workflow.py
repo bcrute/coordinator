@@ -1270,7 +1270,7 @@ class WatcherControlTests(unittest.TestCase):
         target = self.project()
         runtime = target / ".coordination/runtime"
         runtime.mkdir(parents=True, exist_ok=True)
-        lock = runtime / "watcher-both.lock"
+        lock = runtime / "watcher-executor.lock"
         lock.write_text("held by another watcher\n", encoding="utf-8")
 
         manager = WatcherManager(

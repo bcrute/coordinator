@@ -725,6 +725,41 @@ class LocalAppTests(unittest.TestCase):
             self.assertEqual(payload["outcome"], "resumed")
             self.assertTrue(payload["codex_session"]["running"])
 
+    def test_terminal_session_supervises_executor_watcher_lifecycle(self) -> None:
+        coordination = self.repo / ".coordination"
+        coordination.mkdir()
+        (coordination / "README.md").write_text("# Coordination\n", encoding="utf-8")
+        settings = LocalSettings(
+            external_url="http://127.0.0.1:8765",
+            state_dir=self.base / "coordinated-state",
+        )
+        def sleeper(repo):
+            return [sys.executable, "-c", "import time; time.sleep(60)"]
+        app = create_authenticated_app(
+            self.repo,
+            settings,
+            repositories_root=self.base,
+            watcher_command_for_repo=sleeper,
+            codex_command_for_repo=sleeper,
+        )
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            state = client.get("/api/state").json()
+            response = client.post(
+                "/api/codex/start", headers=self.headers(state["security"]["csrf_token"])
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            started = response.json()
+            self.assertTrue(started["codex_session"]["running"])
+            self.assertTrue(started["managed_watcher"]["running"])
+            self.assertEqual(started["managed_watcher"]["role"], "executor")
+
+            stopped = client.post(
+                "/api/codex/stop", headers=self.headers(state["security"]["csrf_token"])
+            )
+            self.assertEqual(stopped.status_code, 200, stopped.text)
+            self.assertFalse(stopped.json()["codex_session"]["running"])
+            self.assertFalse(stopped.json()["managed_watcher"]["running"])
+
     def test_local_state_setup_activity_sessions_and_diagnostics(self) -> None:
         with TestClient(self.app, base_url="http://127.0.0.1") as client:
             state = client.get("/api/state")

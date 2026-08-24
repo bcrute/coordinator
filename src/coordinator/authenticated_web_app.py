@@ -1609,6 +1609,7 @@ def create_authenticated_app(
 
         def operate() -> tuple[int, dict[str, object]]:
             with context.lease() as active:
+                watcher_message = ""
                 try:
                     if action == "start":
                         active.codex_session.start()
@@ -1619,6 +1620,9 @@ def create_authenticated_app(
                     elif action == "stop":
                         before = active.codex_session.snapshot()
                         active.codex_session.stop()
+                        watcher_before = active.watcher.snapshot()
+                        if watcher_before.get("running"):
+                            _, watcher_message = active.watcher.stop()
                         if before.get("running"):
                             outcome, message = "stopped", "stopped the codex session"
                         else:
@@ -1633,6 +1637,31 @@ def create_authenticated_app(
                     outcome, message = "conflict", str(error)
                 except OSError as error:
                     outcome, message = "error", f"cannot launch codex: {error}"
+
+                if outcome in {"started", "resumed"}:
+                    watcher = active.watcher.snapshot()
+                    if watcher.get("can_start"):
+                        watcher_outcome, watcher_message = active.watcher.start()
+                        if watcher_outcome != "started":
+                            active.codex_session.stop()
+                            outcome = "error"
+                            message = (
+                                "codex was stopped because its executor watcher could not "
+                                f"start: {watcher_message}"
+                            )
+                    elif watcher.get("running"):
+                        watcher_message = "the executor watcher was already running"
+                    elif watcher.get("lock_present"):
+                        watcher_message = "an external executor watcher is already running"
+                    else:
+                        watcher_message = (
+                            "the executor watcher will remain unavailable until coordination "
+                            "setup is complete"
+                        )
+                    if outcome in {"started", "resumed"}:
+                        message = f"{message}; {watcher_message}"
+                elif action == "stop" and watcher_message:
+                    message = f"{message}; {watcher_message}"
                 status = {
                     "started": 200,
                     "resumed": 200,
@@ -1647,6 +1676,7 @@ def create_authenticated_app(
                     "outcome": outcome,
                     "message": message,
                     "codex_session": active.codex_session.snapshot(),
+                    "managed_watcher": active.watcher.snapshot(),
                 }
                 if action == "clear" and outcome == "cleared":
                     payload["cleared_through_cursor"] = cleared_through_cursor

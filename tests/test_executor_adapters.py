@@ -42,7 +42,8 @@ def prepared_repo(root: Path) -> None:
     )
     (root / ".coordination" / "planner" / "current-task.md").write_text(
         "# Current task\n\n- Task ID: `LOCAL-TASK-001`\n- State: `ready`\n"
-        "- Review round: `0`\n\n## Objective\n\nCreate one small file.\n",
+        "- Review round: `0`\n- Executor: `configured`\n\n"
+        "## Objective\n\nCreate one small file.\n",
         encoding="utf-8",
     )
     (root / ".coordination" / "coder" / "status.md").write_text(
@@ -240,6 +241,7 @@ class AdapterContractTests(unittest.TestCase):
         self.assertIn("mini-swe-agent", command)
         self.assertIn("--mini-swe-api-base", command)
         self.assertIn("http://127.0.0.1:8000/v1", command)
+        self.assertEqual(command[command.index("--role") + 1], "executor")
         self.assertEqual(command[-4:], ["--codex-model", "gpt-5.6-sol", "--codex-effort", "high"])
 
     def test_watcher_selects_mini_runner_for_ready_assignment(self) -> None:

@@ -398,6 +398,7 @@ function renderTask(state) {
   setText("task-state", text(task.state, "unknown"));
   setTone("task-state", tone(task.state));
   setText("task-review-round", text(task.review_round, "0"));
+  setText("task-executor", text(task.executor, "configured"));
   setText("task-starting-ref", text(task.starting_ref));
   setText("task-objective", text(task.objective));
   fillList("task-acceptance", task.acceptance_criteria, "No acceptance criteria recorded.");

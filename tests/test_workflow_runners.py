@@ -17,7 +17,9 @@ from coordinator.run_codex_review import run as run_review
 from coordinator.run_codex_review import valid_transition
 from coordinator.run_claude_turn import clean_error_detail, run as run_claude
 from coordinator.start_claude_team import run as run_team
-from coordinator.watch_coordination import Snapshot, next_action, role_handles
+from coordinator.executor_adapters import ClaudeExecutorAdapter, MiniSweAgentExecutorAdapter
+from coordinator.executor_settings import ExecutorConfiguration
+from coordinator.watch_coordination import Snapshot, next_action, role_handles, task_executor
 
 
 class CoordinationFixture(unittest.TestCase):
@@ -421,6 +423,7 @@ class WatcherDecisionTests(unittest.TestCase):
             "task_id": "task-1",
             "task_state": "ready",
             "task_round": "0",
+            "task_executor": "configured",
             "coder_task_id": "none",
             "coder_state": "idle",
             "coder_round": "0",
@@ -439,6 +442,7 @@ class WatcherDecisionTests(unittest.TestCase):
             ({"goal_state": "invented"}, "error"),
             ({"task_id": "none", "task_state": "idle"}, "error"),
             ({"task_state": "accepted"}, "error"),
+            ({"task_executor": "invented"}, "error"),
         )
         for overrides, expected in cases:
             with self.subTest(overrides=overrides):
@@ -476,3 +480,19 @@ class WatcherDecisionTests(unittest.TestCase):
         self.assertTrue(role_handles("claude", "executor"))
         self.assertTrue(role_handles("codex", "codex"))
         self.assertFalse(role_handles("codex", "executor"))
+
+    def test_one_handoff_executor_override_uses_project_snapshot(self) -> None:
+        configured = MiniSweAgentExecutorAdapter(command_name="/bin/true", model="local")
+        configuration = ExecutorConfiguration(
+            executor_adapter="mini-swe-agent",
+            mini_swe_model="local",
+            claude_model="sonnet",
+        )
+        self.assertIs(task_executor(Path("."), "configured", configured), configured)
+        with mock.patch(
+            "coordinator.watch_coordination.load_project_executor_settings",
+            return_value=configuration,
+        ):
+            selected = task_executor(Path("."), "claude", configured)
+        self.assertIsInstance(selected, ClaudeExecutorAdapter)
+        self.assertEqual(selected.model, "sonnet")
