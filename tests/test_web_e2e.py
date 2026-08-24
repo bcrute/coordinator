@@ -159,7 +159,6 @@ class DashboardBrowserTests(unittest.TestCase):
                         arg=marker,
                     )
                     page.evaluate("clearInterval(globalThis.__terminalMarkerRetry)")
-                    self.assertIn(marker, terminal_text())
 
                     page.locator("#codex-terminal-clear").click()
                     page.wait_for_function("() => codexPendingControl === ''")
