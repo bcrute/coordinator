@@ -116,6 +116,10 @@ class CodexSessionManager:
     def command(self) -> tuple[str, ...]:
         return self._command
 
+    @property
+    def resume_command(self) -> tuple[str, ...] | None:
+        return self._resume_command
+
     # -- lifecycle --------------------------------------------------------
 
     def start(self) -> None:

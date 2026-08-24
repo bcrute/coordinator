@@ -35,6 +35,8 @@ MODEL_DISCOVERY_TIMEOUT_SECONDS = 5.0
 MODEL_NAME_LIMIT = 240
 CLI_MODEL_LIMIT = 100
 EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
+CODEX_SANDBOX_MODES = frozenset({"read-only", "workspace-write", "danger-full-access"})
+CODEX_APPROVAL_POLICIES = frozenset({"on-request", "never"})
 
 
 def _text(value: object, name: str, *, required: bool = False) -> str:
@@ -98,6 +100,8 @@ class ExecutorConfiguration:
 
     codex_model: str = ""
     codex_effort: str = ""
+    codex_sandbox: str = "workspace-write"
+    codex_approval_policy: str = "on-request"
     executor_adapter: str = "claude"
     claude_model: str = "opus"
     claude_effort: str = ""
@@ -173,9 +177,23 @@ class ExecutorConfiguration:
             "mini_swe_model",
             required=selected == "mini-swe-agent" or bool(merged["claude_local_delegation"]),
         )
+        codex_sandbox = _text(merged["codex_sandbox"], "codex_sandbox", required=True)
+        if codex_sandbox not in CODEX_SANDBOX_MODES:
+            raise ValueError(
+                f"codex_sandbox must be one of {', '.join(sorted(CODEX_SANDBOX_MODES))}"
+            )
+        codex_approval_policy = _text(
+            merged["codex_approval_policy"], "codex_approval_policy", required=True
+        )
+        if codex_approval_policy not in CODEX_APPROVAL_POLICIES:
+            raise ValueError(
+                "codex_approval_policy must be on-request or never"
+            )
         return cls(
             codex_model=_text(merged["codex_model"], "codex_model"),
             codex_effort=_effort(merged["codex_effort"], "codex_effort", allow_ultra=True),
+            codex_sandbox=codex_sandbox,
+            codex_approval_policy=codex_approval_policy,
             executor_adapter=selected,
             claude_model=_text(merged["claude_model"], "claude_model", required=True),
             claude_effort=_effort(merged["claude_effort"], "claude_effort"),

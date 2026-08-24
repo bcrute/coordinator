@@ -55,7 +55,11 @@ CODEX_INPUT_BODY_BYTES = 64 * 1024
 CODEX_SESSION_ACTIONS = {"/api/codex/start": "codex_start", "/api/codex/stop": "codex_stop"}
 REPOSITORY_SELECT_PATH = "/api/repository/select"
 REPOSITORY_SELECT_BODY_BYTES = 64 * 1024
-def default_codex_command(root: Path) -> list[str]:
+def default_codex_command(
+    root: Path,
+    sandbox: str = "workspace-write",
+    approval_policy: str = "on-request",
+) -> list[str]:
     """Build the one fixed, non-configurable codex launch command for `root`.
 
     No request can change the program, its arguments, or the working
@@ -63,13 +67,35 @@ def default_codex_command(root: Path) -> list[str]:
     construction time only.
     """
     executable = shutil.which("codex") or "codex"
-    return [executable, "-C", str(root)]
+    return [
+        executable,
+        "--sandbox",
+        sandbox,
+        "--ask-for-approval",
+        approval_policy,
+        "-C",
+        str(root),
+    ]
 
 
-def default_codex_resume_command(root: Path) -> list[str]:
+def default_codex_resume_command(
+    root: Path,
+    sandbox: str = "workspace-write",
+    approval_policy: str = "on-request",
+) -> list[str]:
     """Build the fixed command which resumes the latest session for `root`."""
     executable = shutil.which("codex") or "codex"
-    return [executable, "resume", "--last", "-C", str(root)]
+    return [
+        executable,
+        "resume",
+        "--last",
+        "--sandbox",
+        sandbox,
+        "--ask-for-approval",
+        approval_policy,
+        "-C",
+        str(root),
+    ]
 
 
 
@@ -288,8 +314,11 @@ class ApplicationContext:
         self,
         watcher_command_for_repo: Callable[[Path], list[str] | None],
         commit: Callable[[], None],
+        *,
+        codex_command_for_repo: Callable[[Path], list[str]] | None = None,
+        codex_resume_command_for_repo: Callable[[Path], list[str]] | None = None,
     ) -> tuple[str, str]:
-        """Replace the future watcher command while no managed watcher is active."""
+        """Replace future agent commands while no managed agent process is active."""
 
         with self._lock:
             active = self._active
@@ -299,6 +328,12 @@ class ApplicationContext:
                     "conflict",
                     "stop the managed watcher before changing its executor settings",
                 )
+            codex_snapshot = active.codex_session.snapshot()
+            if codex_snapshot.get("running"):
+                return (
+                    "conflict",
+                    "stop the Codex session before changing its starting permissions",
+                )
             try:
                 new_watcher = WatcherManager(
                     active.repo,
@@ -306,16 +341,32 @@ class ApplicationContext:
                     self.stop_timeout,
                     self.start_grace,
                 )
+                new_codex = (
+                    CodexSessionManager(
+                        str(active.repo),
+                        codex_command_for_repo(active.repo),
+                        resume_command=(
+                            codex_resume_command_for_repo(active.repo)
+                            if codex_resume_command_for_repo is not None
+                            else None
+                        ),
+                    )
+                    if codex_command_for_repo is not None
+                    else active.codex_session
+                )
                 commit()
             except Exception as error:  # noqa: BLE001 - preserve the active manager
                 return "error", f"could not save executor settings: {error}"
             self._watcher_command_for_repo = watcher_command_for_repo
+            if codex_command_for_repo is not None:
+                self._codex_command_for_repo = codex_command_for_repo
+                self._codex_resume_command_for_repo = codex_resume_command_for_repo
             self._active = RepositoryContext(
                 active.repo,
                 new_watcher,
-                active.codex_session,
+                new_codex,
             )
-            return "updated", "executor settings saved for future watcher starts"
+            return "updated", "agent settings saved for future session starts"
 
     def shutdown(self) -> None:
         """Idempotently stop whichever managers are currently active.

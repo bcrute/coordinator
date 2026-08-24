@@ -28,6 +28,7 @@ from coordinator.executor_settings import (
 )
 from coordinator.operational_store import OperationalStore
 from coordinator.provider_usage import ProviderUsageService
+from coordinator.web_app import default_codex_command, default_codex_resume_command
 
 
 def fake_usage_service() -> ProviderUsageService:
@@ -52,6 +53,8 @@ def mini_payload(**changes: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "codex_model": "gpt-5.6-sol",
         "codex_effort": "max",
+        "codex_sandbox": "danger-full-access",
+        "codex_approval_policy": "never",
         "executor_adapter": "mini-swe-agent",
         "claude_model": "opus",
         "claude_effort": "high",
@@ -160,6 +163,8 @@ class ExecutorSettingsUnitTests(unittest.TestCase):
             self.assertEqual(adapter.api_key_env, "")
             self.assertEqual(restored.configuration().codex_model, "gpt-5.6-sol")
             self.assertEqual(restored.configuration().codex_effort, "max")
+            self.assertEqual(restored.configuration().codex_sandbox, "danger-full-access")
+            self.assertEqual(restored.configuration().codex_approval_policy, "never")
             self.assertEqual(
                 store.preferences()[EXECUTOR_PREFERENCE_KEY]["mini_swe_api_base"],
                 "http://127.0.0.1:8000/v1",
@@ -176,6 +181,12 @@ class ExecutorSettingsUnitTests(unittest.TestCase):
             ExecutorConfiguration.from_mapping(mini_payload(mini_swe_step_limit=0))
         with self.assertRaisesRegex(ValueError, "codex_effort"):
             ExecutorConfiguration.from_mapping(mini_payload(codex_effort="unbounded"))
+        with self.assertRaisesRegex(ValueError, "codex_sandbox"):
+            ExecutorConfiguration.from_mapping(mini_payload(codex_sandbox="unbounded"))
+        with self.assertRaisesRegex(ValueError, "codex_approval_policy"):
+            ExecutorConfiguration.from_mapping(
+                mini_payload(codex_approval_policy="sometimes")
+            )
 
     def test_claude_can_reuse_the_configured_mini_backend_for_mcp_delegation(self) -> None:
         configuration = ExecutorConfiguration.from_mapping(
@@ -362,6 +373,31 @@ class ExecutorSettingsAPITests(unittest.TestCase):
             preferences = client.get("/api/preferences").json()["preferences"]
             self.assertNotIn(EXECUTOR_PREFERENCE_KEY, preferences)
 
+    def test_saved_permissions_rebind_new_and_resumed_codex_sessions(self) -> None:
+        app = create_authenticated_app(
+            self.repo,
+            self.settings,
+            repositories_root=self.base,
+            provider_usage_service=fake_usage_service(),
+        )
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            csrf = client.get("/api/state").json()["security"]["csrf_token"]
+            response = client.post(
+                "/api/executor-settings",
+                json=mini_payload(),
+                headers=self.headers(csrf),
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            session = app.state.context.codex_session
+            self.assertEqual(
+                list(session.command),
+                default_codex_command(self.repo, "danger-full-access", "never"),
+            )
+            self.assertEqual(
+                list(session.resume_command),
+                default_codex_resume_command(self.repo, "danger-full-access", "never"),
+            )
+
     def test_running_watcher_blocks_changes_and_discovery_is_bounded(self) -> None:
         coordination = self.repo / ".coordination"
         coordination.mkdir()
@@ -399,6 +435,20 @@ class ExecutorSettingsAPITests(unittest.TestCase):
                 )
             self.assertEqual(discovered.status_code, 200, discovered.text)
             self.assertEqual(discovered.json()["models"], ["Qwen/Qwen3.8-27B"])
+
+    def test_running_codex_session_blocks_permission_changes(self) -> None:
+        app = self.app()
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            csrf = client.get("/api/state").json()["security"]["csrf_token"]
+            started = client.post("/api/codex/start", headers=self.headers(csrf))
+            self.assertEqual(started.status_code, 200, started.text)
+            blocked = client.post(
+                "/api/executor-settings",
+                json=mini_payload(),
+                headers=self.headers(csrf),
+            )
+            self.assertEqual(blocked.status_code, 409, blocked.text)
+            self.assertIn("stop the Codex session", blocked.json()["message"])
 
     def test_cli_model_catalog_endpoint_is_read_only_and_source_bounded(self) -> None:
         app = self.app()

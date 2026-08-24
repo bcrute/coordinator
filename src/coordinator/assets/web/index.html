@@ -600,6 +600,20 @@
                 <div class="role-runtime"><span>Runtime</span><strong>Codex CLI</strong><small>Fixed orchestration adapter</small></div>
                 <label class="role-editable">Reviewer model<select name="codex_model"><option value="">Loading Codex models…</option></select></label>
                 <label class="role-editable">Reviewer effort<select name="codex_effort"><option value="">Model default</option></select></label>
+                <label class="role-editable">Filesystem access
+                  <select name="codex_sandbox">
+                    <option value="read-only">Read only</option>
+                    <option value="workspace-write" selected>Write selected repository</option>
+                    <option value="danger-full-access">Full filesystem access</option>
+                  </select>
+                </label>
+                <label class="role-editable">Command approvals
+                  <select name="codex_approval_policy">
+                    <option value="on-request" selected>Ask when needed</option>
+                    <option value="never">Never ask</option>
+                  </select>
+                </label>
+                <p class="role-fallback">Applied automatically to new and resumed browser sessions. Full access with no approvals is intentionally explicit.</p>
               </section>
               <span class="role-arrow" aria-hidden="true">→</span>
               <section class="role-card" data-role="supervisor" aria-labelledby="supervisor-role-heading">
@@ -642,7 +656,7 @@
               <button type="submit" class="control-button">Save role assignment</button>
               <button type="button" class="control-button" id="roles-test">Check runtime availability</button>
             </div>
-            <p class="note form-feedback" id="executor-settings-feedback" role="status">Stop the managed watcher before changing role assignments.</p>
+            <p class="note form-feedback" id="executor-settings-feedback" role="status">Stop the Codex session and managed watcher before changing agent settings.</p>
           </form>
         </section>
         <section class="panel" aria-labelledby="guardrails-heading">

@@ -2610,6 +2610,8 @@ function executorSettingsPayload(form) {
   return {
     codex_model: form.elements.namedItem("codex_model").value.trim(),
     codex_effort: form.elements.namedItem("codex_effort").value,
+    codex_sandbox: form.elements.namedItem("codex_sandbox").value,
+    codex_approval_policy: form.elements.namedItem("codex_approval_policy").value,
     executor_adapter: strategy === "mini-swe-agent" ? "mini-swe-agent" : "claude",
     claude_model: form.elements.namedItem("claude_model").value.trim(),
     claude_effort: form.elements.namedItem("claude_effort").value,

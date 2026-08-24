@@ -175,10 +175,26 @@ def create_authenticated_app(
             executor_service.configuration().codex_effort,
         )
     )
-    codex_factory = codex_command_for_repo or web_app.default_codex_command
+    def configured_codex_command(selected_repo: Path) -> list[str]:
+        configuration = executor_service.configuration()
+        return web_app.default_codex_command(
+            selected_repo,
+            configuration.codex_sandbox,
+            configuration.codex_approval_policy,
+        )
+
+    def configured_codex_resume_command(selected_repo: Path) -> list[str]:
+        configuration = executor_service.configuration()
+        return web_app.default_codex_resume_command(
+            selected_repo,
+            configuration.codex_sandbox,
+            configuration.codex_approval_policy,
+        )
+
+    codex_factory = codex_command_for_repo or configured_codex_command
     resume_factory = codex_resume_command_for_repo
     if resume_factory is None and codex_command_for_repo is None:
-        resume_factory = web_app.default_codex_resume_command
+        resume_factory = configured_codex_resume_command
     context = web_app.ApplicationContext(
         root,
         root_dir,
@@ -1021,6 +1037,14 @@ def create_authenticated_app(
         factory = lambda selected_repo: web_app.default_watcher_command(
             selected_repo, adapter, candidate.codex_model, candidate.codex_effort
         )
+        codex_candidate_factory = lambda selected_repo: web_app.default_codex_command(
+            selected_repo, candidate.codex_sandbox, candidate.codex_approval_policy
+        )
+        resume_candidate_factory = (
+            lambda selected_repo: web_app.default_codex_resume_command(
+                selected_repo, candidate.codex_sandbox, candidate.codex_approval_policy
+            )
+        )
         previous = executor_service.configuration()
 
         def save_candidate() -> None:
@@ -1036,6 +1060,18 @@ def create_authenticated_app(
             context.reconfigure_watcher,
             factory,
             save_candidate,
+            codex_command_for_repo=(
+                codex_candidate_factory if codex_command_for_repo is None else None
+            ),
+            codex_resume_command_for_repo=(
+                (
+                    codex_resume_command_for_repo
+                    if codex_resume_command_for_repo is not None
+                    else resume_candidate_factory
+                )
+                if codex_command_for_repo is None
+                else None
+            ),
         )
         status_code = {"updated": 200, "conflict": 409, "error": 500}[outcome]
         issuer, subject = _audit_user(request)
