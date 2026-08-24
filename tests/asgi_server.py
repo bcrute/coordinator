@@ -97,6 +97,7 @@ def create_server(
     repositories_root: Path | None = None,
     watcher_command_for_repo: Callable[[Path], list[str] | None] | None = None,
     codex_command_for_repo: Callable[[Path], list[str]] | None = None,
+    codex_resume_command_for_repo: Callable[[Path], list[str]] | None = None,
 ) -> ASGITestServer:
     root = repo.resolve()
     root_dir = repositories_root.resolve() if repositories_root is not None else root.parent
@@ -137,6 +138,7 @@ def create_server(
             assets=assets,
             watcher_command_for_repo=watcher_factory,
             codex_command_for_repo=codex_factory,
+            codex_resume_command_for_repo=codex_resume_command_for_repo,
             stop_timeout=stop_timeout,
             start_grace=start_grace,
         )

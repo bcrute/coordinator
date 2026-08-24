@@ -182,7 +182,10 @@
             <p class="note" id="codex-session-detail">not recorded</p>
             <div class="controls">
               <button type="button" class="control-button" id="codex-session-start" data-kind="start" disabled>
-                Start session
+                Start new session
+              </button>
+              <button type="button" class="control-button" id="codex-session-resume" data-kind="resume" disabled>
+                Resume previous
               </button>
               <button type="button" class="control-button" id="codex-session-stop" data-kind="stop" disabled>
                 Stop session
@@ -202,7 +205,7 @@
               </button>
             </div>
             <p class="note" id="codex-session-feedback" role="status" aria-live="polite">
-              Controls start and stop the Codex terminal session for this repository.
+              Controls start, resume, and stop the Codex terminal session for this repository.
             </p>
             <section class="terminal-activity" aria-labelledby="terminal-activity-heading">
               <header class="terminal-activity-head">

@@ -64,6 +64,39 @@ class CodexSessionManagerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             CodexSessionManager(repo_path=str(ROOT), command=[])
 
+    def test_refuses_empty_resume_command(self) -> None:
+        with self.assertRaises(ValueError):
+            CodexSessionManager(
+                repo_path=str(ROOT), command=[sys.executable], resume_command=[]
+            )
+
+    def test_resume_requires_a_configured_command(self) -> None:
+        manager = self._make("pass")
+        self.assertFalse(manager.snapshot()["can_resume"])
+        with self.assertRaisesRegex(RuntimeError, "resume is not available"):
+            manager.resume()
+
+    def test_resume_launches_only_the_fixed_resume_command(self) -> None:
+        manager = self._make(
+            "print('new-command', flush=True)",
+            resume_command=[
+                sys.executable,
+                "-c",
+                f"import sys; sys.stderr.write('{MARKER}\\n'); print('resumed-command', flush=True)",
+            ],
+        )
+        self.assertTrue(manager.snapshot()["can_resume"])
+
+        manager.resume()
+
+        self.assertTrue(
+            _wait_until(lambda: "resumed-command" in manager.read()["text"])
+        )
+        snap = manager.snapshot()
+        self.assertEqual(snap["command"][0:2], [sys.executable, "-c"])
+        self.assertIn("resumed-command", snap["command"][2])
+        self.assertNotIn("new-command", manager.read()["text"])
+
     def test_tty_detection_and_output(self) -> None:
         script = (
             f"import sys, os; sys.stderr.write('{MARKER}\\n'); "

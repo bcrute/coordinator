@@ -495,6 +495,7 @@ class AuthenticatedAppTests(unittest.TestCase):
             "/api/watcher/start",
             "/api/watcher/stop",
             "/api/codex/start",
+            "/api/codex/resume",
             "/api/codex/stop",
             "/api/codex/clear",
             "/api/repository/select",
@@ -696,6 +697,33 @@ class LocalAppTests(unittest.TestCase):
 
     def headers(self, csrf: str) -> dict[str, str]:
         return {"X-CSRF-Token": csrf, "Origin": "http://127.0.0.1"}
+
+    def test_resume_endpoint_launches_the_fixed_resume_command(self) -> None:
+        settings = LocalSettings(
+            external_url="http://127.0.0.1:8765",
+            state_dir=self.base / "resume-state",
+        )
+        app = create_authenticated_app(
+            self.repo,
+            settings,
+            repositories_root=self.base,
+            codex_command_for_repo=lambda repo: [sys.executable, "-c", "pass"],
+            codex_resume_command_for_repo=lambda repo: [
+                sys.executable,
+                "-c",
+                "import time; print('resumed-fixture', flush=True); time.sleep(60)",
+            ],
+        )
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            state = client.get("/api/state").json()
+            self.assertTrue(state["codex_session"]["can_resume"])
+            response = client.post(
+                "/api/codex/resume", headers=self.headers(state["security"]["csrf_token"])
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+            self.assertEqual(payload["outcome"], "resumed")
+            self.assertTrue(payload["codex_session"]["running"])
 
     def test_local_state_setup_activity_sessions_and_diagnostics(self) -> None:
         with TestClient(self.app, base_url="http://127.0.0.1") as client:

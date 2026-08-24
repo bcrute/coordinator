@@ -18,6 +18,7 @@ var REPOSITORY_SELECT_TIMEOUT_MS = 30000;
 var CONTROL_URLS = { start: "/api/watcher/start", stop: "/api/watcher/stop" };
 var CODEX_CONTROL_URLS = {
   start: "/api/codex/start",
+  resume: "/api/codex/resume",
   stop: "/api/codex/stop",
   clear: "/api/codex/clear",
 };
@@ -1486,11 +1487,15 @@ function renderTerminalProcessActivity(session) {
 function paintCodexControls() {
   var busy = codexPendingControl !== "" || repositorySwitching;
   var startNode = el("codex-session-start");
+  var resumeNode = el("codex-session-resume");
   var stopNode = el("codex-session-stop");
   var clearNode = el("codex-terminal-clear");
   var copyNode = el("codex-terminal-copy");
   if (startNode) {
     startNode.disabled = !terminalEnabled || busy || codexSession.can_start !== true;
+  }
+  if (resumeNode) {
+    resumeNode.disabled = !terminalEnabled || busy || codexSession.can_resume !== true;
   }
   if (stopNode) {
     stopNode.disabled = !terminalEnabled || busy || codexSession.can_stop !== true;
@@ -1515,7 +1520,16 @@ function applyCodexSession(session) {
   setText("codex-session-command", commandText(session.command));
   renderTerminalProcessActivity(session);
   var attachment = record(session.attachment);
-  if (attachment.mode) {
+  if (session.state === "exited") {
+    codexTerminalWritable = false;
+    var exitStatus = Number.isInteger(session.exit_code)
+      ? " with status " + session.exit_code
+      : "";
+    codexReport(
+      "Codex exited" + exitStatus + ". Resume previous to continue this thread, or start a new session.",
+      session.exit_code === 0 ? "warn" : "bad"
+    );
+  } else if (attachment.mode) {
     codexTerminalWritable = attachment.owned_by_this_connection === true;
     codexReport(
       codexTerminalWritable
@@ -1553,6 +1567,8 @@ function codexControl(kind) {
   codexReport(
     kind === "start"
       ? "Starting the Codex session…"
+      : kind === "resume"
+        ? "Resuming the previous Codex session…"
       : kind === "stop"
         ? "Stopping the Codex session…"
         : "Clearing retained terminal output…",
@@ -1588,7 +1604,7 @@ function codexControl(kind) {
       if (Object.keys(next).length > 0) {
         applyCodexSession(next);
       }
-      if (kind === "start" && result.status === 200) {
+      if ((kind === "start" || kind === "resume") && result.status === 200) {
         if (codexTerminalReady && codexTerminal) {
           codexTerminal.reset();
         }
@@ -1623,12 +1639,18 @@ function codexClear() {
 
 function wireCodexControls() {
   var startNode = el("codex-session-start");
+  var resumeNode = el("codex-session-resume");
   var stopNode = el("codex-session-stop");
   var clearNode = el("codex-terminal-clear");
   var copyNode = el("codex-terminal-copy");
   if (startNode) {
     startNode.addEventListener("click", function () {
       codexControl("start");
+    });
+  }
+  if (resumeNode) {
+    resumeNode.addEventListener("click", function () {
+      codexControl("resume");
     });
   }
   if (stopNode) {

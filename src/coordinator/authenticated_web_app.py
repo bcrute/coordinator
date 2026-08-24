@@ -140,6 +140,7 @@ def create_authenticated_app(
     assets: Path = web_app.ASSETS,
     watcher_command_for_repo: Callable[[Path], list[str] | None] | None = None,
     codex_command_for_repo: Callable[[Path], list[str]] | None = None,
+    codex_resume_command_for_repo: Callable[[Path], list[str]] | None = None,
     oidc_client: Any | None = None,
     stop_timeout: float = web_app.STOP_TIMEOUT_SECONDS,
     start_grace: float = web_app.START_GRACE_SECONDS,
@@ -174,11 +175,15 @@ def create_authenticated_app(
         )
     )
     codex_factory = codex_command_for_repo or web_app.default_codex_command
+    resume_factory = codex_resume_command_for_repo
+    if resume_factory is None and codex_command_for_repo is None:
+        resume_factory = web_app.default_codex_resume_command
     context = web_app.ApplicationContext(
         root,
         root_dir,
         watcher_command_for_repo=watcher_factory,
         codex_command_for_repo=codex_factory,
+        codex_resume_command_for_repo=resume_factory,
         stop_timeout=stop_timeout,
         start_grace=start_grace,
     )
@@ -1570,7 +1575,7 @@ def create_authenticated_app(
                 status_code=404,
             )
         action = request.path_params["action"]
-        if action not in {"start", "stop", "clear"}:
+        if action not in {"start", "resume", "stop", "clear"}:
             return JSONResponse({"ok": False, "outcome": "not_found"}, status_code=404)
         body = await _bounded_body(request, web_app.CONTROL_BODY_BYTES)
         if isinstance(body, JSONResponse):
@@ -1587,6 +1592,9 @@ def create_authenticated_app(
                     if action == "start":
                         active.codex_session.start()
                         outcome, message = "started", "started the codex session"
+                    elif action == "resume":
+                        active.codex_session.resume()
+                        outcome, message = "resumed", "resumed the previous codex session"
                     elif action == "stop":
                         before = active.codex_session.snapshot()
                         active.codex_session.stop()
@@ -1606,6 +1614,7 @@ def create_authenticated_app(
                     outcome, message = "error", f"cannot launch codex: {error}"
                 status = {
                     "started": 200,
+                    "resumed": 200,
                     "stopped": 200,
                     "cleared": 200,
                     "conflict": 409,

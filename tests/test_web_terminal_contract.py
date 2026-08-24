@@ -50,6 +50,7 @@ class CodexEndpointTests(unittest.TestCase):
     def test_fixed_endpoint_literals_present(self):
         for literal in (
             '"/api/codex/start"',
+            '"/api/codex/resume"',
             '"/api/codex/stop"',
             '"/api/codex/clear"',
             '"/ws/terminal"',
@@ -258,6 +259,22 @@ class StartAttachmentTests(unittest.TestCase):
         self.assertIn("codexTerminal.reset()", body)
         self.assertIn("connectCodexSocket()", body)
         self.assertNotIn("OutputPolling", body)
+
+    def test_resume_control_is_fixed_and_resets_the_terminal(self):
+        html = read(WEB_DIR / "index.html")
+        self.assertIn('id="codex-session-resume"', html)
+        match = re.search(r"function codexControl\([\s\S]*?\n}\n", self.js)
+        self.assertIsNotNone(match, "codexControl function not found")
+        body = match.group(0)
+        self.assertIn('kind === "resume"', body)
+        self.assertIn("codexTerminal.reset()", body)
+
+    def test_exited_session_explains_recovery_options(self):
+        match = re.search(r"function applyCodexSession\([\s\S]*?\n}\n", self.js)
+        self.assertIsNotNone(match, "applyCodexSession function not found")
+        body = match.group(0)
+        self.assertIn('session.state === "exited"', body)
+        self.assertIn("Resume previous to continue this thread", body)
 
 
 class TeardownTests(unittest.TestCase):

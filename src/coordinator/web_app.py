@@ -66,6 +66,12 @@ def default_codex_command(root: Path) -> list[str]:
     return [executable, "-C", str(root)]
 
 
+def default_codex_resume_command(root: Path) -> list[str]:
+    """Build the fixed command which resumes the latest session for `root`."""
+    executable = shutil.which("codex") or "codex"
+    return [executable, "resume", "--last", "-C", str(root)]
+
+
 
 def is_loopback_host(host: str) -> bool:
     """Return whether a bind name is unambiguously loopback-only."""
@@ -123,19 +129,29 @@ class ApplicationContext:
         *,
         watcher_command_for_repo: Callable[[Path], list[str] | None],
         codex_command_for_repo: Callable[[Path], list[str]],
+        codex_resume_command_for_repo: Callable[[Path], list[str]] | None = None,
         stop_timeout: float = STOP_TIMEOUT_SECONDS,
         start_grace: float = START_GRACE_SECONDS,
     ) -> None:
         self.repositories_root = repositories_root
         self._watcher_command_for_repo = watcher_command_for_repo
         self._codex_command_for_repo = codex_command_for_repo
+        self._codex_resume_command_for_repo = codex_resume_command_for_repo
         self.stop_timeout = stop_timeout
         self.start_grace = start_grace
         self._lock = threading.RLock()
         self._active = RepositoryContext(
             repo,
             WatcherManager(repo, watcher_command_for_repo(repo), stop_timeout, start_grace),
-            CodexSessionManager(str(repo), codex_command_for_repo(repo)),
+            CodexSessionManager(
+                str(repo),
+                codex_command_for_repo(repo),
+                resume_command=(
+                    codex_resume_command_for_repo(repo)
+                    if codex_resume_command_for_repo is not None
+                    else None
+                ),
+            ),
         )
 
     def snapshot(self) -> RepositoryContext:
@@ -214,7 +230,15 @@ class ApplicationContext:
                     self.stop_timeout,
                     self.start_grace,
                 )
-                new_codex = CodexSessionManager(str(target), self._codex_command_for_repo(target))
+                new_codex = CodexSessionManager(
+                    str(target),
+                    self._codex_command_for_repo(target),
+                    resume_command=(
+                        self._codex_resume_command_for_repo(target)
+                        if self._codex_resume_command_for_repo is not None
+                        else None
+                    ),
+                )
             except Exception as error:  # noqa: BLE001 - report any construction failure
                 return "error", f"cannot construct managers for {raw_path}: {error}", catalog
 
@@ -347,7 +371,11 @@ def build_state(
         "codex_session": (
             codex_session.snapshot()
             if codex_session is not None
-            else CodexSessionManager(str(repo), default_codex_command(repo)).snapshot()
+            else CodexSessionManager(
+                str(repo),
+                default_codex_command(repo),
+                resume_command=default_codex_resume_command(repo),
+            ).snapshot()
         ),
     }
 

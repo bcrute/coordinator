@@ -1,11 +1,11 @@
 #!/usr/bin/env python3.14
-"""Thread-safe PTY manager for one fixed interactive Codex CLI process.
+"""Thread-safe PTY manager for one trusted interactive Codex CLI process.
 
 `CodexSessionManager` owns a single Unix pseudo-terminal bound to one fixed
-command rooted at one fixed repository path, both supplied at construction and
-never changeable afterwards. HTTP wiring is deliberately out of scope; this
-module only manages the process lifecycle, PTY I/O, and a bounded output
-buffer addressed by absolute character cursors.
+repository path. Its new-session command and optional resume command are both
+supplied at construction and never caller-selectable afterwards. HTTP wiring is
+deliberately out of scope; this module only manages the process lifecycle, PTY
+I/O, and a bounded output buffer addressed by absolute character cursors.
 """
 
 from __future__ import annotations
@@ -55,6 +55,7 @@ class CodexSessionManager:
         repo_path: str,
         command: Sequence[str],
         *,
+        resume_command: Sequence[str] | None = None,
         max_buffer_chars: int = DEFAULT_MAX_BUFFER_CHARS,
         max_write_bytes: int = DEFAULT_MAX_WRITE_BYTES,
         initial_rows: int = DEFAULT_ROWS,
@@ -63,6 +64,8 @@ class CodexSessionManager:
     ) -> None:
         if not command:
             raise ValueError("command must be a non-empty sequence")
+        if resume_command is not None and not resume_command:
+            raise ValueError("resume_command must be non-empty when provided")
         if max_buffer_chars <= 0:
             raise ValueError("max_buffer_chars must be positive")
         if max_write_bytes <= 0:
@@ -72,6 +75,10 @@ class CodexSessionManager:
 
         self._repo_path = os.path.abspath(repo_path)
         self._command = tuple(command)
+        self._resume_command = (
+            tuple(resume_command) if resume_command is not None else None
+        )
+        self._active_command = self._command
         self._max_buffer_chars = max_buffer_chars
         self._max_write_bytes = max_write_bytes
 
@@ -112,7 +119,17 @@ class CodexSessionManager:
     # -- lifecycle --------------------------------------------------------
 
     def start(self) -> None:
-        """Launch the fixed command in a new PTY, process group, and session.
+        """Launch the fixed new-session command."""
+        self._launch(self._command, "process started")
+
+    def resume(self) -> None:
+        """Launch the fixed resume command, if one was configured."""
+        if self._resume_command is None:
+            raise RuntimeError("session resume is not available")
+        self._launch(self._resume_command, "previous session resume started")
+
+    def _launch(self, command: tuple[str, ...], detail: str) -> None:
+        """Launch one construction-time command in a new PTY and process group.
 
         Refuses to start twice: if a session is already running, or the
         manager has been shut down, raises RuntimeError with a truthful
@@ -127,7 +144,7 @@ class CodexSessionManager:
             master_fd, slave_fd = pty.openpty()
             try:
                 process = subprocess.Popen(
-                    list(self._command),
+                    list(command),
                     cwd=self._repo_path,
                     stdin=slave_fd,
                     stdout=slave_fd,
@@ -147,6 +164,7 @@ class CodexSessionManager:
             self._process = process
             self._pid = process.pid
             self._session_id = secrets.token_urlsafe(12)
+            self._active_command = command
             self._master_fd = master_fd
             self._started_at = time.time()
             self._ended_at = None
@@ -157,7 +175,7 @@ class CodexSessionManager:
             self._buffer_next_cursor = 0
             self._stop_requested = False
             self._state = STATE_RUNNING
-            self._detail = "process started"
+            self._detail = detail
             self._output_changed.notify_all()
 
             self._set_winsize_locked(self._rows, self._cols)
@@ -362,14 +380,16 @@ class CodexSessionManager:
                 STATE_ERROR,
             )
             can_stop = running
+            can_resume = self._resume_command is not None and can_start
             payload = {
                 "state": state,
                 "pid": self._pid,
                 "session_id": self._session_id,
                 "running": running,
                 "can_start": can_start,
+                "can_resume": can_resume,
                 "can_stop": can_stop,
-                "command": list(self._command),
+                "command": list(self._active_command),
                 "repo_path": self._repo_path,
                 "started_at": self._started_at,
                 "ended_at": self._ended_at,
