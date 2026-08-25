@@ -2572,6 +2572,8 @@ function renderExecutorSettings(payload) {
     if (control && control.type === "checkbox") control.checked = configuration[name] === true;
     else if (control) control.value = String(configuration[name]);
   });
+  var permission = form.elements.namedItem("codex_permission_mode");
+  if (permission) permission.dataset.savedValue = permission.value;
   var strategy = configuration.executor_adapter === "mini-swe-agent"
     ? "mini-swe-agent"
     : configuration.claude_local_delegation === true ? "claude-local" : "claude";
@@ -2627,6 +2629,30 @@ function executorSettingsPayload(form) {
     mini_swe_cost_limit: Number(form.elements.namedItem("mini_swe_cost_limit").value),
     mini_swe_timeout_seconds: Number(form.elements.namedItem("mini_swe_timeout_seconds").value),
   };
+}
+
+function saveCodexPermission(form) {
+  var control = form.elements.namedItem("codex_permission_mode");
+  if (!control || control.disabled) return;
+  var selected = control.value;
+  var otherChangesPending = form.dataset.dirty === "true";
+  control.disabled = true;
+  setText("executor-settings-feedback", "Saving Codex starting permissions…");
+  apiPost("/api/executor-settings", { codex_permission_mode: selected }).then(function (result) {
+    if (result.status !== 200) {
+      throw new Error(text(result.payload.message, "save failed"));
+    }
+    control.dataset.savedValue = selected;
+    var message = text(result.payload.message, "Codex starting permissions saved.");
+    setText("executor-settings-feedback", message + (
+      otherChangesPending ? " Other role changes remain unsaved." : ""
+    ));
+  }).catch(function (error) {
+    control.value = text(control.dataset.savedValue, "ask-for-approval");
+    setText("executor-settings-feedback", "Could not save Codex permissions: " + describe(error));
+  }).finally(function () {
+    control.disabled = false;
+  });
 }
 
 function applyRoleProfile(name, form) {
@@ -3182,13 +3208,18 @@ function wireDailyDriver() {
   });
   var executorForm = el("executor-settings-form");
   if (executorForm) {
-    executorForm.addEventListener("input", function () {
+    executorForm.addEventListener("input", function (event) {
+      if (event.target && event.target.name === "codex_permission_mode") return;
       executorForm.dataset.dirty = "true";
       setText("executor-settings-feedback", "Unsaved role changes.");
     });
-    executorForm.addEventListener("change", function () {
+    executorForm.addEventListener("change", function (event) {
+      if (event.target && event.target.name === "codex_permission_mode") return;
       executorForm.dataset.dirty = "true";
       setText("executor-settings-feedback", "Unsaved role changes.");
+    });
+    executorForm.elements.namedItem("codex_permission_mode").addEventListener("change", function () {
+      saveCodexPermission(executorForm);
     });
     executorForm.elements.namedItem("execution_strategy").addEventListener("change", toggleExecutorFields);
     var effortForModel = {

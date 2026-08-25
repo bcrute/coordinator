@@ -609,6 +609,20 @@ class DashboardBrowserTests(unittest.TestCase):
                         ).input_value(),
                         "high",
                     )
+                    permission = page.locator(
+                        '#executor-settings-form select[name="codex_permission_mode"]'
+                    )
+                    permission.select_option("full-access")
+                    page.locator("#executor-settings-feedback").filter(
+                        has_text="Codex starting permissions saved"
+                    ).wait_for(timeout=10_000)
+                    self.assertEqual(
+                        page.evaluate(
+                            "async () => (await (await fetch('/api/executor-settings')).json())"
+                            ".configuration.codex_permission_mode"
+                        ),
+                        "full-access",
+                    )
                     page.locator('#preferences-form select[name="theme"]').select_option("dark")
                     page.locator("#preferences-form button").click()
                     page.locator("#preferences-feedback").filter(

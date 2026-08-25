@@ -56,7 +56,9 @@ interface with migration notes.
 
 - Codex's three-option starting-permissions preference can now be saved while a
   Codex session or executor watcher is running. A live PTY keeps its truthful
-  current command and adopts the saved mode on its next start or resume.
+  current command and adopts the saved mode on its next start or resume. The
+  permission selector saves immediately instead of depending on the role form's
+  lower-page submit button.
 - Executor dispatch now reloads the repository handoff snapshot for every turn,
   preserves CLI runtime paths, reclaims dead-PID watcher/turn locks, retries an
   interrupted `implementing` signal, and hides telemetry from earlier review rounds.
