@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "cycle_id": 1,
+  "outcome": "running",
+  "stage": "setup",
+  "summary": "Validation cycle has started.",
+  "started_at": "2026-01-01T00:00:00Z",
+  "finished_at": null,
+  "configuration": {},
+  "checks": [],
+  "findings": []
+}

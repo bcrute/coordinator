@@ -530,8 +530,10 @@ class PublicCheckoutUnitDiscoveryTests(unittest.TestCase):
             "test_executor_dispatch.py",
             "test_delegation.py",
             "test_github_ci.py",
+            "test_handoff_policy.py",
             "test_maintenance_cli.py",
             "test_test_ownership.py",
+            "test_solitaire_validation_cycle.py",
             "test_workflow_runners.py",
         }
     )

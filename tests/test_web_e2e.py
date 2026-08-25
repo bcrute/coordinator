@@ -588,7 +588,7 @@ class DashboardBrowserTests(unittest.TestCase):
                     reviewer_effort.select_option("high")
                     self.assertEqual(reviewer_effort.input_value(), "high")
                     page.locator("#executor-settings-feedback").filter(
-                        has_text="Unsaved role changes"
+                        has_text="Agent settings saved"
                     ).wait_for(timeout=10_000)
                     page.locator('[data-role-profile="local-heavy"]').click()
                     self.assertEqual(
@@ -614,7 +614,7 @@ class DashboardBrowserTests(unittest.TestCase):
                     )
                     permission.select_option("full-access")
                     page.locator("#executor-settings-feedback").filter(
-                        has_text="Codex starting permissions saved"
+                        has_text="Agent settings saved"
                     ).wait_for(timeout=10_000)
                     self.assertEqual(
                         page.evaluate(

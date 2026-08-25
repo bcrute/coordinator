@@ -58,6 +58,8 @@ REPOSITORY_SELECT_BODY_BYTES = 64 * 1024
 def default_codex_command(
     root: Path,
     permission_mode: str = "ask-for-approval",
+    model: str = "",
+    effort: str = "",
 ) -> list[str]:
     """Build the one fixed, non-configurable codex launch command for `root`.
 
@@ -66,12 +68,20 @@ def default_codex_command(
     construction time only.
     """
     executable = shutil.which("codex") or "codex"
-    return [executable, *codex_permission_arguments(permission_mode), "-C", str(root)]
+    return [
+        executable,
+        *codex_model_arguments(model, effort),
+        *codex_permission_arguments(permission_mode),
+        "-C",
+        str(root),
+    ]
 
 
 def default_codex_resume_command(
     root: Path,
     permission_mode: str = "ask-for-approval",
+    model: str = "",
+    effort: str = "",
 ) -> list[str]:
     """Build the fixed command which resumes the latest session for `root`."""
     executable = shutil.which("codex") or "codex"
@@ -79,10 +89,22 @@ def default_codex_resume_command(
         executable,
         "resume",
         "--last",
+        *codex_model_arguments(model, effort),
         *codex_permission_arguments(permission_mode),
         "-C",
         str(root),
     ]
+
+
+def codex_model_arguments(model: str, effort: str) -> list[str]:
+    """Translate persisted reviewer selections to Codex CLI arguments."""
+
+    arguments: list[str] = []
+    if model:
+        arguments.extend(("--model", model))
+    if effort:
+        arguments.extend(("-c", f'model_reasoning_effort="{effort}"'))
+    return arguments
 
 
 def codex_permission_arguments(permission_mode: str) -> list[str]:
@@ -317,32 +339,21 @@ class ApplicationContext:
         codex_command_for_repo: Callable[[Path], list[str]] | None = None,
         codex_resume_command_for_repo: Callable[[Path], list[str]] | None = None,
     ) -> tuple[str, str]:
-        """Replace future agent commands while no managed agent process is active."""
+        """Persist trusted commands now and apply them to future launches."""
 
         with self._lock:
             active = self._active
-            snapshot = active.watcher.snapshot()
-            if snapshot.get("running") or snapshot.get("state") == "stopping":
-                return (
-                    "conflict",
-                    "stop the managed watcher before changing its executor settings",
-                )
-            codex_snapshot = active.codex_session.snapshot()
-            if codex_snapshot.get("running"):
-                return (
-                    "conflict",
-                    "stop the Codex session before changing its starting permissions",
-                )
+            command = watcher_command_for_repo(active.repo)
+            if not command:
+                return "error", "could not save executor settings: watcher command is empty"
+            previous_watcher_command = list(active.watcher.command)
+            previous_codex_command = active.codex_session.command
+            previous_codex_resume = active.codex_session.resume_command
             try:
-                new_watcher = WatcherManager(
-                    active.repo,
-                    watcher_command_for_repo(active.repo),
-                    self.stop_timeout,
-                    self.start_grace,
-                )
-                new_codex = (
-                    CodexSessionManager(
-                        str(active.repo),
+                watcher_immediate = active.watcher.configure_command(command)
+                codex_immediate = True
+                if codex_command_for_repo is not None:
+                    codex_immediate = active.codex_session.configure_commands(
                         codex_command_for_repo(active.repo),
                         resume_command=(
                             codex_resume_command_for_repo(active.repo)
@@ -350,22 +361,30 @@ class ApplicationContext:
                             else None
                         ),
                     )
-                    if codex_command_for_repo is not None
-                    else active.codex_session
-                )
                 commit()
-            except Exception as error:  # noqa: BLE001 - preserve the active manager
+            except Exception as error:  # noqa: BLE001 - restore trusted commands
+                with contextlib.suppress(Exception):
+                    active.watcher.configure_command(previous_watcher_command)
+                if codex_command_for_repo is not None:
+                    with contextlib.suppress(Exception):
+                        active.codex_session.configure_commands(
+                            previous_codex_command,
+                            resume_command=previous_codex_resume,
+                        )
                 return "error", f"could not save executor settings: {error}"
             self._watcher_command_for_repo = watcher_command_for_repo
             if codex_command_for_repo is not None:
                 self._codex_command_for_repo = codex_command_for_repo
                 self._codex_resume_command_for_repo = codex_resume_command_for_repo
-            self._active = RepositoryContext(
-                active.repo,
-                new_watcher,
-                new_codex,
+            deferred = not watcher_immediate or not codex_immediate
+            return (
+                "updated",
+                (
+                    "Agent settings saved; stop and restart active sessions to apply them."
+                    if deferred
+                    else "Agent settings saved for future session starts."
+                )
             )
-            return "updated", "agent settings saved for future session starts"
 
     def reconfigure_codex_commands(
         self,

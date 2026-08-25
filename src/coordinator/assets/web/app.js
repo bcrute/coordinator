@@ -61,6 +61,9 @@ var selectedRun = null;
 var selectedRunEvents = [];
 var preferences = { browser_notifications: false, theme: "system", log_lines: 200 };
 var preferencesLoaded = false;
+var executorSettingsSaveTimer = null;
+var executorSettingsSaving = false;
+var executorSettingsSaveQueued = false;
 var executorSettingsLoaded = false;
 var roleModelCatalogs = { codex: [], claude: [] };
 var lastNotificationKey = "";
@@ -445,6 +448,7 @@ function renderReview(state) {
   setTone("review-verdict", tone(review.verdict));
   setText("review-task", text(review.task_id, "none"));
   setText("review-round", text(review.review_round, "0"));
+  setText("review-next-executor", text(review.next_executor, "none"));
   setText("review-examined-ref", text(review.examined_ref));
   fillList("review-findings", review.findings, "No findings recorded.");
   fillList("review-next", review.next_action, "No next action recorded.");
@@ -1749,6 +1753,8 @@ function usageResetShort(value) {
   if (Number.isNaN(parsed.getTime())) return "reset unknown";
   return parsed.toLocaleString([], {
     weekday: "short",
+    month: "short",
+    day: "numeric",
     hour: "numeric",
     minute: "2-digit",
   });
@@ -2403,7 +2409,7 @@ function toggleExecutorFields() {
   var form = el("executor-settings-form");
   if (!form) return;
   var strategy = form.elements.namedItem("execution_strategy").value;
-  var local = strategy !== "claude";
+  var local = strategy !== "claude" || form.elements.namedItem("primary_adapter").value === "mini-swe-agent";
   el("local-model-settings").hidden = !local;
   var supervisor = document.querySelector('.role-card[data-role="supervisor"]');
   if (supervisor) supervisor.dataset.inactive = strategy === "mini-swe-agent" ? "true" : "false";
@@ -2415,6 +2421,38 @@ function toggleExecutorFields() {
         ? "Fallback: none; a failed local turn stops for review."
         : "Fallback: Claude handles the turn directly."
   );
+  updateHandoffBudgetSummary();
+}
+
+function updateHandoffBudgetSummary() {
+  var form = el("executor-settings-form");
+  if (!form) return;
+  var strategy = form.elements.namedItem("execution_strategy").value;
+  var local = strategy === "mini-swe-agent";
+  var limit = Number(form.elements.namedItem(local ? "mini_swe_step_limit" : "claude_max_turns").value);
+  var unitCost = local ? 4 : 6;
+  if (!Number.isFinite(limit) || limit < unitCost + 2) {
+    setText("handoff-budget-summary", "The runtime limit is too small for one work unit and verification reserve.");
+    return;
+  }
+  var reserve = Math.max(2, Math.ceil(limit * 0.25));
+  var units = Math.max(1, Math.floor((limit - reserve) / unitCost));
+  setText(
+    "handoff-budget-summary",
+    "Task ceiling: " + units + " work unit" + (units === 1 ? "" : "s") +
+      "; " + reserve + " of " + limit + " " + (local ? "steps" : "turns") +
+      " reserved for verification and recovery."
+  );
+}
+
+function togglePrimaryFields() {
+  var form = el("executor-settings-form");
+  if (!form) return;
+  var selected = form.elements.namedItem("primary_adapter").value;
+  Array.prototype.forEach.call(document.querySelectorAll("[data-primary-runtime]"), function (node) {
+    node.hidden = node.dataset.primaryRuntime !== selected;
+  });
+  toggleExecutorFields();
 }
 
 function setRoleHealth(nodeId, status) {
@@ -2526,6 +2564,11 @@ function refreshRoleEfforts(form) {
     roleModelCatalogs.codex
   );
   populateEffortSelect(
+    form.elements.namedItem("primary_claude_effort"),
+    form.elements.namedItem("primary_claude_model"),
+    roleModelCatalogs.claude
+  );
+  populateEffortSelect(
     form.elements.namedItem("claude_effort"),
     form.elements.namedItem("claude_model"),
     roleModelCatalogs.claude
@@ -2553,6 +2596,7 @@ function loadRoleModelCatalogs() {
       { allowDefault: true }
     );
     var claudeModels = roleModelCatalogs.claude;
+    populateModelSelect(form.elements.namedItem("primary_claude_model"), claudeModels);
     populateModelSelect(form.elements.namedItem("claude_model"), claudeModels);
     populateModelSelect(form.elements.namedItem("claude_subagent_model"), claudeModels);
     refreshRoleEfforts(form);
@@ -2578,6 +2622,7 @@ function renderExecutorSettings(payload) {
     ? "mini-swe-agent"
     : configuration.claude_local_delegation === true ? "claude-local" : "claude";
   form.elements.namedItem("execution_strategy").value = strategy;
+  togglePrimaryFields();
   toggleExecutorFields();
   var state = el("executor-settings-state");
   var roles = record(status.roles);
@@ -2610,6 +2655,13 @@ function loadExecutorSettings() {
 function executorSettingsPayload(form) {
   var strategy = form.elements.namedItem("execution_strategy").value;
   return {
+    primary_adapter: form.elements.namedItem("primary_adapter").value,
+    primary_claude_model: form.elements.namedItem("primary_claude_model").value.trim(),
+    primary_claude_effort: form.elements.namedItem("primary_claude_effort").value,
+    primary_local_model: form.elements.namedItem("primary_local_model").value.trim(),
+    primary_local_effort: form.elements.namedItem("primary_local_effort").value,
+    primary_local_step_limit: Number(form.elements.namedItem("primary_local_step_limit").value),
+    primary_local_timeout_seconds: Number(form.elements.namedItem("primary_local_timeout_seconds").value),
     codex_model: form.elements.namedItem("codex_model").value.trim(),
     codex_effort: form.elements.namedItem("codex_effort").value,
     codex_permission_mode: form.elements.namedItem("codex_permission_mode").value,
@@ -2631,28 +2683,48 @@ function executorSettingsPayload(form) {
   };
 }
 
-function saveCodexPermission(form) {
-  var control = form.elements.namedItem("codex_permission_mode");
-  if (!control || control.disabled) return;
-  var selected = control.value;
-  var otherChangesPending = form.dataset.dirty === "true";
-  control.disabled = true;
-  setText("executor-settings-feedback", "Saving Codex starting permissions…");
-  apiPost("/api/executor-settings", { codex_permission_mode: selected }).then(function (result) {
+function persistExecutorSettings(form) {
+  if (executorSettingsSaving) {
+    executorSettingsSaveQueued = true;
+    return;
+  }
+  var strategy = form.elements.namedItem("execution_strategy").value;
+  var localModel = form.elements.namedItem("mini_swe_model").value.trim();
+  var localPrimary = form.elements.namedItem("primary_adapter").value === "mini-swe-agent";
+  var primaryLocalModel = form.elements.namedItem("primary_local_model").value.trim();
+  if (!form.checkValidity() || (strategy !== "claude" && localModel === "") || (localPrimary && primaryLocalModel === "")) {
+    setText("executor-settings-feedback", "Complete the highlighted fields to save these selections.");
+    return;
+  }
+  executorSettingsSaving = true;
+  setText("executor-settings-feedback", "Saving agent selections…");
+  apiPost("/api/executor-settings", executorSettingsPayload(form)).then(function (result) {
     if (result.status !== 200) {
       throw new Error(text(result.payload.message, "save failed"));
     }
-    control.dataset.savedValue = selected;
-    var message = text(result.payload.message, "Codex starting permissions saved.");
-    setText("executor-settings-feedback", message + (
-      otherChangesPending ? " Other role changes remain unsaved." : ""
-    ));
+    var permission = form.elements.namedItem("codex_permission_mode");
+    if (permission) permission.dataset.savedValue = permission.value;
+    form.dataset.dirty = "false";
+    setText("executor-settings-feedback", text(result.payload.message, "Agent selections saved."));
+    restartStateFeed();
   }).catch(function (error) {
-    control.value = text(control.dataset.savedValue, "ask-for-approval");
-    setText("executor-settings-feedback", "Could not save Codex permissions: " + describe(error));
+    setText("executor-settings-feedback", "Could not save agent selections: " + describe(error));
   }).finally(function () {
-    control.disabled = false;
+    executorSettingsSaving = false;
+    if (executorSettingsSaveQueued) {
+      executorSettingsSaveQueued = false;
+      scheduleExecutorSettingsSave(form, 0);
+    }
   });
+}
+
+function scheduleExecutorSettingsSave(form, delay) {
+  form.dataset.dirty = "true";
+  if (executorSettingsSaveTimer !== null) window.clearTimeout(executorSettingsSaveTimer);
+  executorSettingsSaveTimer = window.setTimeout(function () {
+    executorSettingsSaveTimer = null;
+    persistExecutorSettings(form);
+  }, typeof delay === "number" ? delay : 500);
 }
 
 function applyRoleProfile(name, form) {
@@ -3209,21 +3281,18 @@ function wireDailyDriver() {
   var executorForm = el("executor-settings-form");
   if (executorForm) {
     executorForm.addEventListener("input", function (event) {
-      if (event.target && event.target.name === "codex_permission_mode") return;
-      executorForm.dataset.dirty = "true";
-      setText("executor-settings-feedback", "Unsaved role changes.");
+      scheduleExecutorSettingsSave(executorForm);
     });
     executorForm.addEventListener("change", function (event) {
-      if (event.target && event.target.name === "codex_permission_mode") return;
-      executorForm.dataset.dirty = "true";
-      setText("executor-settings-feedback", "Unsaved role changes.");
-    });
-    executorForm.elements.namedItem("codex_permission_mode").addEventListener("change", function () {
-      saveCodexPermission(executorForm);
+      scheduleExecutorSettingsSave(executorForm, 100);
     });
     executorForm.elements.namedItem("execution_strategy").addEventListener("change", toggleExecutorFields);
+    executorForm.elements.namedItem("primary_adapter").addEventListener("change", togglePrimaryFields);
+    executorForm.elements.namedItem("mini_swe_step_limit").addEventListener("input", updateHandoffBudgetSummary);
+    executorForm.elements.namedItem("claude_max_turns").addEventListener("input", updateHandoffBudgetSummary);
     var effortForModel = {
       codex_model: "codex_effort",
+      primary_claude_model: "primary_claude_effort",
       claude_model: "claude_effort",
       claude_subagent_model: "claude_subagent_effort",
     };
@@ -3236,22 +3305,12 @@ function wireDailyDriver() {
     Array.prototype.forEach.call(document.querySelectorAll("[data-role-profile]"), function (button) {
       button.addEventListener("click", function () {
         applyRoleProfile(button.dataset.roleProfile, executorForm);
+        scheduleExecutorSettingsSave(executorForm, 0);
       });
     });
     executorForm.addEventListener("submit", function (event) {
       event.preventDefault();
-      setText("executor-settings-feedback", "Saving executor settings…");
-      apiPost("/api/executor-settings", executorSettingsPayload(executorForm)).then(function (result) {
-        if (result.status !== 200) {
-          throw new Error(text(result.payload.message, "save failed"));
-        }
-        renderExecutorSettings(result.payload);
-        executorForm.dataset.dirty = "false";
-        setText("executor-settings-feedback", text(result.payload.message, "Executor settings saved."));
-        restartStateFeed();
-      }).catch(function (error) {
-        setText("executor-settings-feedback", "Could not save executor settings: " + describe(error));
-      });
+      scheduleExecutorSettingsSave(executorForm, 0);
     });
   }
   var discover = el("executor-discover");
@@ -3270,7 +3329,14 @@ function wireDailyDriver() {
           return { id: text(model, ""), label: text(model, ""), description: "Endpoint model" };
         })
       );
+      populateModelSelect(
+        executorForm.elements.namedItem("primary_local_model"),
+        models.map(function (model) {
+          return { id: text(model, ""), label: text(model, ""), description: "Endpoint model" };
+        })
+      );
       if (models.length === 1) executorForm.elements.namedItem("mini_swe_model").value = models[0];
+      if (models.length === 1) executorForm.elements.namedItem("primary_local_model").value = models[0];
       setText("executor-settings-feedback", "Discovered " + models.length + " model" + (models.length === 1 ? "." : "s."));
     }).catch(function (error) {
       setText("executor-settings-feedback", "Could not discover models: " + describe(error));

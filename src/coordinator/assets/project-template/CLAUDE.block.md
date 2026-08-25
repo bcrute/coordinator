@@ -24,5 +24,5 @@ concrete missing decision requires them.
   unless the active assignment explicitly authorizes it.
 - Stop on a missing owner decision, credential, destructive action, or material
   scope expansion and record the exact blocker.
-- Never set the overall goal to `done`; that signal belongs to Codex after review.
+- Never set the overall goal to `done`; that signal belongs to the configured primary after review.
 <!-- coordinate-claude-work:end -->

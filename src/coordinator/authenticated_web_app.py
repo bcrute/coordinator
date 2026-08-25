@@ -173,6 +173,18 @@ def create_authenticated_app(
             executor_service.adapter(),
             executor_service.configuration().codex_model,
             executor_service.configuration().codex_effort,
+            executor_service.configuration().primary_adapter,
+            executor_service.configuration().primary_claude_model,
+            executor_service.configuration().primary_claude_effort,
+            executor_service.configuration().claude_max_turns,
+            executor_service.configuration().primary_local_model,
+            executor_service.configuration().primary_local_effort,
+            executor_service.configuration().primary_local_step_limit,
+            executor_service.configuration().primary_local_timeout_seconds,
+            executor_service.configuration().mini_swe_api_base,
+            executor_service.configuration().mini_swe_provider,
+            executor_service.configuration().mini_swe_api_key_env,
+            executor_service.configuration().mini_swe_cost_limit,
         )
     )
     def configured_codex_command(selected_repo: Path) -> list[str]:
@@ -180,6 +192,8 @@ def create_authenticated_app(
         return web_app.default_codex_command(
             selected_repo,
             configuration.codex_permission_mode,
+            configuration.codex_model,
+            configuration.codex_effort,
         )
 
     def configured_codex_resume_command(selected_repo: Path) -> list[str]:
@@ -187,6 +201,8 @@ def create_authenticated_app(
         return web_app.default_codex_resume_command(
             selected_repo,
             configuration.codex_permission_mode,
+            configuration.codex_model,
+            configuration.codex_effort,
         )
 
     codex_factory = codex_command_for_repo or configured_codex_command
@@ -1033,14 +1049,35 @@ def create_authenticated_app(
             )
 
         factory = lambda selected_repo: web_app.default_watcher_command(
-            selected_repo, adapter, candidate.codex_model, candidate.codex_effort
+            selected_repo,
+            adapter,
+            candidate.codex_model,
+            candidate.codex_effort,
+            candidate.primary_adapter,
+            candidate.primary_claude_model,
+            candidate.primary_claude_effort,
+            candidate.claude_max_turns,
+            candidate.primary_local_model,
+            candidate.primary_local_effort,
+            candidate.primary_local_step_limit,
+            candidate.primary_local_timeout_seconds,
+            candidate.mini_swe_api_base,
+            candidate.mini_swe_provider,
+            candidate.mini_swe_api_key_env,
+            candidate.mini_swe_cost_limit,
         )
         codex_candidate_factory = lambda selected_repo: web_app.default_codex_command(
-            selected_repo, candidate.codex_permission_mode
+            selected_repo,
+            candidate.codex_permission_mode,
+            candidate.codex_model,
+            candidate.codex_effort,
         )
         resume_candidate_factory = (
             lambda selected_repo: web_app.default_codex_resume_command(
-                selected_repo, candidate.codex_permission_mode
+                selected_repo,
+                candidate.codex_permission_mode,
+                candidate.codex_model,
+                candidate.codex_effort,
             )
         )
         previous = executor_service.configuration()

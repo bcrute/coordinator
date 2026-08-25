@@ -99,6 +99,13 @@ def validate_api_base(value: object, *, required: bool = False) -> str:
 class ExecutorConfiguration:
     """The non-secret settings required to construct either built-in adapter."""
 
+    primary_adapter: str = "codex"
+    primary_claude_model: str = "opus"
+    primary_claude_effort: str = ""
+    primary_local_model: str = ""
+    primary_local_effort: str = ""
+    primary_local_step_limit: int = 24
+    primary_local_timeout_seconds: int = 900
     codex_model: str = ""
     codex_effort: str = ""
     codex_permission_mode: str = "ask-for-approval"
@@ -179,6 +186,9 @@ class ExecutorConfiguration:
         selected = _text(merged["executor_adapter"], "executor_adapter", required=True)
         if selected not in {"claude", "mini-swe-agent"}:
             raise ValueError("executor_adapter must be claude or mini-swe-agent")
+        primary = _text(merged["primary_adapter"], "primary_adapter", required=True)
+        if primary not in {"codex", "claude", "mini-swe-agent"}:
+            raise ValueError("primary_adapter must be codex, claude, or mini-swe-agent")
         provider = _text(merged["mini_swe_provider"], "mini_swe_provider", required=True)
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", provider):
             raise ValueError("mini_swe_provider has invalid characters")
@@ -190,6 +200,11 @@ class ExecutorConfiguration:
             "mini_swe_model",
             required=selected == "mini-swe-agent" or bool(merged["claude_local_delegation"]),
         )
+        primary_local_model = _text(
+            merged["primary_local_model"],
+            "primary_local_model",
+            required=primary == "mini-swe-agent",
+        )
         codex_permission_mode = _text(
             merged["codex_permission_mode"], "codex_permission_mode", required=True
         )
@@ -198,6 +213,28 @@ class ExecutorConfiguration:
                 "codex_permission_mode must be ask-for-approval, approve-for-me, or full-access"
             )
         return cls(
+            primary_adapter=primary,
+            primary_claude_model=_text(
+                merged["primary_claude_model"],
+                "primary_claude_model",
+                required=primary == "claude",
+            ),
+            primary_claude_effort=_effort(
+                merged["primary_claude_effort"], "primary_claude_effort"
+            ),
+            primary_local_model=primary_local_model,
+            primary_local_effort=_effort(
+                merged["primary_local_effort"], "primary_local_effort"
+            ),
+            primary_local_step_limit=_integer(
+                merged["primary_local_step_limit"], "primary_local_step_limit", 6, 200
+            ),
+            primary_local_timeout_seconds=_integer(
+                merged["primary_local_timeout_seconds"],
+                "primary_local_timeout_seconds",
+                10,
+                86_400,
+            ),
             codex_model=_text(merged["codex_model"], "codex_model"),
             codex_effort=_effort(merged["codex_effort"], "codex_effort", allow_ultra=True),
             codex_permission_mode=codex_permission_mode,
@@ -213,7 +250,7 @@ class ExecutorConfiguration:
                 merged["claude_subagent_effort"], "claude_subagent_effort"
             ),
             claude_max_turns=_integer(
-                merged["claude_max_turns"], "claude_max_turns", 1, 200
+                merged["claude_max_turns"], "claude_max_turns", 8, 200
             ),
             claude_local_delegation=_boolean(
                 merged["claude_local_delegation"], "claude_local_delegation"
@@ -224,7 +261,7 @@ class ExecutorConfiguration:
             mini_swe_provider=provider,
             mini_swe_api_key_env=key_env,
             mini_swe_step_limit=_integer(
-                merged["mini_swe_step_limit"], "mini_swe_step_limit", 1, 200
+                merged["mini_swe_step_limit"], "mini_swe_step_limit", 6, 200
             ),
             mini_swe_cost_limit=_number(
                 merged["mini_swe_cost_limit"], "mini_swe_cost_limit", 0, 1_000_000
@@ -429,11 +466,38 @@ class ExecutorSettingsService:
                 "load_warning": self.load_warning,
                 "roles": {
                     "reviewer": {
-                        "adapter": "codex-cli",
-                        "display_name": "Codex CLI",
-                        "model": configuration.codex_model or "CLI default",
-                        "effort": configuration.codex_effort or "model default",
-                        "executable_available": resolve_executable_name("codex") is not None,
+                        "adapter": (
+                            f"{configuration.primary_adapter}-cli"
+                            if configuration.primary_adapter in {"codex", "claude"}
+                            else "mini-swe-agent"
+                        ),
+                        "display_name": (
+                            "Codex CLI"
+                            if configuration.primary_adapter == "codex"
+                            else "Claude Code"
+                            if configuration.primary_adapter == "claude"
+                            else "Local / API via mini-swe-agent"
+                        ),
+                        "model": (
+                            configuration.codex_model or "CLI default"
+                            if configuration.primary_adapter == "codex"
+                            else configuration.primary_claude_model
+                            if configuration.primary_adapter == "claude"
+                            else configuration.primary_local_model
+                        ),
+                        "effort": (
+                            configuration.codex_effort or "model default"
+                            if configuration.primary_adapter == "codex"
+                            else configuration.primary_claude_effort or "model default"
+                            if configuration.primary_adapter == "claude"
+                            else configuration.primary_local_effort or "endpoint default"
+                        ),
+                        "executable_available": resolve_executable_name(
+                            "mini"
+                            if configuration.primary_adapter == "mini-swe-agent"
+                            else configuration.primary_adapter
+                        )
+                        is not None,
                     },
                     "supervisor": {
                         "adapter": "claude-cli",

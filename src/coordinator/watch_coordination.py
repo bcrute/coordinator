@@ -29,6 +29,7 @@ from .executor_adapters import (
 )
 from .executor_adapters import resolve_executable as resolve_executor_executable
 from .executor_settings import ExecutorConfiguration, load_project_executor_settings
+from .handoff_policy import load_handoff_configuration, validate_handoff_task
 
 
 ACTIVE_TASK_STATES = {"ready", "changes_requested"}
@@ -152,8 +153,35 @@ def agent_command(
         str(args.repo),
         "--codex-command",
         args.codex_command,
+        "--primary-adapter",
+        args.primary_adapter,
+        "--claude-command",
+        args.claude_command,
+        "--claude-model",
+        args.primary_claude_model,
+        "--claude-max-turns",
+        str(args.primary_claude_max_turns),
+        "--mini-command",
+        args.mini_swe_command,
+        "--primary-local-model",
+        args.primary_local_model,
+        "--primary-local-step-limit",
+        str(args.primary_local_step_limit),
+        "--primary-local-timeout-seconds",
+        str(args.primary_local_timeout_seconds),
+        "--local-provider",
+        args.mini_swe_provider,
+        "--local-api-key-env",
+        args.mini_swe_api_key_env,
+        "--local-cost-limit",
+        str(args.mini_swe_cost_limit),
     ] + (["--model", args.codex_model] if args.codex_model else []) + (
         ["--effort", args.codex_effort] if args.codex_effort else []
+    ) + (["--claude-effort", args.primary_claude_effort] if args.primary_claude_effort else []) + (
+        ["--primary-local-effort", args.primary_local_effort]
+        if args.primary_local_effort else []
+    ) + (["--local-api-base", args.mini_swe_api_base] if args.mini_swe_api_base else []) + (
+        ["--mini-config", str(args.mini_swe_config)] if args.mini_swe_config else []
     )
 
 
@@ -213,8 +241,16 @@ def watch(args: argparse.Namespace) -> int:
     if not (coordination / "README.md").is_file():
         print(f"error: coordination workflow is missing from {args.repo}", file=sys.stderr)
         return 2
-    if args.role in {"codex", "both"} and shutil.which(args.codex_command) is None:
-        print(f"error: Codex command not found: {args.codex_command}", file=sys.stderr)
+    primary_command = (
+        args.codex_command
+        if args.primary_adapter == "codex"
+        else args.claude_command
+        if args.primary_adapter == "claude"
+        else args.mini_swe_command
+    )
+    if args.role in {"codex", "both"} and shutil.which(primary_command) is None:
+        command = primary_command
+        print(f"error: primary command not found: {command}", file=sys.stderr)
         return 127
 
     runtime = coordination / "runtime"
@@ -284,11 +320,20 @@ def watch(args: argparse.Namespace) -> int:
             selected_executor = executor
             if action == "executor":
                 try:
+                    project_configuration = load_handoff_configuration(
+                        args.repo,
+                        ExecutorConfiguration.from_adapter(executor),
+                    )
+                    validate_handoff_task(
+                        read(args.repo / ".coordination" / "planner" / "current-task.md"),
+                        project_configuration,
+                        state.task_executor or "configured",
+                    )
                     selected_executor = task_executor(
                         args.repo, state.task_executor, executor
                     )
                 except ValueError as error:
-                    failed_detail = f"cannot resolve task executor: {error}"
+                    failed_detail = f"cannot launch executor handoff: {error}"
                     write_status(args.repo, args.role, state, "error", failed_detail)
                     print(f"Coordination state error: {failed_detail}", file=sys.stderr)
                     return 3
@@ -390,6 +435,26 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--claude-command", default="claude")
     parser.add_argument("--codex-command", default="codex")
+    parser.add_argument(
+        "--primary-adapter",
+        choices=("codex", "claude", "mini-swe-agent"),
+        default="codex",
+    )
+    parser.add_argument("--primary-claude-model", default="opus")
+    parser.add_argument(
+        "--primary-claude-effort",
+        choices=("low", "medium", "high", "xhigh", "max"),
+        default="",
+    )
+    parser.add_argument("--primary-claude-max-turns", type=int, default=40)
+    parser.add_argument("--primary-local-model", default="")
+    parser.add_argument(
+        "--primary-local-effort",
+        choices=("low", "medium", "high", "xhigh", "max"),
+        default="",
+    )
+    parser.add_argument("--primary-local-step-limit", type=int, default=24)
+    parser.add_argument("--primary-local-timeout-seconds", type=int, default=900)
     parser.add_argument("--codex-model", default="")
     parser.add_argument(
         "--codex-effort",
@@ -444,6 +509,12 @@ def parse_args() -> argparse.Namespace:
         parser.error("--interval must be positive")
     if args.claude_max_turns <= 0:
         parser.error("--claude-max-turns must be positive")
+    if args.primary_claude_max_turns <= 0:
+        parser.error("--primary-claude-max-turns must be positive")
+    if args.primary_local_step_limit <= 0:
+        parser.error("--primary-local-step-limit must be positive")
+    if args.primary_local_timeout_seconds <= 0:
+        parser.error("--primary-local-timeout-seconds must be positive")
     if args.mini_swe_step_limit <= 0:
         parser.error("--mini-swe-step-limit must be positive")
     if args.mini_swe_cost_limit < 0:

@@ -25,6 +25,7 @@ TEST_OWNERS: dict[str, tuple[str, ...]] = {
     "executor_adapters": ("test_executor_adapters.py",),
     "executor_settings": ("test_executor_settings.py",),
     "github_ci": ("test_github_ci.py", "test_authenticated_web_app.py"),
+    "handoff_policy": ("test_handoff_policy.py",),
     "init_project": ("test_coordinator_cli.py", "test_workflow.py"),
     "maintenance": ("test_maintenance_cli.py",),
     "operational_store": ("test_operational_store.py",),

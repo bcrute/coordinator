@@ -1,12 +1,12 @@
 # Coordination workflow
 
-This directory is the durable mailbox between the owner, Codex planner/reviewer,
+This directory is the durable mailbox between the owner, the configured primary planner/reviewer,
 and the configured implementation executor. It is repository state, not a chat transcript.
 
 ## Roles and ownership
 
 - Owner: product decisions, authority, and scope changes.
-- Codex/ChatGPT: `.coordination/planner/` and `.coordination/reviews/`.
+- Configured primary: `.coordination/planner/` and `.coordination/reviews/`.
 - Configured executor: product files. Its Coordinator adapter may write
   `.coordination/coder/` on the runtime's behalf.
 
@@ -16,13 +16,13 @@ Repository-level `AGENTS.md` and `CLAUDE.md` remain binding.
 ## Live files
 
 - `PROJECT.md`: durable facts, commands, boundaries, and decisions.
-- `planner/goal.md`: Codex's overall objective and the durable `done` signal.
+- `planner/goal.md`: the primary's overall objective and the durable `done` signal.
 - `planner/current-task.md`: the current executor-sized subgoal and review round.
 - `coder/status.md`: the cross-system implementation signal and an optional
   concise current activity; it does not mirror a provider's native task list.
 - `coder/latest-report.md`: the executor's most recent handoff.
-- `reviews/latest.md`: Codex's verdict on that handoff.
-- `reviews/completion.md`: Codex's user-facing overall-goal result.
+- `reviews/latest.md`: the primary's verdict on that handoff.
+- `reviews/completion.md`: the primary's user-facing overall-goal result.
 - `runtime/executor-settings.json`: ignored, non-secret projection of the app's
   selected executor and model settings for project-local handoff commands.
 
@@ -32,23 +32,39 @@ Overall goal: `idle -> active -> done | blocked`
 
 Each subgoal: `ready -> implementing -> review -> accepted`
 
-Codex may return `review -> changes_requested -> implementing` while retaining the
+The primary may return `review -> changes_requested -> implementing` while retaining the
 same task ID. Either agent may record `blocked` when progress needs owner authority
 or a missing external capability.
 
-Every executor invocation is one implementation handoff. Codex reviews its complete
+Every executor invocation is one implementation handoff. The primary reviews its complete
 result, then requests corrections, assigns the next subgoal, or sets the overall
 goal to `done`. A watcher treats those file states as signals; it never invents a
 task or a verdict itself.
 
+Every runnable task records an `Executor`. `configured` resolves the repository's
+saved default; `claude` and `mini-swe-agent` are one-handoff overrides. When a
+review requests another handoff, its machine-readable `Next executor` must match
+the task's `Executor`; a route change written only in prose is rejected.
+
 Project agents never open Coordinator's global session, audit, or usage databases.
 The handoff dispatcher reads only the project-local executor settings projection.
+
+## Hard handoff sizing
+
+Every runnable task must contain `## In scope`, `## Work units`, and
+`## Acceptance criteria`. Work units are unchecked checklist items with exactly
+one item per in-scope bullet. Coordinator derives the maximum count from the
+selected executor's persisted step/turn limit, reserves 25 percent for
+verification and recovery, and rejects an oversized handoff before starting a
+model process. The primary splits remaining work into later task IDs; owners set
+the runtime limit once rather than resizing it for each task.
 
 ## Watchers
 
 The executor-side watcher launches the configured runtime only for `ready` or
 `changes_requested` subgoals and exits when `planner/goal.md` says `done` or
-`blocked`. The Codex-side watcher launches a review only when executor status says
+`blocked`. The primary-side watcher (with `codex` retained as a CLI compatibility
+role name) launches a review only when executor status says
 `review` or `blocked`. They may run as separate processes, or one `both` watcher
 may relay both sides. Runtime locks and status JSON live under `runtime/` and are
 not committed.
@@ -63,7 +79,7 @@ stops the watcher instead of retrying or waiting indefinitely.
 
 With the Claude adapter, the automatic watcher supplies only the active task packet to
 an Opus lead and lets Claude Code manage native Sonnet subagents. Native agent teams require an
-interactive session; use `start_claude_team.py` alongside a Codex-only watcher
+interactive session; use `start_claude_team.py` alongside a primary-only watcher
 rather than recreating Claude's team task list or mailbox here.
 
 With the mini-swe-agent adapter, Coordinator runs one noninteractive, step- and

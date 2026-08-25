@@ -108,6 +108,12 @@ class RouteAndHashTests(unittest.TestCase):
         self.assertIn('addEventListener("hashchange", applyRoute)', body)
         self.assertIn("applyRoute()", body)
 
+    def test_review_panel_displays_structured_next_executor(self):
+        self.assertIn('id="review-next-executor"', self.html)
+        renderer = re.search(r"function renderReview\(state\) \{[\s\S]*?\n\}", self.js)
+        self.assertIsNotNone(renderer)
+        self.assertIn('review.next_executor', renderer.group(0))
+
 
 class ProviderUsageHeaderTests(unittest.TestCase):
     def setUp(self):
@@ -156,6 +162,14 @@ class ProviderUsageHeaderTests(unittest.TestCase):
         self.assertIn('velocity.className = "usage-window-velocity"', self.js)
         self.assertIn("rolling_velocity", self.js)
         self.assertIn("Projected / pace", self.html)
+
+    def test_compact_reset_label_includes_calendar_date(self):
+        formatter = re.search(
+            r"function usageResetShort\(value\) \{[\s\S]*?\n\}", self.js
+        )
+        self.assertIsNotNone(formatter)
+        self.assertIn('month: "short"', formatter.group(0))
+        self.assertIn('day: "numeric"', formatter.group(0))
 
     def test_stale_watcher_records_are_hidden_from_the_dashboard(self):
         renderer = re.search(r"function renderWatchers\(state\) \{[\s\S]*?\n\}", self.js)
@@ -257,18 +271,31 @@ class DelegationViewTests(unittest.TestCase):
         self.assertIn('data-role="supervisor"', self.html)
         self.assertIn('data-role="executor"', self.html)
         self.assertNotIn('disabled aria-label="Reviewer runtime"', self.html)
-        self.assertIn('class="role-editable">Reviewer model', self.html)
-        self.assertIn('Reviewer model<select name="codex_model"', self.html)
-        self.assertIn('Reviewer effort<select name="codex_effort"', self.html)
-        self.assertIn("Starting permissions (saves immediately)", self.html)
+        self.assertIn('Primary runtime<select name="primary_adapter"', self.html)
+        self.assertIn('value="codex">Codex CLI', self.html)
+        self.assertIn('value="claude">Claude Code', self.html)
+        self.assertIn('value="mini-swe-agent">Local / API via mini-swe-agent', self.html)
+        self.assertIn('Primary model<select name="codex_model"', self.html)
+        self.assertIn('Primary effort<select name="codex_effort"', self.html)
+        self.assertIn('select name="primary_claude_model"', self.html)
+        self.assertIn('select name="primary_claude_effort"', self.html)
+        self.assertIn('select name="primary_local_model"', self.html)
+        self.assertIn('select name="primary_local_effort"', self.html)
+        self.assertIn('input name="primary_local_step_limit"', self.html)
+        self.assertIn("Starting permissions", self.html)
         self.assertIn('Supervisor effort<select name="claude_effort"', self.html)
         self.assertIn('Native subagent effort<select name="claude_subagent_effort"', self.html)
         self.assertIn('Reasoning effort<select name="mini_swe_effort"', self.html)
+        self.assertIn('id="handoff-budget-summary"', self.html)
+        self.assertIn("function updateHandoffBudgetSummary", self.js)
+        self.assertIn('" reserved for verification and recovery."', self.js)
         self.assertNotIn('input name="codex_model"', self.html)
         self.assertIn('/api/executor-settings/models?source=codex', self.js)
-        self.assertIn("Unsaved role changes.", self.js)
-        self.assertIn("function saveCodexPermission", self.js)
-        self.assertIn('{ codex_permission_mode: selected }', self.js)
+        self.assertNotIn("Unsaved role changes.", self.js)
+        self.assertNotIn("function saveCodexPermission", self.js)
+        self.assertIn('scheduleExecutorSettingsSave(executorForm', self.js)
+        self.assertIn('persistExecutorSettings(form)', self.js)
+        self.assertIn('Selections save automatically', self.html)
         self.assertIn("strategy === \"claude-local\"", self.js)
         self.assertIn('id="delegations"', self.html)
         self.assertIn("function renderDelegations", self.js)

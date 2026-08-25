@@ -106,6 +106,18 @@ class ExecutorSettingsUnitTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown Codex permission mode"):
             default_codex_command(repo, "invented")
 
+    def test_codex_model_and_effort_are_applied_to_new_and_resumed_sessions(self) -> None:
+        repo = Path("/tmp/project")
+        for command in (
+            default_codex_command(
+                repo, "full-access", "gpt-5.6-sol", "max"
+            ),
+            default_codex_resume_command(repo, "full-access", "gpt-5.6-sol", "max"),
+        ):
+            self.assertIn("--model", command)
+            self.assertIn("gpt-5.6-sol", command)
+            self.assertIn('model_reasoning_effort="max"', command)
+
     def test_project_snapshot_is_bounded_non_secret_and_atomically_replaceable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
@@ -192,13 +204,50 @@ class ExecutorSettingsUnitTests(unittest.TestCase):
             ExecutorConfiguration.from_mapping(
                 mini_payload(mini_swe_api_base="http://user:secret@host/v1")
             )
-        with self.assertRaisesRegex(ValueError, "1 to 200"):
+        with self.assertRaisesRegex(ValueError, "6 to 200"):
             ExecutorConfiguration.from_mapping(mini_payload(mini_swe_step_limit=0))
         with self.assertRaisesRegex(ValueError, "codex_effort"):
             ExecutorConfiguration.from_mapping(mini_payload(codex_effort="unbounded"))
         with self.assertRaisesRegex(ValueError, "codex_permission_mode"):
             ExecutorConfiguration.from_mapping(
                 mini_payload(codex_permission_mode="sometimes")
+            )
+        with self.assertRaisesRegex(ValueError, "primary_adapter"):
+            ExecutorConfiguration.from_mapping(mini_payload(primary_adapter="invented"))
+
+    def test_primary_runtime_can_be_claude_without_changing_the_executor(self) -> None:
+        configuration = ExecutorConfiguration.from_mapping(
+            mini_payload(
+                primary_adapter="claude",
+                primary_claude_model="sonnet",
+                primary_claude_effort="high",
+            )
+        )
+        self.assertEqual(configuration.primary_adapter, "claude")
+        self.assertEqual(configuration.primary_claude_model, "sonnet")
+        self.assertEqual(configuration.primary_claude_effort, "high")
+        self.assertEqual(configuration.executor_adapter, "mini-swe-agent")
+
+    def test_local_api_model_can_own_the_primary_role_independently(self) -> None:
+        configuration = ExecutorConfiguration.from_mapping(
+            mini_payload(
+                primary_adapter="mini-swe-agent",
+                primary_local_model="Qwen/Qwen3.8-27B",
+                primary_local_effort="high",
+                primary_local_step_limit=36,
+                primary_local_timeout_seconds=1200,
+                executor_adapter="claude",
+            )
+        )
+        self.assertEqual(configuration.primary_adapter, "mini-swe-agent")
+        self.assertEqual(configuration.primary_local_model, "Qwen/Qwen3.8-27B")
+        self.assertEqual(configuration.primary_local_effort, "high")
+        self.assertEqual(configuration.primary_local_step_limit, 36)
+        self.assertEqual(configuration.executor_adapter, "claude")
+
+        with self.assertRaisesRegex(ValueError, "primary_local_model"):
+            ExecutorConfiguration.from_mapping(
+                mini_payload(primary_adapter="mini-swe-agent", primary_local_model="")
             )
 
     def test_legacy_split_permission_settings_migrate_to_menu_presets(self) -> None:
@@ -408,6 +457,78 @@ class ExecutorSettingsAPITests(unittest.TestCase):
             preferences = client.get("/api/preferences").json()["preferences"]
             self.assertNotIn(EXECUTOR_PREFERENCE_KEY, preferences)
 
+    def test_primary_adapter_selection_persists_and_rebinds_the_next_watcher(self) -> None:
+        (self.repo / ".coordination/runtime").mkdir(parents=True)
+        (self.repo / ".coordination/README.md").write_text(
+            "# Coordination\n", encoding="utf-8"
+        )
+        app = self.app()
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            csrf = client.get("/api/state").json()["security"]["csrf_token"]
+            response = client.post(
+                "/api/executor-settings",
+                json=mini_payload(
+                    primary_adapter="claude",
+                    primary_claude_model="sonnet",
+                    primary_claude_effort="high",
+                ),
+                headers=self.headers(csrf),
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            reviewer = response.json()["status"]["roles"]["reviewer"]
+            self.assertEqual(reviewer["adapter"], "claude-cli")
+            self.assertEqual(reviewer["model"], "sonnet")
+            command = app.state.context.watcher.command
+            self.assertEqual(command[command.index("--role") + 1], "both")
+            self.assertEqual(command[command.index("--primary-adapter") + 1], "claude")
+            self.assertEqual(
+                command[command.index("--primary-claude-model") + 1], "sonnet"
+            )
+
+        restarted = self.app()
+        with TestClient(restarted, base_url="http://127.0.0.1") as client:
+            configuration = client.get("/api/executor-settings").json()["configuration"]
+            self.assertEqual(configuration["primary_adapter"], "claude")
+            self.assertEqual(configuration["primary_claude_effort"], "high")
+
+    def test_local_primary_selection_persists_and_rebinds_the_next_watcher(self) -> None:
+        (self.repo / ".coordination/runtime").mkdir(parents=True)
+        (self.repo / ".coordination/README.md").write_text(
+            "# Coordination\n", encoding="utf-8"
+        )
+        app = self.app()
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            csrf = client.get("/api/state").json()["security"]["csrf_token"]
+            response = client.post(
+                "/api/executor-settings",
+                json=mini_payload(
+                    primary_adapter="mini-swe-agent",
+                    primary_local_model="Qwen/Qwen3.8-27B",
+                    primary_local_effort="high",
+                    primary_local_step_limit=36,
+                    primary_local_timeout_seconds=1200,
+                    executor_adapter="claude",
+                ),
+                headers=self.headers(csrf),
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            reviewer = response.json()["status"]["roles"]["reviewer"]
+            self.assertEqual(reviewer["adapter"], "mini-swe-agent")
+            self.assertEqual(reviewer["model"], "Qwen/Qwen3.8-27B")
+            command = app.state.context.watcher.command
+            self.assertEqual(command[command.index("--role") + 1], "both")
+            self.assertEqual(
+                command[command.index("--primary-local-model") + 1],
+                "Qwen/Qwen3.8-27B",
+            )
+            self.assertIn("http://127.0.0.1:8000/v1", command)
+
+        restarted = self.app()
+        with TestClient(restarted, base_url="http://127.0.0.1") as client:
+            configuration = client.get("/api/executor-settings").json()["configuration"]
+            self.assertEqual(configuration["primary_adapter"], "mini-swe-agent")
+            self.assertEqual(configuration["primary_local_step_limit"], 36)
+
     def test_saved_permissions_rebind_new_and_resumed_codex_sessions(self) -> None:
         app = create_authenticated_app(
             self.repo,
@@ -426,11 +547,13 @@ class ExecutorSettingsAPITests(unittest.TestCase):
             session = app.state.context.codex_session
             self.assertEqual(
                 list(session.command),
-                default_codex_command(self.repo, "full-access"),
+                default_codex_command(self.repo, "full-access", "gpt-5.6-sol", "max"),
             )
             self.assertEqual(
                 list(session.resume_command),
-                default_codex_resume_command(self.repo, "full-access"),
+                default_codex_resume_command(
+                    self.repo, "full-access", "gpt-5.6-sol", "max"
+                ),
             )
 
     def test_permission_only_save_succeeds_during_a_running_codex_session(self) -> None:
@@ -439,11 +562,35 @@ class ExecutorSettingsAPITests(unittest.TestCase):
             "# Coordination\n", encoding="utf-8"
         )
 
-        def command(repo: Path, mode: str = "ask-for-approval") -> list[str]:
-            return [sys.executable, "-c", "import time; time.sleep(60)", mode]
+        def command(
+            repo: Path,
+            mode: str = "ask-for-approval",
+            model: str = "",
+            effort: str = "",
+        ) -> list[str]:
+            return [
+                sys.executable,
+                "-c",
+                "import time; time.sleep(60)",
+                mode,
+                model,
+                effort,
+            ]
 
-        def resume(repo: Path, mode: str = "ask-for-approval") -> list[str]:
-            return [sys.executable, "-c", "import time; time.sleep(60)", f"resume-{mode}"]
+        def resume(
+            repo: Path,
+            mode: str = "ask-for-approval",
+            model: str = "",
+            effort: str = "",
+        ) -> list[str]:
+            return [
+                sys.executable,
+                "-c",
+                "import time; time.sleep(60)",
+                f"resume-{mode}",
+                model,
+                effort,
+            ]
 
         with mock.patch(
             "coordinator.web_app.default_codex_command", side_effect=command
@@ -480,16 +627,14 @@ class ExecutorSettingsAPITests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200, response.text)
                 self.assertIn("stop and restart Codex", response.json()["message"])
                 session = app.state.context.codex_session
-                self.assertEqual(
-                    session.snapshot()["command"][-1], "ask-for-approval"
-                )
-                self.assertEqual(session.command[-1], "full-access")
+                self.assertIn("ask-for-approval", session.snapshot()["command"])
+                self.assertIn("full-access", session.command)
                 self.assertEqual(
                     response.json()["configuration"]["codex_permission_mode"],
                     "full-access",
                 )
 
-    def test_running_watcher_blocks_changes_and_discovery_is_bounded(self) -> None:
+    def test_running_watcher_accepts_durable_changes_for_the_next_handoff(self) -> None:
         coordination = self.repo / ".coordination"
         coordination.mkdir()
         (coordination / "README.md").write_text("# Coordination\n", encoding="utf-8")
@@ -507,13 +652,17 @@ class ExecutorSettingsAPITests(unittest.TestCase):
                 client.post("/api/watcher/start", headers=self.headers(csrf)).status_code,
                 200,
             )
-            blocked = client.post(
+            saved = client.post(
                 "/api/v1/executor-settings",
                 json=mini_payload(),
                 headers=self.headers(csrf),
             )
-            self.assertEqual(blocked.status_code, 409, blocked.text)
-            self.assertEqual(blocked.json()["error"]["code"], "conflict")
+            self.assertEqual(saved.status_code, 200, saved.text)
+            self.assertIn("stop and restart", saved.json()["message"])
+            self.assertEqual(
+                client.get("/api/executor-settings").json()["configuration"]["mini_swe_model"],
+                "Qwen/Qwen3.8-27B",
+            )
 
             with mock.patch(
                 "coordinator.authenticated_web_app.discover_models",
@@ -527,19 +676,23 @@ class ExecutorSettingsAPITests(unittest.TestCase):
             self.assertEqual(discovered.status_code, 200, discovered.text)
             self.assertEqual(discovered.json()["models"], ["Qwen/Qwen3.8-27B"])
 
-    def test_running_codex_session_blocks_combined_agent_setting_changes(self) -> None:
+    def test_running_codex_session_accepts_changes_for_the_next_session(self) -> None:
         app = self.app()
         with TestClient(app, base_url="http://127.0.0.1") as client:
             csrf = client.get("/api/state").json()["security"]["csrf_token"]
             started = client.post("/api/codex/start", headers=self.headers(csrf))
             self.assertEqual(started.status_code, 200, started.text)
-            blocked = client.post(
+            saved = client.post(
                 "/api/executor-settings",
                 json=mini_payload(),
                 headers=self.headers(csrf),
             )
-            self.assertEqual(blocked.status_code, 409, blocked.text)
-            self.assertIn("stop the Codex session", blocked.json()["message"])
+            self.assertEqual(saved.status_code, 200, saved.text)
+            self.assertIn("saved", saved.json()["message"].lower())
+            self.assertEqual(
+                client.get("/api/executor-settings").json()["configuration"]["codex_model"],
+                "gpt-5.6-sol",
+            )
 
     def test_cli_model_catalog_endpoint_is_read_only_and_source_bounded(self) -> None:
         app = self.app()

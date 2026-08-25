@@ -353,6 +353,7 @@
             <dl class="facts">
               <div class="fact"><dt>Task ID</dt><dd id="review-task">none</dd></div>
               <div class="fact"><dt>Review round</dt><dd id="review-round">0</dd></div>
+              <div class="fact"><dt>Next executor</dt><dd id="review-next-executor">none</dd></div>
               <div class="fact"><dt>Examined ref</dt><dd id="review-examined-ref">not recorded</dd></div>
             </dl>
             <div class="lists">
@@ -587,7 +588,7 @@
             <p class="badge" id="executor-settings-state">not loaded</p>
           </header>
           <form class="panel-body role-settings" id="executor-settings-form">
-            <p class="role-settings-scope">Codex review and Claude supervision are the currently supported orchestration adapters. Their model names and the implementation strategy below are editable.</p>
+            <p class="role-settings-scope">Choose either Codex or Claude as the primary goal owner/reviewer. Handoffs are structurally limited by the selected executor's saved turn or step budget.</p>
             <div class="role-presets" aria-label="Role presets">
               <span class="eyebrow">Starting profile</span>
               <button type="button" class="profile-button" data-role-profile="frontier">Quality</button>
@@ -597,17 +598,23 @@
             <div class="role-flow" aria-label="Configured agent pipeline">
               <section class="role-card" data-role="reviewer" aria-labelledby="reviewer-role-heading">
                 <header><span class="role-number">1</span><div><h4 id="reviewer-role-heading">Discuss &amp; review</h4><p>Owns goals and accepts each turn.</p></div><span class="role-health" id="reviewer-role-health">unknown</span></header>
-                <div class="role-runtime"><span>Runtime</span><strong>Codex CLI</strong><small>Fixed orchestration adapter</small></div>
-                <label class="role-editable">Reviewer model<select name="codex_model"><option value="">Loading Codex models…</option></select></label>
-                <label class="role-editable">Reviewer effort<select name="codex_effort"><option value="">Model default</option></select></label>
-                <label class="role-editable">Starting permissions (saves immediately)
+                <label class="role-editable">Primary runtime<select name="primary_adapter"><option value="codex">Codex CLI</option><option value="claude">Claude Code</option><option value="mini-swe-agent">Local / API via mini-swe-agent</option></select></label>
+                <label class="role-editable" data-primary-runtime="codex">Primary model<select name="codex_model"><option value="">Loading Codex models…</option></select></label>
+                <label class="role-editable" data-primary-runtime="codex">Primary effort<select name="codex_effort"><option value="">Model default</option></select></label>
+                <label class="role-editable" data-primary-runtime="codex">Starting permissions
                   <select name="codex_permission_mode">
                     <option value="ask-for-approval" selected>Ask for approval</option>
                     <option value="approve-for-me">Approve for me</option>
                     <option value="full-access">Full Access</option>
                   </select>
                 </label>
-                <p class="role-fallback">Matches Codex's three-option permissions menu, saves when selected, and applies to the next new or resumed browser session.</p>
+                <label class="role-editable" data-primary-runtime="claude" hidden>Primary model<select name="primary_claude_model" required><option value="opus">Opus</option><option value="sonnet">Sonnet</option><option value="fable">Fable</option></select></label>
+                <label class="role-editable" data-primary-runtime="claude" hidden>Primary effort<select name="primary_claude_effort"><option value="">Model default</option></select></label>
+                <label class="role-editable" data-primary-runtime="mini-swe-agent" hidden>Primary model<select name="primary_local_model"><option value="">Discover models from the endpoint…</option></select></label>
+                <label class="role-editable" data-primary-runtime="mini-swe-agent" hidden>Primary effort<select name="primary_local_effort"><option value="">Endpoint default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Xhigh</option><option value="max">Max</option></select></label>
+                <label class="role-editable" data-primary-runtime="mini-swe-agent" hidden>Primary step limit<input name="primary_local_step_limit" type="number" min="6" max="200" value="24" required /></label>
+                <label class="role-editable" data-primary-runtime="mini-swe-agent" hidden>Primary wall time (seconds)<input name="primary_local_timeout_seconds" type="number" min="10" max="86400" value="900" required /></label>
+                <p class="role-fallback">Each runtime owns the same goal and review contract; selecting a local/API model does not reduce its authority.</p>
               </section>
               <span class="role-arrow" aria-hidden="true">→</span>
               <section class="role-card" data-role="supervisor" aria-labelledby="supervisor-role-heading">
@@ -617,7 +624,7 @@
                 <label class="role-editable">Supervisor effort<select name="claude_effort"><option value="">Model default</option></select></label>
                 <label class="role-editable">Native subagent model<select name="claude_subagent_model" required><option value="sonnet">Sonnet</option><option value="opus">Opus</option><option value="fable">Fable</option></select></label>
                 <label class="role-editable">Native subagent effort<select name="claude_subagent_effort"><option value="">Inherit supervisor</option></select></label>
-                <label class="role-editable">Maximum turns<input name="claude_max_turns" type="number" min="1" max="200" value="40" required /></label>
+                <label class="role-editable">Maximum turns<input name="claude_max_turns" type="number" min="8" max="200" value="40" required /></label>
               </section>
               <span class="role-arrow" aria-hidden="true">→</span>
               <section class="role-card" data-role="executor" aria-labelledby="executor-role-heading">
@@ -633,24 +640,25 @@
               </section>
             </div>
             <section class="local-model-settings" id="local-model-settings" aria-labelledby="local-model-heading" hidden>
-              <header><div><h4 id="local-model-heading">Local / API executor</h4><p class="note">OpenAI-compatible endpoint used by mini-swe-agent. Only the environment-variable name is stored.</p></div></header>
+              <header><div><h4 id="local-model-heading">Local / API runtime</h4><p class="note">Shared OpenAI-compatible endpoint used by mini-swe-agent in any selected role. Models and budgets remain role-specific. Only the environment-variable name is stored.</p></div></header>
               <div class="settings-form">
                 <label>Endpoint<input name="mini_swe_api_base" type="url" placeholder="Endpoint base URL ending in /v1" /></label>
                 <label>Model<select name="mini_swe_model"><option value="">Discover models from the endpoint…</option></select></label>
                 <label>Reasoning effort<select name="mini_swe_effort"><option value="">Endpoint default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Xhigh</option><option value="max">Max</option></select></label>
                 <label>LiteLLM provider<input name="mini_swe_provider" value="openai" required /></label>
                 <label>API-key environment variable<input name="mini_swe_api_key_env" placeholder="blank for an unauthenticated local endpoint" /></label>
-                <label>Step limit<input name="mini_swe_step_limit" type="number" min="1" max="200" value="12" required /></label>
+                <label>Step limit<input name="mini_swe_step_limit" type="number" min="6" max="200" value="12" required /></label>
+                <output class="note" id="handoff-budget-summary">Task ceiling will be calculated from the saved runtime limit.</output>
                 <label>Wall-time limit (seconds)<input name="mini_swe_timeout_seconds" type="number" min="10" max="86400" value="900" required /></label>
                 <label>Cost limit<input name="mini_swe_cost_limit" type="number" min="0" step="0.01" value="0" required /></label>
                 <div class="executor-actions"><button type="button" class="control-button" id="executor-discover">Discover models</button></div>
               </div>
             </section>
             <div class="role-settings-actions">
-              <button type="submit" class="control-button">Save role assignment</button>
+              <button type="submit" class="control-button">Save now</button>
               <button type="button" class="control-button" id="roles-test">Check runtime availability</button>
             </div>
-            <p class="note form-feedback" id="executor-settings-feedback" role="status">Stop the Codex session and managed watcher before changing agent settings.</p>
+            <p class="note form-feedback" id="executor-settings-feedback" role="status">Selections save automatically and apply to the next relevant session or handoff.</p>
           </form>
         </section>
         <section class="panel" aria-labelledby="guardrails-heading">

@@ -14,6 +14,10 @@ No task is assigned.
 
 - None.
 
+## Work units
+
+- [ ] None while no task is assigned.
+
 ## Out of scope
 
 - All product changes until a task is assigned.

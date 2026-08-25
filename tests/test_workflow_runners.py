@@ -52,11 +52,18 @@ class CoordinationFixture(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def write_task(self, task_id: str, state: str, review_round: str) -> None:
+    def write_task(
+        self, task_id: str, state: str, review_round: str, executor: str = "configured"
+    ) -> None:
         (self.repo / ".coordination/planner/current-task.md").write_text(
             "# Current task\n\n"
             f"- Task ID: `{task_id}`\n- State: `{state}`\n"
-            f"- Review round: `{review_round}`\n- Starting ref: `abc`\n",
+            f"- Review round: `{review_round}`\n- Executor: `{executor}`\n"
+            "- Starting ref: `abc`\n\n"
+            "## Objective\n\nComplete one bounded change.\n\n"
+            "## In scope\n\n- One cohesive change.\n\n"
+            "## Work units\n\n- [ ] Implement and verify the cohesive change.\n\n"
+            "## Acceptance criteria\n\n- The focused check passes.\n",
             encoding="utf-8",
         )
 
@@ -68,11 +75,18 @@ class CoordinationFixture(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def write_review(self, task_id: str, verdict: str, review_round: str) -> None:
+    def write_review(
+        self,
+        task_id: str,
+        verdict: str,
+        review_round: str,
+        next_executor: str = "configured",
+    ) -> None:
         (self.repo / ".coordination/reviews/latest.md").write_text(
             "# Latest Codex review\n\n"
             f"- Task ID: `{task_id}`\n- Verdict: `{verdict}`\n"
-            f"- Review round: `{review_round}`\n",
+            f"- Review round: `{review_round}`\n"
+            f"- Next executor: `{next_executor}`\n",
             encoding="utf-8",
         )
 
@@ -122,6 +136,24 @@ class CodexTransitionTests(CoordinationFixture):
             valid_transition(self.repo, "task-1", "1"), (True, "blocked")
         )
 
+    def test_retry_executor_must_be_explicit_and_match_the_review(self) -> None:
+        self.write_review("task-1", "changes_requested", "0", "claude")
+        self.write_task("task-1", "changes_requested", "1", "configured")
+        valid, message = valid_transition(self.repo, "task-1", "0")
+        self.assertFalse(valid)
+        self.assertIn("must match", message)
+
+        self.write_task("task-1", "changes_requested", "1", "claude")
+        self.assertEqual(
+            valid_transition(self.repo, "task-1", "0"),
+            (True, "changes_requested"),
+        )
+
+        self.write_task("task-1", "changes_requested", "1", "invented")
+        valid, message = valid_transition(self.repo, "task-1", "0")
+        self.assertFalse(valid)
+        self.assertIn("executor is invalid", message)
+
     def test_transition_rejects_stale_identity_invalid_verdict_and_state_mismatch(self) -> None:
         self.write_review("other-task", "accepted", "0")
         valid, message = valid_transition(self.repo, "task-1", "0")
@@ -155,8 +187,60 @@ class CodexReviewRunnerTests(CoordinationFixture):
             result = run_review(self.arguments())
         self.assertEqual(result, 0)
         self.assertIn("<coordination review prompt>", output.getvalue())
+
+    def test_claude_can_be_selected_as_the_primary_reviewer(self) -> None:
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            result = run_review(
+                self.arguments(
+                    primary_adapter="claude",
+                    claude_command="/bin/true",
+                    claude_model="sonnet",
+                    claude_effort="high",
+                    claude_max_turns=24,
+                )
+            )
+        self.assertEqual(result, 0)
+        command = output.getvalue()
+        self.assertIn("Would run one Claude primary review", command)
+        self.assertIn("--model sonnet", command)
+        self.assertIn("--effort high", command)
+        self.assertIn("--max-turns 24", command)
         self.assertNotIn("You own the overall objective", output.getvalue())
         self.assertFalse((self.repo / ".coordination/.codex-review.lock").exists())
+
+    def test_local_api_model_can_be_selected_as_the_primary_reviewer(self) -> None:
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            result = run_review(
+                self.arguments(
+                    primary_adapter="mini-swe-agent",
+                    mini_command="/bin/true",
+                    primary_local_model="openai/Qwen3.8-27B",
+                    primary_local_effort="high",
+                    primary_local_step_limit=36,
+                    primary_local_timeout_seconds=1200,
+                    local_api_base="http://127.0.0.1:8000/v1",
+                    local_provider="openai",
+                    local_api_key_env="",
+                    local_cost_limit=0.0,
+                    mini_config=None,
+                )
+            )
+        self.assertEqual(result, 0)
+        command = output.getvalue()
+        self.assertIn("Would run one mini-swe-agent primary review", command)
+        self.assertIn("--model openai/Qwen3.8-27B", command)
+        self.assertIn("agent.step_limit=36", command)
+        self.assertIn("reasoning_effort=high", command)
+        self.assertIn("<coordination review prompt>", command)
+        self.assertNotIn("You own the overall objective", command)
+
+    def test_local_primary_refuses_an_unbounded_model_selection(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()) as error:
+            result = run_review(
+                self.arguments(primary_adapter="mini-swe-agent", primary_local_model="")
+            )
+        self.assertEqual(result, 2)
+        self.assertIn("requires a model", error.getvalue())
 
     def test_review_dry_run_passes_the_selected_model_to_codex(self) -> None:
         with contextlib.redirect_stdout(io.StringIO()) as output:

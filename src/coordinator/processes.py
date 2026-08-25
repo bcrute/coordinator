@@ -26,9 +26,22 @@ def default_watcher_command(
     executor: ExecutorAdapter | None = None,
     reviewer_model: str = "",
     reviewer_effort: str = "",
+    primary_adapter: str = "codex",
+    primary_claude_model: str = "opus",
+    primary_claude_effort: str = "",
+    primary_claude_max_turns: int = 40,
+    primary_local_model: str = "",
+    primary_local_effort: str = "",
+    primary_local_step_limit: int = 24,
+    primary_local_timeout_seconds: int = 900,
+    local_api_base: str = "",
+    local_provider: str = "openai",
+    local_api_key_env: str = "OPENAI_API_KEY",
+    local_cost_limit: float = 0.0,
 ) -> list[str]:
     """Build the fixed app-owned executor watcher command for `root`."""
 
+    managed_role = "both" if primary_adapter != "codex" else MANAGED_ROLE
     command = [
         sys.executable,
         "-m",
@@ -36,7 +49,7 @@ def default_watcher_command(
         "--repo",
         str(root),
         "--role",
-        MANAGED_ROLE,
+        managed_role,
         "--no-dashboard",
     ]
     if executor is not None:
@@ -45,6 +58,24 @@ def default_watcher_command(
         command.extend(("--codex-model", reviewer_model))
     if reviewer_effort:
         command.extend(("--codex-effort", reviewer_effort))
+    command.extend(("--primary-adapter", primary_adapter))
+    if primary_claude_model:
+        command.extend(("--primary-claude-model", primary_claude_model))
+    if primary_claude_effort:
+        command.extend(("--primary-claude-effort", primary_claude_effort))
+    command.extend(("--primary-claude-max-turns", str(primary_claude_max_turns)))
+    if primary_local_model:
+        command.extend(("--primary-local-model", primary_local_model))
+    if primary_local_effort:
+        command.extend(("--primary-local-effort", primary_local_effort))
+    command.extend(("--primary-local-step-limit", str(primary_local_step_limit)))
+    command.extend(("--primary-local-timeout-seconds", str(primary_local_timeout_seconds)))
+    if primary_adapter == "mini-swe-agent":
+        command.extend(("--mini-swe-provider", local_provider))
+        command.extend(("--mini-swe-api-key-env", local_api_key_env))
+        command.extend(("--mini-swe-cost-limit", str(local_cost_limit)))
+        if local_api_base:
+            command.extend(("--mini-swe-api-base", local_api_base))
     return command
 
 def moment(value: float | None) -> str | None:
@@ -78,11 +109,13 @@ class WatcherManager:
     ) -> None:
         self.repo = repo
         self.command = list(command) if command else default_watcher_command(repo)
+        self._active_command = list(self.command)
         self.stop_timeout = max(0.05, float(stop_timeout))
         self.start_grace = max(0.0, float(start_grace))
         self.runtime = repo / ".coordination" / "runtime"
         self.log_path = self.runtime / "relay.log"
-        self.lock_path = self.runtime / f"watcher-{MANAGED_ROLE}.lock"
+        self._managed_role = self._role_from_command(self.command)
+        self.lock_path = self.runtime / f"watcher-{self._managed_role}.lock"
         self._lock = threading.RLock()
         self._process: subprocess.Popen | None = None
         self._log = None
@@ -96,6 +129,25 @@ class WatcherManager:
         self._stop_requested = False
 
     # Transitions ---------------------------------------------------------
+
+    def configure_command(self, command: list[str]) -> bool:
+        """Set the trusted command used by the next watcher launch.
+
+        A running watcher keeps its observed command; the replacement becomes
+        active after it stops and is started again.
+        """
+
+        if not command:
+            raise ValueError("watcher command must be non-empty")
+        with self._lock:
+            self._refresh()
+            self.command = list(command)
+            immediate = self._state not in (*ACTIVE_STATES, "stopping")
+            if immediate:
+                self._active_command = list(command)
+                self._managed_role = self._role_from_command(command)
+                self.lock_path = self.runtime / f"watcher-{self._managed_role}.lock"
+            return immediate
 
     def start(self) -> tuple[str, str]:
         """Launch the one fixed watcher command, or report why no process was created."""
@@ -111,6 +163,8 @@ class WatcherManager:
                     "coordination is not initialized in this repository yet; start Codex "
                     "and complete the initial coordination discussion, then retry",
                 )
+            self._managed_role = self._role_from_command(self.command)
+            self.lock_path = self.runtime / f"watcher-{self._managed_role}.lock"
             if active_lock(self.lock_path, reclaim_stale=True):
                 return (
                     "conflict",
@@ -122,13 +176,17 @@ class WatcherManager:
             except OSError as error:
                 return self._failed(f"cannot append to {self.log_path}: {error}")
             try:
+                launch_command = list(self.command)
+                self._active_command = launch_command
+                self._managed_role = self._role_from_command(launch_command)
+                self.lock_path = self.runtime / f"watcher-{self._managed_role}.lock"
                 log.write(
                     f"\n[{datetime.now(timezone.utc).isoformat()}] web app starting watcher: "
-                    f"{' '.join(self.command)}\n".encode("utf-8")
+                    f"{' '.join(launch_command)}\n".encode("utf-8")
                 )
                 log.flush()
                 process = subprocess.Popen(
-                    self.command,
+                    launch_command,
                     cwd=str(self.repo),
                     stdin=subprocess.DEVNULL,
                     stdout=log,
@@ -144,7 +202,7 @@ class WatcherManager:
             self._group = process.pid if group is None else group
             self._pid = process.pid
             self._state = "starting"
-            self._detail = f"launching {' '.join(self.command)}"
+            self._detail = f"launching {' '.join(launch_command)}"
             self._started = time.time()
             self._exited = None
             self._exit_code = None
@@ -210,7 +268,7 @@ class WatcherManager:
                 "started_at_epoch": self._started,
                 "exited_at": moment(self._exited),
                 "exit_code": self._exit_code,
-                "command": list(self.command),
+                "command": list(self._active_command),
                 "log_path": str(self.log_path),
                 "lock_present": lock_present,
                 "can_start": idle and not lock_present and initialized,
@@ -218,6 +276,14 @@ class WatcherManager:
             }
 
     # Internals -----------------------------------------------------------
+
+    @staticmethod
+    def _role_from_command(command: list[str]) -> str:
+        try:
+            role = command[command.index("--role") + 1]
+        except (ValueError, IndexError):
+            return MANAGED_ROLE
+        return role if role in {"executor", "both"} else MANAGED_ROLE
 
     def _refresh(self) -> None:
         self._reap()

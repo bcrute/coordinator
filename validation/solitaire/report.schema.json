@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bcrute/coordinator/validation/solitaire/report.schema.json",
+  "title": "Coordinator Solitaire validation report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "cycle_id",
+    "outcome",
+    "stage",
+    "summary",
+    "started_at",
+    "finished_at",
+    "findings"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "cycle_id": { "type": "integer", "minimum": 1 },
+    "outcome": { "enum": ["running", "passed", "failed", "blocked"] },
+    "stage": {
+      "enum": [
+        "setup",
+        "planning",
+        "routing",
+        "implementation",
+        "review",
+        "completion",
+        "unknown"
+      ]
+    },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 1000 },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": ["string", "null"], "format": "date-time" },
+    "configuration": {
+      "type": "object",
+      "additionalProperties": { "type": ["string", "number", "boolean", "null"] }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status", "evidence"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["passed", "failed", "not_run"] },
+          "evidence": { "type": "string" }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "severity",
+          "category",
+          "blocks_cycle",
+          "observed",
+          "expected",
+          "reproduction",
+          "evidence"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^SOL-[0-9]{3}$" },
+          "severity": { "enum": ["critical", "high", "medium", "low"] },
+          "category": {
+            "enum": [
+              "coordinator",
+              "provider",
+              "executor",
+              "solitaire",
+              "environment",
+              "uncertain"
+            ]
+          },
+          "blocks_cycle": { "type": "boolean" },
+          "observed": { "type": "string", "minLength": 1 },
+          "expected": { "type": "string", "minLength": 1 },
+          "reproduction": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "evidence": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "likely_component": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

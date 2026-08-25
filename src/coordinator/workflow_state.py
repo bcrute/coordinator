@@ -139,6 +139,7 @@ def review_state(text: str) -> dict[str, object]:
         "task_id": field(text, "Task ID") or "none",
         "verdict": field(text, "Verdict") or "not_reviewed",
         "review_round": field(text, "Review round") or "0",
+        "next_executor": field(text, "Next executor") or "none",
         "examined_ref": field(text, "Examined ref") or "not recorded",
         "findings": bullets(text, "Findings"),
         "next_action": bullets(text, "Next action"),

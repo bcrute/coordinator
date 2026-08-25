@@ -509,7 +509,7 @@ def run(args: argparse.Namespace) -> int:
             goal_id,
             task_id,
             review_round,
-            "completed",
+            "completed" if state == "review" else "blocked",
             started,
             args.model,
             trajectory,

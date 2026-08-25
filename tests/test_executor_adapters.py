@@ -43,7 +43,10 @@ def prepared_repo(root: Path) -> None:
     (root / ".coordination" / "planner" / "current-task.md").write_text(
         "# Current task\n\n- Task ID: `LOCAL-TASK-001`\n- State: `ready`\n"
         "- Review round: `0`\n- Executor: `configured`\n\n"
-        "## Objective\n\nCreate one small file.\n",
+        "## Objective\n\nCreate one small file.\n\n"
+        "## In scope\n\n- One file.\n\n"
+        "## Work units\n\n- [ ] Create and verify the file.\n\n"
+        "## Acceptance criteria\n\n- The file exists.\n",
         encoding="utf-8",
     )
     (root / ".coordination" / "coder" / "status.md").write_text(
@@ -242,7 +245,36 @@ class AdapterContractTests(unittest.TestCase):
         self.assertIn("--mini-swe-api-base", command)
         self.assertIn("http://127.0.0.1:8000/v1", command)
         self.assertEqual(command[command.index("--role") + 1], "executor")
-        self.assertEqual(command[-4:], ["--codex-model", "gpt-5.6-sol", "--codex-effort", "high"])
+        self.assertEqual(command[command.index("--codex-model") : command.index("--codex-model") + 4], ["--codex-model", "gpt-5.6-sol", "--codex-effort", "high"])
+        self.assertIn("--primary-adapter", command)
+
+    def test_claude_primary_selects_a_full_pipeline_watcher(self) -> None:
+        command = default_watcher_command(
+            Path("/tmp/project"),
+            MiniSweAgentExecutorAdapter(model="local", step_limit=24),
+            primary_adapter="claude",
+            primary_claude_model="sonnet",
+            primary_claude_effort="high",
+        )
+        self.assertEqual(command[command.index("--role") + 1], "both")
+        self.assertEqual(command[command.index("--primary-adapter") + 1], "claude")
+        self.assertIn("--primary-claude-effort", command)
+
+    def test_local_primary_selects_a_full_pipeline_watcher(self) -> None:
+        command = default_watcher_command(
+            Path("/tmp/project"),
+            ClaudeExecutorAdapter(model="sonnet"),
+            primary_adapter="mini-swe-agent",
+            primary_local_model="openai/Qwen3.8-27B",
+            primary_local_effort="high",
+            primary_local_step_limit=36,
+            local_api_base="http://127.0.0.1:8000/v1",
+        )
+        self.assertEqual(command[command.index("--role") + 1], "both")
+        self.assertEqual(command[command.index("--primary-adapter") + 1], "mini-swe-agent")
+        self.assertIn("--primary-local-model", command)
+        self.assertIn("openai/Qwen3.8-27B", command)
+        self.assertIn("--mini-swe-api-base", command)
 
     def test_watcher_selects_mini_runner_for_ready_assignment(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -597,9 +629,15 @@ class MiniRunnerTests(unittest.TestCase):
             report = (repo / ".coordination/coder/latest-report.md").read_text(
                 encoding="utf-8"
             )
+            progress = json.loads(
+                (repo / ".coordination/runtime/executor-progress.json").read_text(
+                    encoding="utf-8"
+                )
+            )
             self.assertIn("- State: `blocked`", status)
             self.assertIn("modified Coordinator-owned coordination files", status)
             self.assertIn(".coordination/planner/goal.md", report)
+            self.assertEqual(progress["state"], "blocked")
 
     def test_nonzero_exit_without_trajectory_is_truthfully_blocked_and_cleans_lock(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -621,7 +659,7 @@ class MiniRunnerTests(unittest.TestCase):
             self.assertIn("- State: `blocked`", status)
             self.assertIn("Process exit status: `7`", report)
             self.assertIn("Agent exit status: `not recorded`", report)
-            self.assertEqual(progress["state"], "completed")
+            self.assertEqual(progress["state"], "blocked")
             self.assertFalse((repo / ".coordination/.mini-swe-agent-turn.lock").exists())
 
     def test_malformed_trajectory_cannot_be_reported_as_success(self) -> None:

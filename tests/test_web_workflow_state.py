@@ -10,7 +10,14 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills" / "coordinate-claude-work"
 sys.path.insert(0, str(SKILL / "scripts"))
 
-from web_app import completion_state, delegation_state, runtime_state, watcher_state, workflow_state
+from web_app import (
+    completion_state,
+    delegation_state,
+    review_state,
+    runtime_state,
+    watcher_state,
+    workflow_state,
+)
 
 
 COMPLETION_TEXT = """# Overall goal completion
@@ -33,6 +40,21 @@ COMPLETION_TEXT = """# Overall goal completion
 
 - LAN exposure is deferred.
 """
+
+
+class ReviewStateTests(unittest.TestCase):
+    def test_parses_machine_readable_next_executor(self) -> None:
+        record = review_state(
+            "# Latest Codex review\n\n"
+            "- Task ID: `task-1`\n"
+            "- Verdict: `changes_requested`\n"
+            "- Review round: `0`\n"
+            "- Next executor: `claude`\n"
+        )
+        self.assertEqual(record["next_executor"], "claude")
+
+    def test_missing_next_executor_is_visible_as_none(self) -> None:
+        self.assertEqual(review_state("")["next_executor"], "none")
 
 
 def make_goal(goal_id: str = "goal-a", state: str = "in_progress") -> dict[str, object]:

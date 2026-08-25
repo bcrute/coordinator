@@ -51,6 +51,16 @@ class WorkflowTests(unittest.TestCase):
         task_text = task.read_text(encoding="utf-8")
         task_text = task_text.replace("- Task ID: `none`", f"- Task ID: `{task_id}`")
         task_text = task_text.replace("- State: `idle`", "- State: `ready`")
+        task_text = task_text.replace("No task is assigned.", "Complete one bounded test change.")
+        task_text = task_text.replace("- None.\n\n## Work units", "- One cohesive change.\n\n## Work units", 1)
+        task_text = task_text.replace(
+            "- [ ] None while no task is assigned.",
+            "- [ ] Implement and verify the cohesive change.",
+        )
+        task_text = task_text.replace(
+            "## Acceptance criteria\n\n- None.",
+            "## Acceptance criteria\n\n- The focused check passes.",
+        )
         task.write_text(task_text, encoding="utf-8")
 
     def test_init_preserves_existing_instructions_and_is_idempotent(self) -> None:
@@ -330,7 +340,8 @@ class WorkflowTests(unittest.TestCase):
                 "sed -i 's/- State: `active`/- State: `done`/' .coordination/planner/goal.md\n"
                 "sed -i 's/- State: `ready`/- State: `accepted`/' .coordination/planner/current-task.md\n"
                 "printf '%s\\n' '# Latest Codex review' '' '- Task ID: `EVENTS-001`' "
-                "'- Verdict: `accepted`' '- Review round: `0`' > .coordination/reviews/latest.md\n"
+                "'- Verdict: `accepted`' '- Review round: `0`' "
+                "'- Next executor: `none`' > .coordination/reviews/latest.md\n"
                 "printf '%s\\n' '# Overall goal completion' '' "
                 "'- Goal ID: `EVENTS-GOAL-001`' '- State: `done`' > .coordination/reviews/completion.md\n",
                 encoding="utf-8",
@@ -451,7 +462,7 @@ class WorkflowTests(unittest.TestCase):
             task = target / ".coordination/planner/current-task.md"
             task.write_text(
                 task.read_text(encoding="utf-8").replace(
-                    "## Acceptance criteria\n\n- None.",
+                    "## Acceptance criteria\n\n- The focused check passes.",
                     "## Acceptance criteria\n\n- Add CLI.\n- Run tests.",
                 ),
                 encoding="utf-8",
@@ -593,11 +604,14 @@ class WorkflowTests(unittest.TestCase):
                 "#!/bin/sh\n"
                 "printf '%s\\n' \"$@\" > .codex-args\n"
                 "printf '%s\\n' '# Latest Codex review' '' '- Task ID: `EVENTS-001`' "
-                "'- Verdict: `accepted`' '- Review round: `0`' > .coordination/reviews/latest.md\n"
+                "'- Verdict: `accepted`' '- Review round: `0`' "
+                "'- Next executor: `configured`' > .coordination/reviews/latest.md\n"
                 "printf '%s\\n' '# Current task' '' '- Task ID: `EVENTS-002`' "
-                "'- State: `ready`' '- Review round: `0`' '- Starting ref: `abc1234`' "
+                "'- State: `ready`' '- Review round: `0`' '- Executor: `configured`' "
+                "'- Starting ref: `abc1234`' "
                 "'' '## Objective' '' 'Add the remaining regression coverage.' "
                 "'' '## In scope' '' '- Tests.' '' '## Out of scope' '' '- Deployment.' "
+                "'' '## Work units' '' '- [ ] Add and run the focused tests.' "
                 "'' '## Acceptance criteria' '' '- Regression passes.' "
                 "'' '## Required evidence' '' '- Run focused tests.' "
                 "'' '## Allowed external actions' '' '- None.' "
@@ -620,7 +634,7 @@ class WorkflowTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("assigned next subgoal EVENTS-002", result.stdout)
-            self.assertIn("Starting Codex review: EVENTS-001 round 0", result.stdout)
+            self.assertIn("Starting Codex primary review: EVENTS-001 round 0", result.stdout)
             self.assertIn(
                 "--skip-git-repo-check",
                 (target / ".codex-args").read_text(encoding="utf-8"),
@@ -1265,6 +1279,26 @@ class WatcherControlTests(unittest.TestCase):
         snapshot = manager.snapshot()
         self.assertEqual(snapshot["pid"], pid)
         self.assertTrue(self.alive(pid))
+
+    def test_command_change_during_a_run_applies_to_the_next_start(self) -> None:
+        target = self.project()
+        original = self.sleep_forever_command()
+        replacement = self.exit_command(0)
+        manager = WatcherManager(
+            target, command=original, stop_timeout=2, start_grace=0.05
+        )
+        self.addCleanup(manager.shutdown)
+
+        self.assertEqual(manager.start()[0], "started")
+        self.wait_until(lambda: manager.snapshot()["state"] == "running")
+        self.assertFalse(manager.configure_command(replacement))
+        self.assertEqual(manager.snapshot()["command"], original)
+        self.assertEqual(manager.command, replacement)
+
+        self.assertEqual(manager.stop()[0], "stopped")
+        self.assertEqual(manager.start()[0], "started")
+        self.wait_until(lambda: manager.snapshot()["state"] == "exited")
+        self.assertEqual(manager.snapshot()["command"], replacement)
 
     def test_existing_lock_file_blocks_start_without_spawning(self) -> None:
         target = self.project()

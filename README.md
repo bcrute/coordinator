@@ -26,10 +26,10 @@ repository:
 
 ## Architecture
 
-1. Codex/ChatGPT owns the overall goal and writes one bounded subgoal at a
+1. The configured primary—Codex CLI, Claude Code, or a local/API model through mini-swe-agent—owns the overall goal and writes one bounded subgoal at a
    time.
 2. The configured executor implements that subgoal. Its adapter records a handoff.
-3. Codex reviews the complete diff and evidence, then either requests a
+3. The primary reviews the complete diff and evidence, then either requests a
    correction or assigns the executor the next subgoal.
 4. When every completion criterion is met, Codex writes the repository's
    `done` signal and notifies you.
@@ -211,7 +211,7 @@ record associated with an open rollout file; prompts, arbitrary arguments, and g
 environment values are not returned to the browser.
 
 This activity panel is observation, not agent configuration. The Settings page's
-three-stage role pipeline controls the Codex reviewer model, Claude supervisor model,
+three-stage role pipeline controls the provider-agnostic primary reviewer, Claude supervisor model,
 their independent effort levels, Codex's starting permission preset, the native Claude subagent model and effort,
 implementation strategy, local endpoint, and execution bounds. Quality,
 balanced, and local-heavy buttons provide editable starting profiles. CLI executable
@@ -230,6 +230,14 @@ lead and session-scoped `coordinator-worker` subagent use separate native effort
 settings. The local/API effort override is passed through LiteLLM as
 `reasoning_effort`; leave it at **Endpoint default** when that endpoint does not
 support this parameter.
+
+The local/API step limit and Claude turn limit are persistent handoff budgets,
+not per-task tuning knobs. Coordinator reserves 25 percent of the selected
+runtime's budget for verification and recovery, converts the remainder into a
+maximum work-unit count, and rejects tasks whose `In scope` and `Work units`
+structure exceeds that count. The primary must create later task IDs for the
+remaining goal. See
+[`ADR 0006`](docs/adr/0006-primary-adapters-and-handoff-budgets.md).
 
 ### Provider usage indicators
 
