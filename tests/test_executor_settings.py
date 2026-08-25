@@ -433,6 +433,62 @@ class ExecutorSettingsAPITests(unittest.TestCase):
                 default_codex_resume_command(self.repo, "full-access"),
             )
 
+    def test_permission_only_save_succeeds_during_a_running_codex_session(self) -> None:
+        (self.repo / ".coordination").mkdir()
+        (self.repo / ".coordination/README.md").write_text(
+            "# Coordination\n", encoding="utf-8"
+        )
+
+        def command(repo: Path, mode: str = "ask-for-approval") -> list[str]:
+            return [sys.executable, "-c", "import time; time.sleep(60)", mode]
+
+        def resume(repo: Path, mode: str = "ask-for-approval") -> list[str]:
+            return [sys.executable, "-c", "import time; time.sleep(60)", f"resume-{mode}"]
+
+        with mock.patch(
+            "coordinator.web_app.default_codex_command", side_effect=command
+        ), mock.patch(
+            "coordinator.web_app.default_codex_resume_command", side_effect=resume
+        ):
+            app = create_authenticated_app(
+                self.repo,
+                self.settings,
+                repositories_root=self.base,
+                provider_usage_service=fake_usage_service(),
+                watcher_command_for_repo=lambda repo: [
+                    sys.executable,
+                    "-c",
+                    "import time; time.sleep(60)",
+                ],
+            )
+            with TestClient(app, base_url="http://127.0.0.1") as client:
+                csrf = client.get("/api/state").json()["security"]["csrf_token"]
+                self.assertEqual(
+                    client.post("/api/codex/start", headers=self.headers(csrf)).status_code,
+                    200,
+                )
+                self.assertTrue(app.state.context.watcher.snapshot()["running"])
+                payload = client.get("/api/executor-settings").json()["configuration"]
+                payload["codex_permission_mode"] = "full-access"
+
+                response = client.post(
+                    "/api/executor-settings",
+                    json=payload,
+                    headers=self.headers(csrf),
+                )
+
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertIn("stop and restart Codex", response.json()["message"])
+                session = app.state.context.codex_session
+                self.assertEqual(
+                    session.snapshot()["command"][-1], "ask-for-approval"
+                )
+                self.assertEqual(session.command[-1], "full-access")
+                self.assertEqual(
+                    response.json()["configuration"]["codex_permission_mode"],
+                    "full-access",
+                )
+
     def test_running_watcher_blocks_changes_and_discovery_is_bounded(self) -> None:
         coordination = self.repo / ".coordination"
         coordination.mkdir()
@@ -471,7 +527,7 @@ class ExecutorSettingsAPITests(unittest.TestCase):
             self.assertEqual(discovered.status_code, 200, discovered.text)
             self.assertEqual(discovered.json()["models"], ["Qwen/Qwen3.8-27B"])
 
-    def test_running_codex_session_blocks_permission_changes(self) -> None:
+    def test_running_codex_session_blocks_combined_agent_setting_changes(self) -> None:
         app = self.app()
         with TestClient(app, base_url="http://127.0.0.1") as client:
             csrf = client.get("/api/state").json()["security"]["csrf_token"]

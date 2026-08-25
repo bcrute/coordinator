@@ -23,7 +23,7 @@ import time
 import urllib.parse
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager, closing
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -1054,23 +1054,38 @@ def create_authenticated_app(
                 publish_project_executor_settings(target, previous)
                 raise
 
-        outcome, message = await run_in_threadpool(
-            context.reconfigure_watcher,
-            factory,
-            save_candidate,
-            codex_command_for_repo=(
-                codex_candidate_factory if codex_command_for_repo is None else None
-            ),
-            codex_resume_command_for_repo=(
+        permission_only = replace(
+            candidate, codex_permission_mode=previous.codex_permission_mode
+        ) == previous
+        if permission_only and codex_command_for_repo is None:
+            outcome, message = await run_in_threadpool(
+                context.reconfigure_codex_commands,
+                codex_candidate_factory,
                 (
                     codex_resume_command_for_repo
                     if codex_resume_command_for_repo is not None
                     else resume_candidate_factory
-                )
-                if codex_command_for_repo is None
-                else None
-            ),
-        )
+                ),
+                save_candidate,
+            )
+        else:
+            outcome, message = await run_in_threadpool(
+                context.reconfigure_watcher,
+                factory,
+                save_candidate,
+                codex_command_for_repo=(
+                    codex_candidate_factory if codex_command_for_repo is None else None
+                ),
+                codex_resume_command_for_repo=(
+                    (
+                        codex_resume_command_for_repo
+                        if codex_resume_command_for_repo is not None
+                        else resume_candidate_factory
+                    )
+                    if codex_command_for_repo is None
+                    else None
+                ),
+            )
         status_code = {"updated": 200, "conflict": 409, "error": 500}[outcome]
         issuer, subject = _audit_user(request)
         await run_in_threadpool(

@@ -367,6 +367,44 @@ class ApplicationContext:
             )
             return "updated", "agent settings saved for future session starts"
 
+    def reconfigure_codex_commands(
+        self,
+        codex_command_for_repo: Callable[[Path], list[str]],
+        codex_resume_command_for_repo: Callable[[Path], list[str]] | None,
+        commit: Callable[[], None],
+    ) -> tuple[str, str]:
+        """Save trusted Codex launch settings without interrupting a live session."""
+
+        with self._lock:
+            active = self._active
+            command = codex_command_for_repo(active.repo)
+            resume_command = (
+                codex_resume_command_for_repo(active.repo)
+                if codex_resume_command_for_repo is not None
+                else None
+            )
+            previous_command = active.codex_session.command
+            previous_resume = active.codex_session.resume_command
+            try:
+                immediate = active.codex_session.configure_commands(
+                    command, resume_command=resume_command
+                )
+                commit()
+            except Exception as error:  # noqa: BLE001 - restore prior trusted commands
+                with contextlib.suppress(Exception):
+                    active.codex_session.configure_commands(
+                        previous_command, resume_command=previous_resume
+                    )
+                return "error", f"could not save Codex permissions: {error}"
+            self._codex_command_for_repo = codex_command_for_repo
+            self._codex_resume_command_for_repo = codex_resume_command_for_repo
+            return (
+                "updated",
+                "Codex starting permissions saved."
+                if immediate
+                else "Codex starting permissions saved; stop and restart Codex to apply them.",
+            )
+
     def shutdown(self) -> None:
         """Idempotently stop whichever managers are currently active.
 

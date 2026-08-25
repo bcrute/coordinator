@@ -2,10 +2,11 @@
 """Thread-safe PTY manager for one trusted interactive Codex CLI process.
 
 `CodexSessionManager` owns a single Unix pseudo-terminal bound to one fixed
-repository path. Its new-session command and optional resume command are both
-supplied at construction and never caller-selectable afterwards. HTTP wiring is
-deliberately out of scope; this module only manages the process lifecycle, PTY
-I/O, and a bounded output buffer addressed by absolute character cursors.
+repository path. Its new-session command and optional resume command are supplied
+by trusted application configuration and can be replaced for a future launch.
+HTTP wiring is deliberately out of scope; this module only manages the process
+lifecycle, PTY I/O, and a bounded output buffer addressed by absolute character
+cursors.
 """
 
 from __future__ import annotations
@@ -119,6 +120,37 @@ class CodexSessionManager:
     @property
     def resume_command(self) -> tuple[str, ...] | None:
         return self._resume_command
+
+    def configure_commands(
+        self,
+        command: Sequence[str],
+        *,
+        resume_command: Sequence[str] | None = None,
+    ) -> bool:
+        """Set trusted commands for the next launch without disturbing a live PTY.
+
+        Returns true when no session is running and the new command is therefore
+        immediately visible as the active command. While a session is running its
+        observed command remains truthful; the replacement is used after it stops.
+        """
+
+        if not command:
+            raise ValueError("command must be a non-empty sequence")
+        if resume_command is not None and not resume_command:
+            raise ValueError("resume_command must be non-empty when provided")
+        replacement = tuple(command)
+        replacement_resume = (
+            tuple(resume_command) if resume_command is not None else None
+        )
+        with self._lock:
+            if self._shutdown:
+                raise RuntimeError("session manager has been shut down")
+            self._command = replacement
+            self._resume_command = replacement_resume
+            immediate = self._state != STATE_RUNNING
+            if immediate:
+                self._active_command = replacement
+            return immediate
 
     # -- lifecycle --------------------------------------------------------
 

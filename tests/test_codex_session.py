@@ -97,6 +97,36 @@ class CodexSessionManagerTests(unittest.TestCase):
         self.assertIn("resumed-command", snap["command"][2])
         self.assertNotIn("new-command", manager.read()["text"])
 
+    def test_trusted_command_change_waits_for_the_next_launch(self) -> None:
+        current = (
+            f"import sys,time; sys.stderr.write('{MARKER}\\n'); "
+            "print('current-command', flush=True); time.sleep(60)"
+        )
+        replacement = (
+            f"import sys; sys.stderr.write('{MARKER}\\n'); "
+            "print('replacement-command', flush=True)"
+        )
+        manager = self._make(current)
+        manager.start()
+        self.assertTrue(_wait_until(lambda: "current-command" in manager.read()["text"]))
+
+        immediate = manager.configure_commands(
+            [sys.executable, "-c", replacement],
+            resume_command=[sys.executable, "-c", replacement],
+        )
+
+        self.assertFalse(immediate)
+        running = manager.snapshot()
+        self.assertIn("current-command", running["command"][2])
+        self.assertIn("replacement-command", manager.command[2])
+
+        manager.stop()
+        manager.start()
+        self.assertTrue(
+            _wait_until(lambda: "replacement-command" in manager.read()["text"])
+        )
+        self.assertIn("replacement-command", manager.snapshot()["command"][2])
+
     def test_tty_detection_and_output(self) -> None:
         script = (
             f"import sys, os; sys.stderr.write('{MARKER}\\n'); "
