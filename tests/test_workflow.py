@@ -1285,6 +1285,23 @@ class WatcherControlTests(unittest.TestCase):
         self.assertIsNone(snapshot["pid"])
         self.assertFalse(snapshot["running"])
 
+    def test_stale_pid_lock_is_reclaimed_before_start(self) -> None:
+        target = self.project()
+        runtime = target / ".coordination/runtime"
+        runtime.mkdir(parents=True, exist_ok=True)
+        lock = runtime / "watcher-executor.lock"
+        lock.write_text("pid=999999999 role=executor\n", encoding="utf-8")
+
+        manager = WatcherManager(
+            target, command=self.sleep_forever_command(), stop_timeout=2, start_grace=0.05
+        )
+        self.addCleanup(manager.shutdown)
+
+        self.assertTrue(manager.snapshot()["can_start"])
+        self.assertFalse(lock.exists())
+        outcome, _ = manager.start()
+        self.assertEqual(outcome, "started")
+
     def test_watcher_exit_and_failure_states_are_observed(self) -> None:
         target = self.project()
 

@@ -16,6 +16,8 @@ import threading
 import time
 from pathlib import Path
 
+from .coordination_locks import acquire_lock
+
 
 ACTIVE_STATES = {"ready", "changes_requested"}
 TOKEN_FIELDS = (
@@ -500,7 +502,7 @@ def run(args: argparse.Namespace) -> int:
             and field(coder_status, "Review round") == review_round
         )
         coder_state = field(coder_status, "State")
-        if same_handoff and coder_state in {"implementing", "review", "blocked"}:
+        if same_handoff and coder_state in {"review", "blocked"}:
             print(
                 f"error: {task_id} round {review_round} is {coder_state}; "
                 "Codex must review or update the assignment before another turn",
@@ -582,7 +584,9 @@ def run(args: argparse.Namespace) -> int:
     }
     lock_path = repo / ".coordination" / ".claude-turn.lock"
     try:
-        lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        lock_fd = acquire_lock(
+            lock_path, f"pid={os.getpid()} task={task_id} round={review_round}\n"
+        )
     except FileExistsError:
         print(
             f"error: another Claude turn may be active; inspect {lock_path}",
@@ -590,7 +594,6 @@ def run(args: argparse.Namespace) -> int:
         )
         return 2
     try:
-        os.write(lock_fd, f"pid={os.getpid()} task={task_id} round={review_round}\n".encode())
         print(f"Starting Claude handoff: {task_id}", flush=True)
         child_env = os.environ.copy()
         child_env["CLAUDE_CODE_SUBAGENT_MODEL"] = args.subagent_model

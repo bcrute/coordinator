@@ -11,6 +11,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .coordination_locks import active_lock
 from .executor_adapters import ExecutorAdapter
 from .repositories import is_initialized
 
@@ -110,7 +111,7 @@ class WatcherManager:
                     "coordination is not initialized in this repository yet; start Codex "
                     "and complete the initial coordination discussion, then retry",
                 )
-            if self.lock_path.is_file():
+            if active_lock(self.lock_path, reclaim_stale=True):
                 return (
                     "conflict",
                     f"another watcher already holds {self.lock_path}; no process was started",
@@ -187,7 +188,7 @@ class WatcherManager:
     def snapshot(self) -> dict[str, object]:
         with self._lock:
             self._refresh()
-            lock_present = self.lock_path.is_file()
+            lock_present = active_lock(self.lock_path, reclaim_stale=True)
             active = self._state in ACTIVE_STATES
             initialized = is_initialized(self.repo)
             idle = not active and self._state != "stopping"

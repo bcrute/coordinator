@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills" / "coordinate-claude-work"
 sys.path.insert(0, str(SKILL / "scripts"))
 
-from web_app import completion_state, delegation_state, watcher_state, workflow_state
+from web_app import completion_state, delegation_state, runtime_state, watcher_state, workflow_state
 
 
 COMPLETION_TEXT = """# Overall goal completion
@@ -265,6 +265,37 @@ class WorkflowStateFallbackTests(unittest.TestCase):
         self.assertFalse(result["coder_current"])
         self.assertFalse(result["runtime_current"])
         self.assertFalse(result["completion_current"])
+
+
+class RuntimeStateTests(unittest.TestCase):
+    def test_metrics_from_an_earlier_review_round_are_not_current(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            runtime = repo / ".coordination/runtime"
+            runtime.mkdir(parents=True)
+            (runtime / "executor-progress.json").write_text(
+                json.dumps(
+                    {
+                        "provider_id": "mini-swe-agent",
+                        "task_id": "task-1",
+                        "review_round": "0",
+                        "state": "running",
+                        "usage": {"output_tokens": 500},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            state = runtime_state(
+                repo,
+                {"id": "task-1", "review_round": "1"},
+                "goal-a",
+                100.0,
+            )
+
+            self.assertFalse(state["matches_current_task"])
+            self.assertEqual(state["tokens"]["output_tokens"], 0)
+            self.assertEqual(state["timing"]["turn"]["seconds"], 0.0)
 
 
 class DelegationStateTests(unittest.TestCase):

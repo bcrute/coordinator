@@ -19,6 +19,7 @@ from coordinator.run_claude_turn import clean_error_detail, run as run_claude
 from coordinator.start_claude_team import run as run_team
 from coordinator.executor_adapters import ClaudeExecutorAdapter, MiniSweAgentExecutorAdapter
 from coordinator.executor_settings import ExecutorConfiguration
+from coordinator.coordination_locks import acquire_lock, active_lock, lock_pid
 from coordinator.watch_coordination import Snapshot, next_action, role_handles, task_executor
 
 
@@ -381,6 +382,22 @@ class ClaudeRunnerTests(CoordinationFixture):
         self.assertIn("provider unavailable", status)
         self.assertIn("executor failed with status 7", report)
 
+    def test_interrupted_implementing_state_and_dead_lock_are_retried(self) -> None:
+        self.write_status("task-1", "implementing", "0")
+        lock = self.repo / ".coordination/.claude-turn.lock"
+        lock.write_text("pid=999999999 task=task-1 round=0\n", encoding="utf-8")
+        fake = self.executable("retry-claude", "exit 9\n")
+
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
+            io.StringIO()
+        ):
+            result = run_claude(self.arguments(fake))
+
+        self.assertEqual(result, 9)
+        self.assertFalse(lock.exists())
+        status = (self.repo / ".coordination/coder/status.md").read_text(encoding="utf-8")
+        self.assertIn("- State: `blocked`", status)
+
     def test_zero_exit_requires_a_reviewable_handoff(self) -> None:
         self.prepare_handoff()
         fake = self.executable("incomplete-claude", "exit 0\n")
@@ -474,6 +491,24 @@ class WatcherDecisionTests(unittest.TestCase):
         )
         self.assertEqual(next_action(stale)[0], "error")
 
+    def test_interrupted_implementing_handoff_is_recovered_but_live_turn_waits(self) -> None:
+        implementing = self.state(
+            coder_task_id="task-1", coder_state="implementing", coder_round="0"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            coordination = repo / ".coordination"
+            coordination.mkdir()
+            self.assertEqual(next_action(implementing, repo)[0], "executor")
+
+            lock = coordination / ".claude-turn.lock"
+            lock.write_text(f"pid={os.getpid()} task=task-1 round=0\n", encoding="utf-8")
+            self.assertEqual(next_action(implementing, repo)[0], "wait")
+
+            lock.write_text("pid=999999999 task=task-1 round=0\n", encoding="utf-8")
+            self.assertEqual(next_action(implementing, repo)[0], "executor")
+            self.assertFalse(lock.exists())
+
     def test_role_routing_preserves_claude_compatibility_alias(self) -> None:
         self.assertTrue(role_handles("both", "executor"))
         self.assertTrue(role_handles("executor", "executor"))
@@ -488,11 +523,46 @@ class WatcherDecisionTests(unittest.TestCase):
             mini_swe_model="local",
             claude_model="sonnet",
         )
-        self.assertIs(task_executor(Path("."), "configured", configured), configured)
         with mock.patch(
             "coordinator.watch_coordination.load_project_executor_settings",
             return_value=configuration,
         ):
+            selected_default = task_executor(Path("."), "configured", configured)
             selected = task_executor(Path("."), "claude", configured)
+        self.assertIsInstance(selected_default, MiniSweAgentExecutorAdapter)
+        self.assertEqual(selected_default.model, "local")
+        self.assertEqual(selected_default.command_name, "/bin/true")
         self.assertIsInstance(selected, ClaudeExecutorAdapter)
         self.assertEqual(selected.model, "sonnet")
+
+        with mock.patch(
+            "coordinator.watch_coordination.load_project_executor_settings",
+            side_effect=ValueError("missing"),
+        ):
+            self.assertIs(task_executor(Path("."), "configured", configured), configured)
+
+
+class CoordinationLockTests(unittest.TestCase):
+    def test_live_lock_is_preserved_and_refuses_second_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "turn.lock"
+            lock.write_text(f"pid={os.getpid()} task=t round=0\n", encoding="utf-8")
+            self.assertEqual(lock_pid(lock), os.getpid())
+            self.assertTrue(active_lock(lock, reclaim_stale=True))
+            with self.assertRaises(FileExistsError):
+                acquire_lock(lock, "pid=999\n")
+
+    def test_dead_owner_is_reclaimed_and_new_payload_is_written(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "turn.lock"
+            lock.write_text("pid=999999999 task=t round=0\n", encoding="utf-8")
+            descriptor = acquire_lock(lock, f"pid={os.getpid()} task=t round=0\n")
+            os.close(descriptor)
+            self.assertEqual(lock_pid(lock), os.getpid())
+
+    def test_unparseable_lock_is_never_deleted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "turn.lock"
+            lock.write_text("owned by an older coordinator\n", encoding="utf-8")
+            self.assertTrue(active_lock(lock, reclaim_stale=True))
+            self.assertTrue(lock.exists())

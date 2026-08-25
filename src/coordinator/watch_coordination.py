@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,7 +19,14 @@ from .coordination_dashboard import draw as draw_dashboard
 from .coordination_dashboard import enter as enter_dashboard
 from .coordination_dashboard import leave as leave_dashboard
 from .coordination_dashboard import render as render_dashboard
-from .executor_adapters import EXECUTOR_ADAPTERS, ExecutorAdapter, from_namespace
+from .coordination_locks import acquire_lock, active_lock
+from .executor_adapters import (
+    EXECUTOR_ADAPTERS,
+    ClaudeExecutorAdapter,
+    ExecutorAdapter,
+    MiniSweAgentExecutorAdapter,
+    from_namespace,
+)
 from .executor_adapters import resolve_executable as resolve_executor_executable
 from .executor_settings import ExecutorConfiguration, load_project_executor_settings
 
@@ -76,7 +83,7 @@ def snapshot(repo: Path) -> Snapshot:
     )
 
 
-def next_action(state: Snapshot) -> tuple[str, str]:
+def next_action(state: Snapshot, repo: Path | None = None) -> tuple[str, str]:
     if not state.goal_id or state.goal_id == "none" or state.goal_state == "idle":
         return "wait", "no active overall goal"
     if state.goal_state == "done":
@@ -103,6 +110,13 @@ def next_action(state: Snapshot) -> tuple[str, str]:
             return "error", "review verdict exists but Codex did not advance task/goal state"
         return "codex", f"executor signaled {state.coder_state} for {state.task_id}"
     if same_coder_handoff and state.coder_state == "implementing":
+        if repo is not None:
+            turn_locks = (
+                repo / ".coordination" / ".claude-turn.lock",
+                repo / ".coordination" / ".mini-swe-agent-turn.lock",
+            )
+            if not any(active_lock(path, reclaim_stale=True) for path in turn_locks):
+                return "executor", "recovering an interrupted executor handoff"
         return "wait", "executor handoff is marked implementing"
     return "executor", f"Codex assigned subgoal {state.task_id} ({state.task_state})"
 
@@ -154,11 +168,35 @@ def task_executor(
     """Resolve a validated one-handoff override without changing saved settings."""
 
     selected = requested or "configured"
+    try:
+        configuration = load_project_executor_settings(repo)
+    except ValueError:
+        if selected == "configured":
+            return configured
+        raise
     if selected == "configured":
-        return configured
+        resolved = configuration.adapter()
+        if isinstance(resolved, ClaudeExecutorAdapter) and isinstance(
+            configured, ClaudeExecutorAdapter
+        ):
+            return replace(
+                resolved,
+                command_name=configured.command_name,
+                permission_mode=configured.permission_mode,
+                delegate_command_name=configured.delegate_command_name,
+                delegate_config=configured.delegate_config,
+            )
+        if isinstance(resolved, MiniSweAgentExecutorAdapter) and isinstance(
+            configured, MiniSweAgentExecutorAdapter
+        ):
+            return replace(
+                resolved,
+                command_name=configured.command_name,
+                config=configured.config,
+            )
+        return resolved
     if selected not in EXECUTOR_ADAPTERS:
         raise ValueError(f"unknown task executor: {selected!r}")
-    configuration = load_project_executor_settings(repo)
     return ExecutorConfiguration.from_mapping(
         {"executor_adapter": selected}, configuration
     ).adapter()
@@ -175,12 +213,6 @@ def watch(args: argparse.Namespace) -> int:
     if not (coordination / "README.md").is_file():
         print(f"error: coordination workflow is missing from {args.repo}", file=sys.stderr)
         return 2
-    if args.role in {"executor", "claude", "both"} and resolve_executor_executable(executor) is None:
-        print(
-            f"error: {executor.display_name} command not found: {executor.executable()}",
-            file=sys.stderr,
-        )
-        return 127
     if args.role in {"codex", "both"} and shutil.which(args.codex_command) is None:
         print(f"error: Codex command not found: {args.codex_command}", file=sys.stderr)
         return 127
@@ -189,7 +221,9 @@ def watch(args: argparse.Namespace) -> int:
     runtime.mkdir(parents=True, exist_ok=True)
     lock_path = runtime / f"watcher-{args.role}.lock"
     try:
-        lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        lock_fd = acquire_lock(
+            lock_path, f"pid={os.getpid()} role={args.role} repo={args.repo}\n"
+        )
     except FileExistsError:
         print(f"error: a {args.role} watcher may already be active: {lock_path}", file=sys.stderr)
         return 2
@@ -202,7 +236,6 @@ def watch(args: argparse.Namespace) -> int:
     )
     dashboard_active = False
     try:
-        os.write(lock_fd, f"pid={os.getpid()} role={args.role} repo={args.repo}\n".encode())
         if dashboard:
             enter_dashboard()
             dashboard_active = True
@@ -210,7 +243,7 @@ def watch(args: argparse.Namespace) -> int:
             print(f"Watching {args.role} coordination signals in {args.repo} (Ctrl-C to stop)")
         while True:
             state = snapshot(args.repo)
-            action, detail = next_action(state)
+            action, detail = next_action(state, args.repo)
             if dashboard:
                 draw_dashboard(render_dashboard(args.repo, action, detail))
             if action == "done":

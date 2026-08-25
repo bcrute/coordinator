@@ -57,14 +57,17 @@ by inspection and record them there.
    selected adapter outside Codex's sandbox. Wait for the matching coder status to
    become `review` or `blocked`, then continue this same interactive session with
    the review. If the watcher is unavailable, report that operational condition;
-   do not bypass it with a direct model call.
+   do not bypass it with a direct model call and do not start, restart, or serve
+   the Coordinator application from the project terminal. The application is an
+   owner-managed service outside the coordinated project session.
 
    The watcher reads the non-secret executor snapshot at
    `.coordination/runtime/executor-settings.json`; it never opens Coordinator's
    global database. The app refreshes this ignored project-local snapshot when a
    repository is selected or executor settings change. The task's validated
    `Executor` field can override that snapshot for one handoff without mutating
-   saved settings. Claude remains the initial default. Its runner is a thin adapter around Claude Code
+   saved settings. Codex must never edit the runtime snapshot to route a handoff;
+   set the planner-owned task's `Executor` field instead. Claude remains the initial default. Its runner is a thin adapter around Claude Code
    print mode and safe `auto` permissions. It embeds only
    `planner/current-task.md` as the authoritative
    coordination packet; Claude Code loads ordinary repository instructions and

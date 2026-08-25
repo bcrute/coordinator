@@ -15,6 +15,8 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .coordination_locks import acquire_lock
+
 
 ACTIVE_STATES = {"ready", "changes_requested"}
 TOKEN_FIELDS = (
@@ -355,7 +357,7 @@ def run(args: argparse.Namespace) -> int:
         if (
             field(prior, "Task ID") == task_id
             and field(prior, "Review round") == review_round
-            and field(prior, "State") in {"implementing", "review", "blocked"}
+            and field(prior, "State") in {"review", "blocked"}
         ):
             print("error: this task round already has an executor handoff", file=sys.stderr)
             return 2
@@ -387,7 +389,9 @@ def run(args: argparse.Namespace) -> int:
     watched_before = {path: path.read_bytes() if path.is_file() else None for path in watched_paths}
     lock_path = repo / ".coordination" / ".mini-swe-agent-turn.lock"
     try:
-        lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        lock_fd = acquire_lock(
+            lock_path, f"pid={os.getpid()} task={task_id} round={review_round}\n"
+        )
     except FileExistsError:
         print(f"error: another mini-swe-agent turn may be active: {lock_path}", file=sys.stderr)
         return 2
@@ -396,7 +400,6 @@ def run(args: argparse.Namespace) -> int:
     timed_out = False
     returncode = 1
     try:
-        os.write(lock_fd, f"pid={os.getpid()} task={task_id} round={review_round}\n".encode())
         write_status(
             status_path,
             task_id,

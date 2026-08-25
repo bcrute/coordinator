@@ -325,7 +325,10 @@ def runtime_state(
 ) -> dict[str, object]:
     metrics = load_executor_metrics(repo, str(task["id"]))
     timing = load_json(repo / ".coordination" / "runtime" / "goal-timing.json")
-    same_task = metrics.get("task_id") == task["id"]
+    same_task = (
+        metrics.get("task_id") == task["id"]
+        and str(metrics.get("review_round", "0")) == task["review_round"]
+    )
     current = metrics if same_task else {}
     finished = metrics.get("completed_at_epoch") if metrics.get("state") == "completed" else None
     metric_end = number(finished) if same_task else None

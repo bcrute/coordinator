@@ -54,6 +54,11 @@ interface with migration notes.
 
 ### Fixed
 
+- Executor dispatch now reloads the repository handoff snapshot for every turn,
+  preserves CLI runtime paths, reclaims dead-PID watcher/turn locks, retries an
+  interrupted `implementing` signal, and hides telemetry from earlier review rounds.
+- Coordinated Codex sessions now route one-turn executor changes through the task's
+  `Executor` field and never attempt to start the owner-managed web service.
 - Claude reset timestamps are canonicalized before velocity-history grouping, so
   harmless sub-second API jitter no longer strands every sample in a separate reset
   cycle; existing observations are migrated automatically.
