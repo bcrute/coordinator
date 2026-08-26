@@ -24,6 +24,7 @@ from coordinator.configuration import parse_args as parse_web_args
 from coordinator.processes import default_watcher_command
 from coordinator.run_mini_swe_turn import (
     build_command,
+    mini_prompt,
     parse_args as parse_mini_args,
     trajectory_usage,
 )
@@ -313,6 +314,16 @@ class AdapterContractTests(unittest.TestCase):
 
 
 class MiniTrajectoryTests(unittest.TestCase):
+    def test_bounded_prompt_requires_a_tool_call_before_narration(self) -> None:
+        prompt = mini_prompt(
+            "LOCAL-001",
+            "2",
+            "# Current task\n\n- Task ID: `LOCAL-001`\n- State: `ready`\n",
+        )
+        normalized = " ".join(prompt.split())
+        self.assertIn("Put a bash tool call first in every response", normalized)
+        self.assertIn("Keep any text before that call under 80 words", normalized)
+
     def test_litellm_usage_is_normalized_and_response_ids_are_deduplicated(self) -> None:
         response = {
             "id": "response-1",
@@ -356,7 +367,7 @@ class MiniTrajectoryTests(unittest.TestCase):
         self.assertIn("agent.wall_time_limit_seconds=300", command)
         self.assertIn("model.cost_tracking=ignore_errors", command)
         self.assertIn("model.model_kwargs.api_base=http://127.0.0.1:8000/v1", command)
-        self.assertIn("model.model_kwargs.max_tokens=4096", command)
+        self.assertIn("model.model_kwargs.max_tokens=3072", command)
 
     def test_role_profile_is_applied_after_operator_config(self) -> None:
         args = Namespace(
@@ -380,6 +391,7 @@ class MiniTrajectoryTests(unittest.TestCase):
         policy = profile_config("bounded").read_text(encoding="utf-8")
         self.assertIn("By the end of the\n    second response", policy)
         self.assertIn("Do not inventory the repository", policy)
+        self.assertIn("Put a bash tool call first in every response", policy)
 
     def test_exploratory_profile_deliberately_uses_stock_agent_prompt(self) -> None:
         args = Namespace(

@@ -24,7 +24,7 @@ from .process_guard import guarded_command
 
 
 ACTIVE_STATES = {"ready", "changes_requested"}
-BOUNDED_RESPONSE_TOKENS = 4096
+BOUNDED_RESPONSE_TOKENS = 3072
 TOKEN_FIELDS = (
     "input_tokens",
     "cache_read_input_tokens",
@@ -143,7 +143,9 @@ The active assignment is embedded below and is authoritative. Work only in the c
 repository. Inspect, edit, and test the product as needed. Do not edit any file under
 `.coordination/`; Coordinator owns those administrative records. Do not commit, push,
 deploy, install system software, or mutate external systems unless the assignment
-explicitly authorizes that action. Stop after completing this one assignment.
+explicitly authorizes that action. Put a bash tool call first in every response; do not
+spend a response narrating analysis before acting. Keep any text before that call under
+80 words. Stop after completing this one assignment.
 
 <active-assignment>
 {task.rstrip()}

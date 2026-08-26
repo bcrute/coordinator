@@ -14,8 +14,11 @@ agent:
     over a sequence of temporary experiments. Run the narrow required evidence once,
     fix only observed failures, and stop when it passes.
 
-    Every response must include at least one bash tool call. When the assignment is
-    complete, issue exactly this command by itself:
+    Put a bash tool call first in every response. Do not emit a long analysis before
+    acting, and keep any text before the first call under 80 words. The response budget
+    is deliberately small; use the tool to inspect or change the repository instead of
+    consuming it on private reasoning. When the assignment is complete, issue exactly
+    this command by itself:
     echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT
   instance_template: |
     Complete this bounded Coordinator assignment:
