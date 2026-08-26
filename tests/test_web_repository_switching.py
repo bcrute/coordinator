@@ -19,11 +19,15 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
+from starlette.testclient import TestClient
+
+from coordinator.authenticated_web_app import create_authenticated_app
 from coordinator.executor_settings import (
     ExecutorConfiguration,
     load_project_executor_settings,
     publish_project_executor_settings,
 )
+from coordinator.security import LocalSettings
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills" / "coordinate-claude-work"
@@ -346,6 +350,39 @@ class RepositorySwitchingTests(unittest.TestCase):
             load_project_executor_settings(repo_b).executor_adapter,
             "claude",
         )
+
+    def test_selected_repository_survives_application_restart(self) -> None:
+        root = self.root()
+        repo_a = root / "a-repo"
+        repo_b = root / "b-repo"
+        self.init_repo(repo_a, "A")
+        self.init_repo(repo_b, "B")
+        settings = LocalSettings(
+            external_url="http://127.0.0.1",
+            state_dir=root / "state",
+            trusted_hosts=("127.0.0.1",),
+        )
+
+        first = create_authenticated_app(repo_a, settings, repositories_root=root)
+        with TestClient(first, base_url="http://127.0.0.1") as client:
+            state = client.get("/api/state").json()
+            response = client.post(
+                "/api/repository/select",
+                json={"path": str(repo_b.resolve())},
+                headers={
+                    "Origin": "http://127.0.0.1",
+                    "X-CSRF-Token": state["security"]["csrf_token"],
+                },
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+
+        restarted = create_authenticated_app(repo_a, settings, repositories_root=root)
+        with TestClient(restarted, base_url="http://127.0.0.1") as client:
+            state = client.get("/api/state").json()
+            self.assertEqual(state["repo"], str(repo_b.resolve()))
+            self.assertEqual(
+                state["repository_catalog"]["active"], str(repo_b.resolve())
+            )
 
     def test_select_stops_running_fake_codex_and_app_owned_watcher(self) -> None:
         root = self.root()

@@ -102,6 +102,7 @@ BACKCHANNEL_LOGOUT_EVENT = "http://schemas.openid.net/event/backchannel-logout"
 BACKCHANNEL_LOGOUT_MAX_AGE_SECONDS = 300
 TERMINAL_OUTPUT_CHUNK_CHARS = 64 * 1024
 GRACEFUL_SHUTDOWN_SECONDS = 10
+ACTIVE_REPOSITORY_PREFERENCE = "active_repository_path"
 
 
 def _terminal_output_chunks(
@@ -163,6 +164,14 @@ def create_authenticated_app(
 
     operational = OperationalStore(settings.state_dir)
     operational.recover_interrupted()
+    saved_repository = operational.preferences().get(ACTIVE_REPOSITORY_PREFERENCE)
+    if isinstance(saved_repository, str):
+        known_paths = {
+            str(entry["path"])
+            for entry in web_app.discover_repositories(root_dir, root)
+        }
+        if saved_repository in known_paths:
+            root = Path(saved_repository)
     executor_service = ExecutorSettingsService(
         operational, executor_adapter or ClaudeExecutorAdapter()
     )
@@ -1481,6 +1490,9 @@ def create_authenticated_app(
             outcome, message, catalog = context.select(str(target.resolve()))
             if outcome not in {"selected", "unchanged"}:
                 return outcome, message, catalog
+            operational.set_preference(
+                ACTIVE_REPOSITORY_PREFERENCE, str(target.resolve())
+            )
             return "created", f"Created and selected {slug}.", catalog
         except (OSError, subprocess.SubprocessError):
             return "error", "The repository could not be created.", {}
@@ -1800,6 +1812,12 @@ def create_authenticated_app(
         outcome, message, catalog = await run_in_threadpool(
             context.select, value["path"]
         )
+        if outcome in {"selected", "unchanged"}:
+            await run_in_threadpool(
+                operational.set_preference,
+                ACTIVE_REPOSITORY_PREFERENCE,
+                value["path"],
+            )
         status = {"selected": 200, "unchanged": 200, "validation": 400, "error": 500}[
             outcome
         ]
