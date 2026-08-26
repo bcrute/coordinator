@@ -436,6 +436,88 @@ class MiniTrajectoryTests(unittest.TestCase):
 
 
 class MiniRunnerTests(unittest.TestCase):
+    def test_direct_claude_runner_enforces_the_same_handoff_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            prepared_repo(repo)
+            task_path = repo / ".coordination/planner/current-task.md"
+            scope = "\n".join(f"- Unit {number}." for number in range(1, 7))
+            work = "\n".join(f"- [ ] Implement unit {number}." for number in range(1, 7))
+            task = task_path.read_text(encoding="utf-8")
+            task = task.replace("- One file.", scope).replace(
+                "- [ ] Create and verify the file.", work
+            )
+            task_path.write_text(task, encoding="utf-8")
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "coordinator.run_claude_turn",
+                    "--repo",
+                    str(repo),
+                    "--claude-command",
+                    "missing-claude",
+                    "--max-turns",
+                    "40",
+                    "--dry-run",
+                ],
+                cwd=ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(completed.returncode, 3)
+            self.assertIn("6 work units", completed.stderr)
+            self.assertIn("allow at most 5", completed.stderr)
+
+    def test_direct_runner_rejects_oversized_handoff_before_model_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            prepared_repo(repo)
+            task_path = repo / ".coordination/planner/current-task.md"
+            task_path.write_text(
+                task_path.read_text(encoding="utf-8")
+                .replace("- One file.", "- First file.\n- Second file.\n- Third file.")
+                .replace(
+                    "- [ ] Create and verify the file.",
+                    "- [ ] Create the first file.\n- [ ] Create the second file.\n"
+                    "- [ ] Create the third file.",
+                ),
+                encoding="utf-8",
+            )
+            marker = repo / "should-not-run"
+            fake = executable(
+                repo / "fake-mini",
+                "from pathlib import Path\nPath('should-not-run').write_text('ran')\n",
+            )
+
+            completed = mini_turn(repo, str(fake), "--step-limit", "12")
+
+            self.assertEqual(completed.returncode, 3)
+            self.assertIn("3 work units", completed.stderr)
+            self.assertIn("allow at most 2", completed.stderr)
+            self.assertFalse(marker.exists())
+            self.assertFalse((repo / ".coordination/.mini-swe-agent-turn.lock").exists())
+
+    def test_direct_runner_rejects_task_routed_to_another_adapter(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            prepared_repo(repo)
+            task_path = repo / ".coordination/planner/current-task.md"
+            task_path.write_text(
+                task_path.read_text(encoding="utf-8").replace(
+                    "- Executor: `configured`", "- Executor: `claude`"
+                ),
+                encoding="utf-8",
+            )
+
+            completed = mini_turn(repo, "missing-mini", "--dry-run")
+
+            self.assertEqual(completed.returncode, 2)
+            self.assertIn("routes to 'claude', not mini-swe-agent", completed.stderr)
+
     def test_fake_success_writes_adapter_owned_handoff_and_generic_progress(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)

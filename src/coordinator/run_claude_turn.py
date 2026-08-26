@@ -14,9 +14,12 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from .coordination_locks import acquire_lock
+from .executor_settings import ExecutorConfiguration
+from .handoff_policy import load_handoff_configuration, validate_handoff_task
 from .process_guard import guarded_command
 
 
@@ -493,6 +496,29 @@ def run(args: argparse.Namespace) -> int:
     if not task_id or task_id == "none":
         print("error: assign a stable Task ID before running Claude", file=sys.stderr)
         return 2
+
+    configured = load_handoff_configuration(
+        repo,
+        ExecutorConfiguration(executor_adapter="claude", claude_max_turns=args.max_turns),
+    )
+    selected_executor = field(task, "Executor") or "configured"
+    resolved_executor = (
+        configured.executor_adapter
+        if selected_executor == "configured"
+        else selected_executor
+    )
+    if resolved_executor != "claude":
+        print(f"error: task routes to {resolved_executor!r}, not claude", file=sys.stderr)
+        return 2
+    try:
+        validate_handoff_task(
+            task,
+            replace(configured, claude_max_turns=args.max_turns),
+            selected_executor,
+        )
+    except ValueError as error:
+        print(f"error: cannot launch executor handoff: {error}", file=sys.stderr)
+        return 3
 
     review_round = field(task, "Review round")
     status_path = repo / ".coordination" / "coder" / "status.md"

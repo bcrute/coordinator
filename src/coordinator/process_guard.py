@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Sequence
+from pathlib import Path
 
 
 CHILD_STOP_TIMEOUT_SECONDS = 2.0
@@ -39,13 +40,60 @@ def _signal_group(child: subprocess.Popen[object], number: int) -> None:
         child.send_signal(number)
 
 
+def _linux_descendant_groups(root_pid: int) -> set[int]:
+    """Return process groups below ``root_pid``, including escaped sessions."""
+
+    if not sys.platform.startswith("linux"):
+        return set()
+    processes: dict[int, tuple[int, int]] = {}
+    for stat_path in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            pid = int(stat_path.parent.name)
+            suffix = stat_path.read_text(encoding="utf-8").rsplit(") ", 1)[1].split()
+            processes[pid] = (int(suffix[1]), int(suffix[2]))
+        except (FileNotFoundError, IndexError, OSError, ValueError):
+            continue
+    descendants = {root_pid}
+    changed = True
+    while changed:
+        changed = False
+        for pid, (parent, _group) in processes.items():
+            if parent in descendants and pid not in descendants:
+                descendants.add(pid)
+                changed = True
+    return {
+        group
+        for pid in descendants
+        if (record := processes.get(pid)) is not None
+        for group in (record[1],)
+        if group > 1
+    }
+
+
+def _signal_groups(groups: set[int], number: int) -> None:
+    own_group = os.getpgrp()
+    for group in groups:
+        if group == own_group:
+            continue
+        try:
+            os.killpg(group, number)
+        except (ProcessLookupError, PermissionError):
+            continue
+
+
 def _stop_child(child: subprocess.Popen[object], number: int) -> None:
-    _signal_group(child, number)
+    groups = _linux_descendant_groups(child.pid)
+    groups.add(child.pid)
+    _signal_groups(groups, number)
     try:
         child.wait(timeout=CHILD_STOP_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
-        _signal_group(child, signal.SIGKILL)
+        _signal_groups(groups | _linux_descendant_groups(child.pid), signal.SIGKILL)
         child.wait()
+    else:
+        # A descendant can create its own session and be reparented as soon as
+        # the direct child exits. The pre-signal group snapshot still owns it.
+        _signal_groups(groups, signal.SIGKILL)
 
 
 def run(command: Sequence[str], *, owner_pid: int | None = None) -> int:

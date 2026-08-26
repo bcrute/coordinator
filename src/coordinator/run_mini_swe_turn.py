@@ -12,10 +12,13 @@ import shutil
 import subprocess
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from .coordination_locks import acquire_lock
+from .executor_settings import ExecutorConfiguration
+from .handoff_policy import load_handoff_configuration, validate_handoff_task
 from .mini_swe_profiles import MINI_SWE_PROFILES, profile_config
 from .process_guard import guarded_command
 
@@ -362,6 +365,35 @@ def run(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    configured = load_handoff_configuration(
+        repo,
+        ExecutorConfiguration(
+            executor_adapter="mini-swe-agent",
+            mini_swe_model=args.model or "configured",
+            mini_swe_step_limit=args.step_limit,
+        ),
+    )
+    selected_executor = field(task, "Executor") or "configured"
+    resolved_executor = (
+        configured.executor_adapter
+        if selected_executor == "configured"
+        else selected_executor
+    )
+    if resolved_executor != "mini-swe-agent":
+        print(
+            f"error: task routes to {resolved_executor!r}, not mini-swe-agent",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        validate_handoff_task(
+            task,
+            replace(configured, mini_swe_step_limit=args.step_limit),
+            selected_executor,
+        )
+    except ValueError as error:
+        print(f"error: cannot launch executor handoff: {error}", file=sys.stderr)
+        return 3
     if status_path.is_file():
         prior = status_path.read_text(encoding="utf-8")
         if (

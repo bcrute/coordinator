@@ -10,6 +10,9 @@ product-code writer.
   `.coordination/coder/` when the runtime cannot safely do so itself.
 - The primary owns the overall goal, assigns one bounded executor subgoal at a time, and
   sets `planner/goal.md` to `done` only after its completion criteria are met.
+- In an app-managed workflow, the primary signals a handoff only by writing the bounded
+  task and then waiting. The watcher exclusively launches executors; the primary must
+  not invoke `coordinator run-turn`, an adapter runner, or an executor CLI directly.
 - After each implementation handoff, the primary reviews the complete diff and evidence,
   then requests corrections, assigns the next subgoal, or records the overall
   completion in `reviews/completion.md`.

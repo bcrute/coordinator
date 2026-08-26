@@ -88,6 +88,10 @@ class WorkflowTests(unittest.TestCase):
                 },
             )
             self.assertIn("# Existing Codex rules", (target / "AGENTS.md").read_text())
+            self.assertIn(
+                "The watcher exclusively launches executors",
+                (target / "AGENTS.md").read_text(),
+            )
             self.assertIn("# Existing Claude rules", (target / "CLAUDE.md").read_text())
             self.assertIn("# Events project context", (target / ".coordination/PROJECT.md").read_text())
             self.assertTrue((target / ".coordination/planner/goal.md").is_file())

@@ -416,7 +416,7 @@ class ClaudeRunnerTests(CoordinationFixture):
             "model": "opus",
             "subagent_model": "sonnet",
             "permission_mode": "auto",
-            "max_turns": 4,
+            "max_turns": 8,
             "progress_interval": 0.001,
             "dry_run": False,
         }

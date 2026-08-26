@@ -90,6 +90,43 @@ class ProcessGuardTests(unittest.TestCase):
                 if grandchild_pid and process_running(grandchild_pid):
                     os.kill(grandchild_pid, signal.SIGKILL)
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "uses Linux process inspection")
+    def test_session_escaping_descendant_terminates_with_guard_owner(self) -> None:
+        child_source = (
+            "import pathlib, subprocess, sys, time; "
+            "escaped = subprocess.Popen([sys.executable, '-c', "
+            "'import time; time.sleep(300)'], start_new_session=True); "
+            "pathlib.Path(sys.argv[1]).write_text(str(escaped.pid)); time.sleep(300)"
+        )
+        parent_source = (
+            "import subprocess, sys, time; "
+            "from coordinator.process_guard import guarded_command; "
+            "subprocess.Popen(guarded_command([sys.executable, '-c', sys.argv[2], "
+            "sys.argv[1]])); time.sleep(300)"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            pid_path = Path(directory) / "escaped.pid"
+            parent = subprocess.Popen(
+                [sys.executable, "-c", parent_source, str(pid_path), child_source]
+            )
+            escaped_pid = 0
+            try:
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and not pid_path.exists():
+                    time.sleep(0.05)
+                self.assertTrue(pid_path.exists(), "escaped descendant never started")
+                escaped_pid = int(pid_path.read_text(encoding="utf-8"))
+                self.assertTrue(process_running(escaped_pid))
+                parent.kill()
+                parent.wait(timeout=5)
+                self.wait_until_stopped(escaped_pid)
+            finally:
+                if parent.poll() is None:
+                    parent.kill()
+                    parent.wait(timeout=5)
+                if escaped_pid and process_running(escaped_pid):
+                    os.kill(escaped_pid, signal.SIGKILL)
+
 
 if __name__ == "__main__":
     unittest.main()
