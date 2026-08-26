@@ -11,6 +11,7 @@ protocol cycle because it did not start with a fresh target and report contract.
 | 1 | Blocked | implementation | Bounded mini-swe role profiles and process-tree supervision (`2b0b4ab`) | 0 |
 | 2 | Failed | routing | Persist selected repository across application restarts (`6cbe93a`) | 0 |
 | 3 | Failed | routing | Enforce policy at every executor entry point, reserve launches for the watcher, and terminate session-escaping descendants | 0 |
+| 4 | Running | setup | — | 0 |
 
 ## Findings
 
