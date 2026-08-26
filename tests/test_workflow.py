@@ -92,6 +92,10 @@ class WorkflowTests(unittest.TestCase):
                 "The watcher exclusively launches executors",
                 (target / "AGENTS.md").read_text(),
             )
+            self.assertIn(
+                "Update live coordination files in place and atomically",
+                (target / "AGENTS.md").read_text(),
+            )
             self.assertIn("# Existing Claude rules", (target / "CLAUDE.md").read_text())
             self.assertIn("# Events project context", (target / ".coordination/PROJECT.md").read_text())
             self.assertTrue((target / ".coordination/planner/goal.md").is_file())

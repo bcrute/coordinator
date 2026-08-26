@@ -350,9 +350,19 @@ def publish_project_executor_settings(
         raise ValueError("project executor settings must not be a symbolic link")
     if destination.exists() and not replace:
         return destination
+    # Import lazily because handoff_policy depends on ExecutorConfiguration.
+    # The projection gives interactive primaries the same precomputed limits
+    # enforced by watchers and direct runners, without exposing global state.
+    from .handoff_policy import handoff_budget
+
     payload = {
         "schema_version": PROJECT_EXECUTOR_SETTINGS_VERSION,
         "configuration": asdict(configuration),
+        "handoff_policy": {
+            "configured_executor": configuration.executor_adapter,
+            "mini-swe-agent": asdict(handoff_budget(configuration, "mini-swe-agent")),
+            "claude": asdict(handoff_budget(configuration, "claude")),
+        },
     }
     encoded = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
     temporary = runtime / (
@@ -399,9 +409,14 @@ def load_project_executor_settings(repo: Path) -> ExecutorConfiguration:
         raise ValueError("project executor settings are not valid JSON") from error
     if (
         not isinstance(payload, dict)
-        or set(payload) != {"schema_version", "configuration"}
+        or not {"schema_version", "configuration"} <= set(payload)
+        or not set(payload) <= {"schema_version", "configuration", "handoff_policy"}
         or payload.get("schema_version") != PROJECT_EXECUTOR_SETTINGS_VERSION
         or not isinstance(payload.get("configuration"), dict)
+        or (
+            "handoff_policy" in payload
+            and not isinstance(payload.get("handoff_policy"), dict)
+        )
     ):
         raise ValueError("project executor settings have an unsupported schema")
     return ExecutorConfiguration.from_mapping(payload["configuration"])

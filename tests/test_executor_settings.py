@@ -130,13 +130,29 @@ class ExecutorSettingsUnitTests(unittest.TestCase):
             self.assertEqual(load_project_executor_settings(repo), first)
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertNotIn("secret", path.read_text(encoding="utf-8").lower())
+            projection = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                projection["handoff_policy"]["mini-swe-agent"]["maximum_work_units"],
+                2,
+            )
+            self.assertEqual(
+                projection["handoff_policy"]["claude"]["maximum_work_units"],
+                5,
+            )
 
             second = ExecutorConfiguration(
                 executor_adapter="mini-swe-agent",
                 mini_swe_model="Qwen/Qwen3.8-27B",
+                mini_swe_step_limit=24,
             )
             publish_project_executor_settings(repo, second)
             self.assertEqual(load_project_executor_settings(repo), second)
+            projection = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(projection["handoff_policy"]["configured_executor"], "mini-swe-agent")
+            self.assertEqual(
+                projection["handoff_policy"]["mini-swe-agent"]["maximum_work_units"],
+                4,
+            )
             self.assertEqual(list(path.parent.glob(".*.tmp")), [])
             publish_project_executor_settings(repo, first, replace=False)
             self.assertEqual(load_project_executor_settings(repo), second)

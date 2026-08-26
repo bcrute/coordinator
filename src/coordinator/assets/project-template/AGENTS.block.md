@@ -13,6 +13,10 @@ product-code writer.
 - In an app-managed workflow, the primary signals a handoff only by writing the bounded
   task and then waiting. The watcher exclusively launches executors; the primary must
   not invoke `coordinator run-turn`, an adapter runner, or an executor CLI directly.
+- Read the exact precomputed work-unit ceiling from
+  `.coordination/runtime/executor-settings.json`; do not estimate it from the raw limit.
+- Update live coordination files in place and atomically. Never delete a live goal, task,
+  review, or project file as an intermediate step before recreating it.
 - After each implementation handoff, the primary reviews the complete diff and evidence,
   then requests corrections, assigns the next subgoal, or records the overall
   completion in `reviews/completion.md`.

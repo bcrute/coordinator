@@ -24,7 +24,8 @@ Repository-level `AGENTS.md` and `CLAUDE.md` remain binding.
 - `reviews/latest.md`: the primary's verdict on that handoff.
 - `reviews/completion.md`: the primary's user-facing overall-goal result.
 - `runtime/executor-settings.json`: ignored, non-secret projection of the app's
-  selected executor and model settings for project-local handoff commands.
+  selected executor and model settings plus exact precomputed handoff ceilings
+  for project-local planning and handoff commands.
 
 ## State machine
 
@@ -58,6 +59,11 @@ selected executor's persisted step/turn limit, reserves 25 percent for
 verification and recovery, and rejects an oversized handoff before starting a
 model process. The primary splits remaining work into later task IDs; owners set
 the runtime limit once rather than resizing it for each task.
+
+The primary reads `handoff_policy` in `runtime/executor-settings.json` and obeys
+the selected executor's `maximum_work_units` exactly. It updates live coordination
+documents in place; they must never disappear temporarily between a delete and a
+later recreation.
 
 ## Watchers
 
