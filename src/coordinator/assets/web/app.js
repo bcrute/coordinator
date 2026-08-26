@@ -36,6 +36,7 @@ var nodes = Object.create(null);
 var counts = new Intl.NumberFormat();
 var tickTimer = null;
 var usageTimer = null;
+var providerUsageCheckedAt = Object.create(null);
 var usageHistoryPayload = null;
 var usageHistoryProvider = "";
 var usageHistoryLoaded = false;
@@ -1859,8 +1860,28 @@ function usageWindowChip(windowValue) {
   return chip;
 }
 
+function paintProviderUsageAge() {
+  [
+    { id: "codex", node: el("usage-codex-checked") },
+    { id: "claude", node: el("usage-claude-checked") },
+  ].forEach(function (provider) {
+    var node = provider.node;
+    var checkedAt = providerUsageCheckedAt[provider.id];
+    if (!node) return;
+    if (typeof checkedAt !== "number" || !Number.isFinite(checkedAt)) {
+      node.textContent = "not checked";
+      node.removeAttribute("title");
+      return;
+    }
+    node.textContent = "checked " + ago(Date.now() - checkedAt);
+    node.title = "Last checked " + new Date(checkedAt).toLocaleString();
+  });
+}
+
 function renderProviderUsage(payload) {
   var providers = list(record(payload).providers);
+  var generatedValue = record(payload).generated_at;
+  var generatedAt = generatedValue ? new Date(generatedValue).getTime() : NaN;
   [
     {
       id: "codex",
@@ -1886,6 +1907,15 @@ function renderProviderUsage(payload) {
     var title = text(details.name, target.id === "codex" ? "Codex" : "Claude");
     var plan = text(details.plan);
     var stale = details.status === "stale" || details.stale === true;
+    var providerTimestamp = details.last_error_at || details.last_success_at;
+    var providerCheckedAt = Number.isFinite(generatedAt)
+      ? generatedAt
+      : providerTimestamp
+        ? new Date(providerTimestamp).getTime()
+        : NaN;
+    if (Number.isFinite(providerCheckedAt)) {
+      providerUsageCheckedAt[target.id] = providerCheckedAt;
+    }
     providerElement.dataset.status = text(details.status, "unavailable");
     if (target.plan) {
       target.plan.textContent = [plan, stale ? "stale" : ""].filter(Boolean).join(" · ");
@@ -1925,6 +1955,7 @@ function renderProviderUsage(payload) {
     }
     providerElement.title = title;
   });
+  paintProviderUsageAge();
   var refresh = el("usage-refresh");
   if (refresh) refresh.disabled = record(payload).refreshing === true;
 }
@@ -2881,6 +2912,7 @@ function paintConnection() {
       ? "No snapshot received yet."
       : "Last successful refresh " + ago(age) + ".") + trouble
   );
+  paintProviderUsageAge();
 }
 
 function acceptState(state) {

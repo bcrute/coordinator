@@ -192,6 +192,13 @@ class ProviderUsageHeaderTests(unittest.TestCase):
         self.assertIn("result.status < 200 || result.status >= 300", refresh.group(0))
         self.assertNotIn("result.response", refresh.group(0))
 
+    def test_usage_header_shows_a_live_last_checked_age(self):
+        self.assertIn('id="usage-codex-checked"', self.html)
+        self.assertIn('id="usage-claude-checked"', self.html)
+        self.assertIn("function paintProviderUsageAge()", self.js)
+        self.assertIn('node.textContent = "checked " + ago(Date.now() - checkedAt)', self.js)
+        self.assertIn("paintProviderUsageAge();", self.js)
+
     def test_usage_is_rendered_as_remaining_not_consumed(self):
         renderer = re.search(r"function renderProviderUsage\([\s\S]*?\n}\n", self.js)
         self.assertIsNotNone(renderer)

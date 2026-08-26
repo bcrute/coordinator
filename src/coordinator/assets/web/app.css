@@ -148,10 +148,19 @@ a {
 }
 
 .usage-provider-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.usage-provider-label .usage-provider-checked {
+  color: var(--dim);
+  font-weight: 400;
+  text-transform: none;
 }
 
 .usage-provider-label small {
