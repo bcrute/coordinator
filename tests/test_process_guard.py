@@ -127,6 +127,69 @@ class ProcessGuardTests(unittest.TestCase):
                 if escaped_pid and process_running(escaped_pid):
                     os.kill(escaped_pid, signal.SIGKILL)
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "uses Linux process inspection")
+    def test_session_escaping_descendant_gets_term_cleanup_grace(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cleanup = root / "cleanup"
+            pid_path = root / "escaped.pid"
+            escaped_script = root / "escaped.py"
+            escaped_script.write_text(
+                "import os, signal, sys, time\n"
+                "from pathlib import Path\n"
+                "def stop(*_):\n"
+                "    time.sleep(0.3)\n"
+                "    Path(sys.argv[1]).write_text('clean')\n"
+                "    os._exit(0)\n"
+                "signal.signal(signal.SIGTERM, stop)\n"
+                "time.sleep(300)\n",
+                encoding="utf-8",
+            )
+            child_script = root / "child.py"
+            child_script.write_text(
+                "import subprocess, sys, time\n"
+                "from pathlib import Path\n"
+                "child = subprocess.Popen([sys.executable, sys.argv[1], sys.argv[2]], "
+                "start_new_session=True)\n"
+                "Path(sys.argv[3]).write_text(str(child.pid))\n"
+                "time.sleep(300)\n",
+                encoding="utf-8",
+            )
+            parent_source = (
+                "import subprocess, sys, time; "
+                "from coordinator.process_guard import guarded_command; "
+                "subprocess.Popen(guarded_command([sys.executable, sys.argv[1], "
+                "sys.argv[2], sys.argv[3], sys.argv[4]])); time.sleep(300)"
+            )
+            parent = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    parent_source,
+                    str(child_script),
+                    str(escaped_script),
+                    str(cleanup),
+                    str(pid_path),
+                ]
+            )
+            escaped_pid = 0
+            try:
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and not pid_path.exists():
+                    time.sleep(0.05)
+                self.assertTrue(pid_path.exists(), "escaped descendant never started")
+                escaped_pid = int(pid_path.read_text(encoding="utf-8"))
+                parent.kill()
+                parent.wait(timeout=5)
+                self.wait_until_stopped(escaped_pid)
+                self.assertEqual(cleanup.read_text(encoding="utf-8"), "clean")
+            finally:
+                if parent.poll() is None:
+                    parent.kill()
+                    parent.wait(timeout=5)
+                if escaped_pid and process_running(escaped_pid):
+                    os.kill(escaped_pid, signal.SIGKILL)
+
 
 if __name__ == "__main__":
     unittest.main()

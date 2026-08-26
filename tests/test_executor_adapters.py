@@ -356,6 +356,7 @@ class MiniTrajectoryTests(unittest.TestCase):
         self.assertIn("agent.wall_time_limit_seconds=300", command)
         self.assertIn("model.cost_tracking=ignore_errors", command)
         self.assertIn("model.model_kwargs.api_base=http://127.0.0.1:8000/v1", command)
+        self.assertIn("model.model_kwargs.max_tokens=4096", command)
 
     def test_role_profile_is_applied_after_operator_config(self) -> None:
         args = Namespace(

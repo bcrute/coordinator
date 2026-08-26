@@ -81,6 +81,23 @@ def _signal_groups(groups: set[int], number: int) -> None:
             continue
 
 
+def _group_alive(group: int) -> bool:
+    try:
+        os.killpg(group, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def _wait_for_groups(groups: set[int], timeout: float) -> set[int]:
+    deadline = time.monotonic() + timeout
+    remaining = {group for group in groups if _group_alive(group)}
+    while remaining and time.monotonic() < deadline:
+        time.sleep(OWNER_CHECK_SECONDS)
+        remaining = {group for group in remaining if _group_alive(group)}
+    return remaining
+
+
 def _stop_child(child: subprocess.Popen[object], number: int) -> None:
     groups = _linux_descendant_groups(child.pid)
     groups.add(child.pid)
@@ -92,8 +109,11 @@ def _stop_child(child: subprocess.Popen[object], number: int) -> None:
         child.wait()
     else:
         # A descendant can create its own session and be reparented as soon as
-        # the direct child exits. The pre-signal group snapshot still owns it.
-        _signal_groups(groups, signal.SIGKILL)
+        # the direct child exits. Give its TERM handler a bounded chance to
+        # persist status and remove locks before escalating the saved groups.
+        _signal_groups(
+            _wait_for_groups(groups, CHILD_STOP_TIMEOUT_SECONDS), signal.SIGKILL
+        )
 
 
 def run(command: Sequence[str], *, owner_pid: int | None = None) -> int:

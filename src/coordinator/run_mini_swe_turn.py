@@ -24,6 +24,7 @@ from .process_guard import guarded_command
 
 
 ACTIVE_STATES = {"ready", "changes_requested"}
+BOUNDED_RESPONSE_TOKENS = 4096
 TOKEN_FIELDS = (
     "input_tokens",
     "cache_read_input_tokens",
@@ -189,6 +190,10 @@ def build_command(
                 "--config",
                 f"model.model_kwargs.api_base={args.api_base}",
             )
+        )
+    if profile == "bounded":
+        command.extend(
+            ("--config", f"model.model_kwargs.max_tokens={BOUNDED_RESPONSE_TOKENS}")
         )
     return command
 
