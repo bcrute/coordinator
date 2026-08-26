@@ -33,10 +33,20 @@ configuration choice. Coordinator passes the task to `mini --task` in unattended
 per-task trajectory, and normalizes token telemetry into
 `.coordination/runtime/executor-progress.json`.
 
+Coordinator layers a role-specific policy configuration after mini-swe-agent's base
+configuration and any operator endpoint configuration. Direct and delegated local
+implementation defaults to `bounded`: it treats the assignment as already decomposed,
+limits discovery to targeted context, begins edits or required verification by the
+second response, and avoids unsolicited reproduction scripts and broad test runs.
+`exploratory` deliberately retains mini-swe-agent's general issue-solving workflow and
+is opt-in. Local/API primary reviews use a fixed `primary-review` policy that prohibits
+product edits and prioritizes the durable review transition.
+
 The mini-swe-agent adapter, rather than the model, writes `coder/status.md` and
 `coder/latest-report.md`. The model is instructed not to touch `.coordination/`.
 Coordinator detects modifications to its planner/review files and reports the handoff
-as blocked. Codex still reviews the actual repository diff before accepting work.
+as blocked. The configured primary still reviews the actual repository diff before
+accepting work.
 
 Endpoint credentials are inherited from a named environment variable. Secret values
 are never accepted in TOML or placed in process arguments. mini-swe-agent is installed

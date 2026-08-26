@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlsplit
 
+from .mini_swe_profiles import MINI_SWE_PROFILES
+
 
 EXECUTOR_ADAPTERS = ("claude", "mini-swe-agent")
 
@@ -162,6 +164,7 @@ class MiniSweAgentExecutorAdapter:
     model: str = ""
     effort: str = ""
     config: Path | None = None
+    profile: str = "bounded"
     api_base: str = ""
     provider: str = "openai"
     api_key_env: str = "OPENAI_API_KEY"
@@ -183,6 +186,8 @@ class MiniSweAgentExecutorAdapter:
             str(repo),
             "--mini-command",
             self.command_name,
+            "--profile",
+            self.profile,
             "--provider",
             self.provider,
             "--api-key-env",
@@ -210,6 +215,8 @@ class MiniSweAgentExecutorAdapter:
             self.id,
             "--mini-swe-command",
             self.command_name,
+            "--mini-swe-profile",
+            self.profile,
             "--mini-swe-provider",
             self.provider,
             "--mini-swe-api-key-env",
@@ -235,6 +242,10 @@ class MiniSweAgentExecutorAdapter:
 def validate_mini_adapter(adapter: MiniSweAgentExecutorAdapter) -> MiniSweAgentExecutorAdapter:
     """Validate untrusted CLI/config values shared by direct and delegated use."""
 
+    if adapter.profile not in MINI_SWE_PROFILES:
+        raise ValueError(
+            f"mini-swe-agent profile must be one of {', '.join(MINI_SWE_PROFILES)}"
+        )
     if adapter.api_key_env and not re.fullmatch(
         r"[A-Za-z_][A-Za-z0-9_]*", adapter.api_key_env
     ):
@@ -268,6 +279,7 @@ def from_namespace(args: object) -> ExecutorAdapter:
                     if (raw_delegate_config := getattr(args, "mini_swe_config", None))
                     else None
                 ),
+                profile="bounded",
                 api_base=str(getattr(args, "mini_swe_api_base", "")),
                 provider=str(getattr(args, "mini_swe_provider", "openai")),
                 api_key_env=str(getattr(args, "mini_swe_api_key_env", "")),
@@ -305,6 +317,7 @@ def from_namespace(args: object) -> ExecutorAdapter:
             model=str(getattr(args, "mini_swe_model", "")),
             effort=str(getattr(args, "mini_swe_effort", "")),
             config=Path(raw_config) if raw_config else None,
+            profile=str(getattr(args, "mini_swe_profile", "bounded")),
             api_base=str(getattr(args, "mini_swe_api_base", "")),
             provider=str(getattr(args, "mini_swe_provider", "openai")),
             api_key_env=str(getattr(args, "mini_swe_api_key_env", "OPENAI_API_KEY")),

@@ -24,7 +24,9 @@ from .executor_adapters import (
     MiniSweAgentExecutorAdapter,
     resolve_executable,
 )
+from .mini_swe_profiles import MINI_SWE_PROFILES
 from .operational_store import OperationalStore
+from .process_guard import guarded_command
 
 EXECUTOR_PREFERENCE_KEY = "executor_configuration_v1"
 PROJECT_EXECUTOR_SETTINGS = Path(".coordination/runtime/executor-settings.json")
@@ -118,6 +120,7 @@ class ExecutorConfiguration:
     claude_local_delegation: bool = False
     mini_swe_model: str = ""
     mini_swe_effort: str = ""
+    mini_swe_profile: str = "bounded"
     mini_swe_api_base: str = ""
     mini_swe_provider: str = "openai"
     mini_swe_api_key_env: str = ""
@@ -138,6 +141,7 @@ class ExecutorConfiguration:
                 claude_local_delegation=adapter.delegation_enabled,
                 mini_swe_model=adapter.delegate_model,
                 mini_swe_effort=adapter.delegate_effort,
+                mini_swe_profile="bounded",
                 mini_swe_api_base=adapter.delegate_api_base,
                 mini_swe_provider=adapter.delegate_provider,
                 mini_swe_api_key_env=adapter.delegate_api_key_env,
@@ -150,6 +154,7 @@ class ExecutorConfiguration:
                 executor_adapter="mini-swe-agent",
                 mini_swe_model=adapter.model,
                 mini_swe_effort=adapter.effort,
+                mini_swe_profile=adapter.profile,
                 mini_swe_api_base=adapter.api_base,
                 mini_swe_provider=adapter.provider,
                 mini_swe_api_key_env=adapter.api_key_env,
@@ -192,6 +197,11 @@ class ExecutorConfiguration:
         provider = _text(merged["mini_swe_provider"], "mini_swe_provider", required=True)
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", provider):
             raise ValueError("mini_swe_provider has invalid characters")
+        profile = _text(merged["mini_swe_profile"], "mini_swe_profile", required=True)
+        if profile not in MINI_SWE_PROFILES:
+            raise ValueError(
+                f"mini_swe_profile must be one of {', '.join(MINI_SWE_PROFILES)}"
+            )
         key_env = _text(merged["mini_swe_api_key_env"], "mini_swe_api_key_env")
         if key_env and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key_env):
             raise ValueError("mini_swe_api_key_env must be an environment-variable name")
@@ -257,6 +267,7 @@ class ExecutorConfiguration:
             ),
             mini_swe_model=model,
             mini_swe_effort=_effort(merged["mini_swe_effort"], "mini_swe_effort"),
+            mini_swe_profile=profile,
             mini_swe_api_base=validate_api_base(merged["mini_swe_api_base"]),
             mini_swe_provider=provider,
             mini_swe_api_key_env=key_env,
@@ -295,6 +306,7 @@ class ExecutorConfiguration:
         return MiniSweAgentExecutorAdapter(
             model=self.mini_swe_model,
             effort=self.mini_swe_effort,
+            profile=self.mini_swe_profile,
             api_base=self.mini_swe_api_base,
             provider=self.mini_swe_provider,
             api_key_env=self.mini_swe_api_key_env,
@@ -522,6 +534,13 @@ class ExecutorSettingsService:
                             or configuration.claude_local_delegation
                             else configuration.claude_effort or "model default"
                         ),
+                        "profile": (
+                            configuration.mini_swe_profile
+                            if configuration.executor_adapter == "mini-swe-agent"
+                            else "bounded"
+                            if configuration.claude_local_delegation
+                            else "provider native"
+                        ),
                         "native_subagent_model": configuration.claude_subagent_model,
                         "native_subagent_effort": (
                             configuration.claude_subagent_effort or "inherit supervisor"
@@ -636,7 +655,7 @@ def discover_codex_models(
         raise ValueError("Codex CLI is not installed or not on PATH")
     try:
         process = subprocess.Popen(
-            [executable, "app-server", "--stdio"],
+            guarded_command([executable, "app-server", "--stdio"]),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,

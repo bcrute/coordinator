@@ -645,6 +645,8 @@
                 <label>Endpoint<input name="mini_swe_api_base" type="url" placeholder="Endpoint base URL ending in /v1" /></label>
                 <label>Model<select name="mini_swe_model"><option value="">Discover models from the endpoint…</option></select></label>
                 <label>Reasoning effort<select name="mini_swe_effort"><option value="">Endpoint default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Xhigh</option><option value="max">Max</option></select></label>
+                <label>Direct execution profile<select name="mini_swe_profile"><option value="bounded">Bounded assignment</option><option value="exploratory">Exploratory repository work</option></select></label>
+                <p class="note">Bounded is the normal Coordinator profile and prioritizes scoped edits over repository discovery. Exploratory retains mini-swe-agent's general issue-solving workflow.</p>
                 <label>LiteLLM provider<input name="mini_swe_provider" value="openai" required /></label>
                 <label>API-key environment variable<input name="mini_swe_api_key_env" placeholder="blank for an unauthenticated local endpoint" /></label>
                 <label>Step limit<input name="mini_swe_step_limit" type="number" min="6" max="200" value="12" required /></label>

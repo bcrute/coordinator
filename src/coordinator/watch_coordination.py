@@ -30,6 +30,7 @@ from .executor_adapters import (
 from .executor_adapters import resolve_executable as resolve_executor_executable
 from .executor_settings import ExecutorConfiguration, load_project_executor_settings
 from .handoff_policy import load_handoff_configuration, validate_handoff_task
+from .process_guard import guarded_command
 
 
 ACTIVE_TASK_STATES = {"ready", "changes_requested"}
@@ -358,7 +359,7 @@ def watch(args: argparse.Namespace) -> int:
                     )
                     relay_log.flush()
                     child = subprocess.Popen(
-                        command,
+                        guarded_command(command),
                         cwd=args.repo,
                         stdout=relay_log,
                         stderr=subprocess.STDOUT,
@@ -377,7 +378,9 @@ def watch(args: argparse.Namespace) -> int:
                         time.sleep(1.0)
                     returncode = child.wait()
             else:
-                returncode = subprocess.run(command, cwd=args.repo, check=False).returncode
+                returncode = subprocess.run(
+                    guarded_command(command), cwd=args.repo, check=False
+                ).returncode
             if returncode != 0:
                 failed_detail = f"{action} exited with status {returncode}"
                 write_status(
@@ -492,6 +495,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--mini-swe-command", default="mini")
     parser.add_argument("--mini-swe-model", default="")
+    parser.add_argument(
+        "--mini-swe-profile",
+        choices=("bounded", "exploratory"),
+        default="bounded",
+    )
     parser.add_argument(
         "--mini-swe-effort",
         choices=("low", "medium", "high", "xhigh", "max"),

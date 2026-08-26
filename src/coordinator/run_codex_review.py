@@ -285,6 +285,7 @@ this subgoal passed. End after writing the coordination files."""
             api_base=getattr(args, "local_api_base", ""),
             provider=getattr(args, "local_provider", "openai"),
             effort=getattr(args, "primary_local_effort", ""),
+            profile="primary-review",
         )
         command = build_mini_command(mini_args, executable or primary_command, prompt, trajectory)
     if primary_adapter != "mini-swe-agent":

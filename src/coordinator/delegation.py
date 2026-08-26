@@ -16,6 +16,7 @@ from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Callable, Sequence
 
+from .process_guard import guarded_command
 from .run_mini_swe_turn import (
     build_command,
     load_trajectory,
@@ -241,7 +242,7 @@ def run_validation(command: Sequence[str], cwd: Path, timeout: float) -> dict[st
     """Run one shell-free check with process-group cleanup and bounded output."""
 
     child = subprocess.Popen(
-        list(command),
+        guarded_command(command),
         cwd=cwd,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
@@ -391,6 +392,7 @@ class DelegationService:
                 cost_limit=self.configuration.cost_limit,
                 api_base=self.configuration.api_base,
                 provider=self.configuration.provider,
+                profile="bounded",
             )
             command = build_command(command_args, executable, prompt, trajectory_path)
             child_env = worker_environment(
@@ -400,7 +402,7 @@ class DelegationService:
             self._write_state(state_path, state)
             with log_path.open("wb") as log:
                 child = subprocess.Popen(
-                    command,
+                    guarded_command(command),
                     cwd=worktree,
                     env=child_env,
                     stdin=subprocess.DEVNULL,

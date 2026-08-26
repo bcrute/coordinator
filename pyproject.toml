@@ -55,6 +55,7 @@ where = ["src"]
 coordinator = [
   "assets/web/*",
   "assets/web/vendor/*",
+  "assets/mini-swe/*.yaml",
   "assets/project-template/*.md",
   "assets/project-template/.coordination/*.md",
   "assets/project-template/.coordination/coder/*.md",

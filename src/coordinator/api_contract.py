@@ -403,6 +403,7 @@ def openapi_document() -> dict[str, Any]:
                 "claude_local_delegation": {"type": "boolean"},
                 "mini_swe_model": {"type": "string"},
                 "mini_swe_effort": {"type": "string"},
+                "mini_swe_profile": {"enum": ["bounded", "exploratory"]},
                 "mini_swe_api_base": {"type": "string"},
                 "mini_swe_provider": {"type": "string", "minLength": 1},
                 "mini_swe_api_key_env": {"type": "string"},

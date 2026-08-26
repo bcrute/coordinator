@@ -27,6 +27,7 @@ from coordinator.run_mini_swe_turn import (
     parse_args as parse_mini_args,
     trajectory_usage,
 )
+from coordinator.mini_swe_profiles import profile_config
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -153,6 +154,7 @@ class AdapterContractTests(unittest.TestCase):
             settings.write_text(
                 'executor_adapter = "mini-swe-agent"\n'
                 'mini_swe_model = "openai/local"\n'
+                'mini_swe_profile = "exploratory"\n'
                 'mini_swe_config = "mini.yaml"\n'
                 'mini_swe_api_base = "http://127.0.0.1:8000/v1"\n'
                 'mini_swe_step_limit = 9\n'
@@ -163,6 +165,7 @@ class AdapterContractTests(unittest.TestCase):
             args = parse_web_args(["--config", str(settings)])
             self.assertEqual(args.executor_adapter, "mini-swe-agent")
             self.assertEqual(args.mini_swe_config, root / "mini.yaml")
+            self.assertEqual(args.mini_swe_profile, "exploratory")
             self.assertEqual(args.mini_swe_step_limit, 9)
             self.assertEqual(args.mini_swe_timeout_seconds, 240)
 
@@ -183,6 +186,7 @@ class AdapterContractTests(unittest.TestCase):
         self.assertIn("7", command)
         self.assertIn("120", command)
         self.assertEqual(command[command.index("--effort") + 1], "medium")
+        self.assertEqual(command[command.index("--profile") + 1], "bounded")
 
     def test_claude_adapter_carries_independent_lead_and_subagent_effort(self) -> None:
         adapter = ClaudeExecutorAdapter(
@@ -347,10 +351,50 @@ class MiniTrajectoryTests(unittest.TestCase):
         command = build_command(args, "/usr/bin/mini", "task", Path("run.json"))
         first_config = command.index("--config")
         self.assertEqual(command[first_config + 1], "mini.yaml")
+        self.assertIn(str(profile_config("bounded")), command)
         self.assertIn("agent.step_limit=8", command)
         self.assertIn("agent.wall_time_limit_seconds=300", command)
         self.assertIn("model.cost_tracking=ignore_errors", command)
         self.assertIn("model.model_kwargs.api_base=http://127.0.0.1:8000/v1", command)
+
+    def test_role_profile_is_applied_after_operator_config(self) -> None:
+        args = Namespace(
+            model="openai/local",
+            effort="",
+            config=Path("operator.yaml"),
+            profile="bounded",
+            step_limit=8,
+            timeout_seconds=300,
+            cost_limit=0.0,
+            api_base="",
+            provider="openai",
+        )
+        command = build_command(args, "/usr/bin/mini", "task", Path("run.json"))
+        configs = [
+            command[index + 1]
+            for index, value in enumerate(command)
+            if value == "--config"
+        ]
+        self.assertEqual(configs[:3], ["mini.yaml", "operator.yaml", str(profile_config("bounded"))])
+        policy = profile_config("bounded").read_text(encoding="utf-8")
+        self.assertIn("By the end of the\n    second response", policy)
+        self.assertIn("Do not inventory the repository", policy)
+
+    def test_exploratory_profile_deliberately_uses_stock_agent_prompt(self) -> None:
+        args = Namespace(
+            model="openai/local",
+            effort="",
+            config=None,
+            profile="exploratory",
+            step_limit=8,
+            timeout_seconds=300,
+            cost_limit=0.0,
+            api_base="",
+            provider="openai",
+        )
+        command = build_command(args, "/usr/bin/mini", "task", Path("run.json"))
+        self.assertEqual(command.count("--config"), 4)
+        self.assertNotIn(str(profile_config("bounded")), command)
 
     def test_command_passes_reasoning_effort_as_a_litellm_model_option(self) -> None:
         args = Namespace(

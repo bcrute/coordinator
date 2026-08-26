@@ -28,6 +28,7 @@ from coordinator.provider_usage import (
     collect_claude_usage,
     collect_codex_usage,
 )
+from coordinator.process_guard import guarded_command
 from coordinator.security import LocalSettings
 
 
@@ -172,7 +173,8 @@ class CollectorTests(unittest.TestCase):
 
         popen.assert_called_once()
         self.assertEqual(
-            popen.call_args.args[0], ["/usr/bin/codex-test", "app-server", "--stdio"]
+            popen.call_args.args[0],
+            guarded_command(["/usr/bin/codex-test", "app-server", "--stdio"]),
         )
         self.assertIn('"account/rateLimits/read"', process.stdin.getvalue())
         self.assertNotIn("exec", process.stdin.getvalue())

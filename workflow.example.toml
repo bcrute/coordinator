@@ -42,6 +42,9 @@ usage_refresh_seconds = 3600
 # claude_local_delegation = true
 # mini_swe_command = "mini"
 # mini_swe_model = "your-local-model"
+# "bounded" is the normal Coordinator packet executor. Use "exploratory" only
+# for genuinely open-ended repository investigation.
+# mini_swe_profile = "bounded"
 # mini_swe_api_base = "http://127.0.0.1:8000/v1"
 # mini_swe_provider = "openai"
 # Leave blank for a local endpoint with no authentication, or name an inherited key.

@@ -304,6 +304,7 @@ default:
 ```toml
 executor_adapter = "mini-swe-agent"
 mini_swe_model = "your-local-model"
+mini_swe_profile = "bounded"
 mini_swe_api_base = "http://127.0.0.1:8000/v1"
 mini_swe_provider = "openai"
 mini_swe_api_key_env = ""
@@ -315,9 +316,14 @@ For an authenticated endpoint, export its key before starting Coordinator and pu
 the environment-variable name in TOML or Settings. Start the app normally and check
 `coordinator doctor --config workflow.toml`. The watcher launches one noninteractive
 mini-swe-agent turn for each ready assignment, stores trajectories below
-`.coordination/runtime/trajectories/`, and hands the resulting diff back to Codex for
-review. This first integration is deliberately single-agent: mini-swe-agent does not
-create or report nested workers here.
+`.coordination/runtime/trajectories/`, and hands the resulting diff to the configured
+primary for review. The default `bounded` profile replaces mini-swe-agent's general
+issue-exploration prompt with Coordinator's scoped packet policy: targeted inspection,
+an edit or required verification by the second response, no unsolicited reproduction
+scripts, and narrow evidence. Select `exploratory` only for genuinely open-ended
+repository work. Local/API primary reviews always use a separate review-only profile.
+This integration is deliberately single-agent: mini-swe-agent does not create or report
+nested workers here.
 
 ### Claude-supervised local delegation through MCP
 

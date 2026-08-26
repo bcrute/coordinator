@@ -231,6 +231,7 @@ class CodexReviewRunnerTests(CoordinationFixture):
         self.assertIn("--model openai/Qwen3.8-27B", command)
         self.assertIn("agent.step_limit=36", command)
         self.assertIn("reasoning_effort=high", command)
+        self.assertIn("primary-review.yaml", command)
         self.assertIn("<coordination review prompt>", command)
         self.assertNotIn("You own the overall objective", command)
 

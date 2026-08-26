@@ -63,6 +63,7 @@ def mini_payload(**changes: object) -> dict[str, object]:
         "claude_local_delegation": False,
         "mini_swe_model": "Qwen/Qwen3.8-27B",
         "mini_swe_effort": "low",
+        "mini_swe_profile": "bounded",
         "mini_swe_api_base": "http://127.0.0.1:8000/v1",
         "mini_swe_provider": "openai",
         "mini_swe_api_key_env": "",
@@ -214,6 +215,8 @@ class ExecutorSettingsUnitTests(unittest.TestCase):
             )
         with self.assertRaisesRegex(ValueError, "primary_adapter"):
             ExecutorConfiguration.from_mapping(mini_payload(primary_adapter="invented"))
+        with self.assertRaisesRegex(ValueError, "mini_swe_profile"):
+            ExecutorConfiguration.from_mapping(mini_payload(mini_swe_profile="generic"))
 
     def test_primary_runtime_can_be_claude_without_changing_the_executor(self) -> None:
         configuration = ExecutorConfiguration.from_mapping(
@@ -439,6 +442,7 @@ class ExecutorSettingsAPITests(unittest.TestCase):
             self.assertIn("--executor-adapter", command)
             self.assertIn("mini-swe-agent", command)
             self.assertIn("Qwen/Qwen3.8-27B", command)
+            self.assertEqual(command[command.index("--mini-swe-profile") + 1], "bounded")
             self.assertIn("--codex-model", command)
             self.assertIn("gpt-5.6-sol", command)
             self.assertEqual(
@@ -453,6 +457,9 @@ class ExecutorSettingsAPITests(unittest.TestCase):
             self.assertEqual(
                 response.json()["configuration"]["mini_swe_model"],
                 "Qwen/Qwen3.8-27B",
+            )
+            self.assertEqual(
+                response.json()["configuration"]["mini_swe_profile"], "bounded"
             )
             preferences = client.get("/api/preferences").json()["preferences"]
             self.assertNotIn(EXECUTOR_PREFERENCE_KEY, preferences)

@@ -169,6 +169,8 @@ class RequiredFilesExistTests(unittest.TestCase):
             PACKAGE / "cli.py",
             PACKAGE / "web_app.py",
             PACKAGE / "authenticated_web_app.py",
+            PACKAGE / "assets" / "mini-swe" / "bounded.yaml",
+            PACKAGE / "assets" / "mini-swe" / "primary-review.yaml",
         ]
         for path in required:
             with self.subTest(path=path):
@@ -523,6 +525,7 @@ class PublicCheckoutUnitDiscoveryTests(unittest.TestCase):
             "test_coordinator_cli.py",
             "test_operational_store.py",
             "test_process_activity.py",
+            "test_process_guard.py",
             "test_provider_usage.py",
             "test_usage_history.py",
             "test_executor_adapters.py",

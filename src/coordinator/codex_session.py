@@ -26,6 +26,7 @@ import time
 from typing import Sequence
 
 from .process_activity import ProcessActivityObserver
+from .process_guard import guarded_command
 
 DEFAULT_MAX_BUFFER_CHARS = 1_000_000
 DEFAULT_MAX_WRITE_BYTES = 64 * 1024
@@ -180,7 +181,7 @@ class CodexSessionManager:
             master_fd, slave_fd = pty.openpty()
             try:
                 process = subprocess.Popen(
-                    list(command),
+                    guarded_command(command),
                     cwd=self._repo_path,
                     stdin=slave_fd,
                     stdout=slave_fd,

@@ -2411,6 +2411,14 @@ function toggleExecutorFields() {
   var strategy = form.elements.namedItem("execution_strategy").value;
   var local = strategy !== "claude" || form.elements.namedItem("primary_adapter").value === "mini-swe-agent";
   el("local-model-settings").hidden = !local;
+  var profile = form.elements.namedItem("mini_swe_profile");
+  if (profile) {
+    if (strategy === "claude-local") profile.value = "bounded";
+    profile.disabled = strategy === "claude-local";
+    profile.title = strategy === "claude-local"
+      ? "Claude MCP delegation always uses the bounded profile."
+      : "Choose bounded for Coordinator packets or exploratory for open-ended repository work.";
+  }
   var supervisor = document.querySelector('.role-card[data-role="supervisor"]');
   if (supervisor) supervisor.dataset.inactive = strategy === "mini-swe-agent" ? "true" : "false";
   setText(
@@ -2674,6 +2682,7 @@ function executorSettingsPayload(form) {
     claude_local_delegation: strategy === "claude-local",
     mini_swe_model: form.elements.namedItem("mini_swe_model").value.trim(),
     mini_swe_effort: form.elements.namedItem("mini_swe_effort").value,
+    mini_swe_profile: form.elements.namedItem("mini_swe_profile").value,
     mini_swe_api_base: form.elements.namedItem("mini_swe_api_base").value.trim(),
     mini_swe_provider: form.elements.namedItem("mini_swe_provider").value.trim(),
     mini_swe_api_key_env: form.elements.namedItem("mini_swe_api_key_env").value.trim(),

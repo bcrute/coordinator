@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from . import __version__
+from .process_guard import guarded_command
 
 DEFAULT_REFRESH_SECONDS = 3600
 PROVIDER_TIMEOUT_SECONDS = 10.0
@@ -611,7 +612,7 @@ def collect_codex_usage(
         raise ProviderUsageError("Codex CLI is not installed or not on PATH.")
     try:
         process = subprocess.Popen(
-            [executable, "app-server", "--stdio"],
+            guarded_command([executable, "app-server", "--stdio"]),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .coordination_locks import active_lock
 from .executor_adapters import ExecutorAdapter
+from .process_guard import guarded_command
 from .repositories import is_initialized
 
 MANAGED_ROLE = "executor"
@@ -186,7 +187,7 @@ class WatcherManager:
                 )
                 log.flush()
                 process = subprocess.Popen(
-                    launch_command,
+                    guarded_command(launch_command),
                     cwd=str(self.repo),
                     stdin=subprocess.DEVNULL,
                     stdout=log,

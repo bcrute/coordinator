@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 from .coordination_locks import acquire_lock
+from .process_guard import guarded_command
 
 
 ACTIVE_STATES = {"ready", "changes_requested"}
@@ -598,13 +599,14 @@ def run(args: argparse.Namespace) -> int:
         child_env = os.environ.copy()
         child_env["CLAUDE_CODE_SUBAGENT_MODEL"] = args.subagent_model
         child = subprocess.Popen(
-            command,
+            guarded_command(command),
             cwd=repo,
             env=child_env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
+            start_new_session=True,
         )
         event_lines: queue.Queue[str] = queue.Queue()
         event_reader = threading.Thread(

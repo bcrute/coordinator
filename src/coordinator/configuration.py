@@ -21,6 +21,7 @@ CONFIG_KEYS = {
     "claude_local_delegation",
     "mini_swe_command",
     "mini_swe_model",
+    "mini_swe_profile",
     "mini_swe_config",
     "mini_swe_api_base",
     "mini_swe_provider",
@@ -136,6 +137,7 @@ def load_config(path: Path) -> dict[str, object]:
         "executor_adapter",
         "mini_swe_command",
         "mini_swe_model",
+        "mini_swe_profile",
         "mini_swe_api_base",
         "mini_swe_provider",
         "auth_mode",
@@ -270,6 +272,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--mini-swe-command", default=None)
     parser.add_argument("--mini-swe-model", default=None)
+    parser.add_argument(
+        "--mini-swe-profile",
+        choices=("bounded", "exploratory"),
+        default=None,
+    )
     parser.add_argument("--mini-swe-config", type=Path, default=None)
     parser.add_argument("--mini-swe-api-base", default=None)
     parser.add_argument("--mini-swe-provider", default=None)
@@ -367,6 +374,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     args.mini_swe_command = resolved("mini_swe_command", args.mini_swe_command, "mini")
     args.mini_swe_model = resolved("mini_swe_model", args.mini_swe_model, "")
+    args.mini_swe_profile = resolved(
+        "mini_swe_profile", args.mini_swe_profile, "bounded"
+    )
     args.mini_swe_config = resolved("mini_swe_config", args.mini_swe_config, None)
     args.mini_swe_api_base = resolved("mini_swe_api_base", args.mini_swe_api_base, "")
     args.mini_swe_provider = resolved("mini_swe_provider", args.mini_swe_provider, "openai")
@@ -440,6 +450,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--mini-swe-timeout-seconds must be positive")
     if args.executor_adapter not in {"claude", "mini-swe-agent"}:
         parser.error("--executor-adapter must be claude or mini-swe-agent")
+    if args.mini_swe_profile not in {"bounded", "exploratory"}:
+        parser.error("--mini-swe-profile must be bounded or exploratory")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", str(args.mini_swe_provider)):
         parser.error("--mini-swe-provider has invalid characters")
     if args.mini_swe_api_key_env and not re.fullmatch(
