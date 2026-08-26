@@ -230,6 +230,7 @@ class WatcherManager:
                 self._detail = f"the watcher (pid {pid}) survived the bounded stop escalation"
                 return "error", self._detail
             self._refresh()
+            active_lock(self.lock_path, reclaim_stale=True)
             return "stopped", f"stopped the watcher (pid {pid}, exit status {self._exit_code})"
 
     def shutdown(self, timeout: float | None = None) -> None:
@@ -240,6 +241,7 @@ class WatcherManager:
             self.stop(timeout)
         with self._lock:
             self._refresh()
+            active_lock(self.lock_path, reclaim_stale=True)
             self._close_log()
 
     # Observation ---------------------------------------------------------

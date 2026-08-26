@@ -1,15 +1,15 @@
 # Current validation state
 
-- Protocol state: active
+- Protocol state: fixing
 - Active protocol cycle: 4
 - Disposable target: `solitaire-test` (logical name; its location is supplied
   to the cycle tool, not stored here)
-- Current phase: clean cycle-4 target initialized through Coordinator and
-  committed at starting ref `68d778d`; no session or watcher is running yet
-- Open Coordinator findings: SOL-003 and SOL-004 are fixed with regression
-  coverage but still require fresh end-to-end verification in cycle 4
-- Next action: start the app-owned executor watcher and a brand-new primary
-  terminal session, then submit only the checked-in `START_PROMPT.md` text
+- Current phase: cycle 4 failed during setup; SOL-005 is fixed and the complete
+  local suite passes before a fresh cycle 5
+- Open Coordinator finding: graceful app shutdown left its dead watcher lock on
+  disk even though all managed processes exited
+- Next action: deploy SOL-005, archive cycle 4, create cycle 5, and retry with a
+  fresh watcher and primary session
 - Passing streak: 0
 
 The continuous-context model updates this file whenever it accepts a report,

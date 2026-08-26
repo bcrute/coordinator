@@ -1340,6 +1340,30 @@ class WatcherControlTests(unittest.TestCase):
         outcome, _ = manager.start()
         self.assertEqual(outcome, "started")
 
+    def test_stop_reclaims_the_exact_dead_watcher_lock(self) -> None:
+        target = self.project()
+        runtime = target / ".coordination/runtime"
+        runtime.mkdir(parents=True, exist_ok=True)
+        lock = runtime / "watcher-executor.lock"
+        source = (
+            "import os, pathlib, sys, time; "
+            "pathlib.Path(sys.argv[1]).write_text(f'pid={os.getpid()} role=executor\\n'); "
+            "time.sleep(300)"
+        )
+        manager = WatcherManager(
+            target,
+            command=[sys.executable, "-c", source, str(lock)],
+            stop_timeout=2,
+            start_grace=0.05,
+        )
+        self.addCleanup(manager.shutdown)
+
+        self.assertEqual(manager.start()[0], "started")
+        self.wait_until(lock.exists, message="the fake watcher never created its lock")
+        self.assertEqual(manager.stop()[0], "stopped")
+
+        self.assertFalse(lock.exists())
+
     def test_watcher_exit_and_failure_states_are_observed(self) -> None:
         target = self.project()
 
