@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import uvicorn
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager, closing
 from dataclasses import dataclass, field, replace
@@ -133,6 +134,18 @@ def _terminal_output_chunks(
     return chunks
 
 
+class CoordinatorUvicornServer(uvicorn.Server):
+    """Wake long-lived state streams before Uvicorn drains connections."""
+
+    def __init__(self, config: uvicorn.Config, shutdown_event: asyncio.Event) -> None:
+        super().__init__(config)
+        self._coordinator_shutdown_event = shutdown_event
+
+    async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:
+        self._coordinator_shutdown_event.set()
+        await super().shutdown(sockets=sockets)
+
+
 def create_authenticated_app(
     repo: Path,
     settings: OIDCSettings | LocalSettings,
@@ -153,6 +166,7 @@ def create_authenticated_app(
 ) -> Starlette:
     """Build the default-deny authenticated ASGI application."""
 
+    shutdown_event = asyncio.Event()
     root = repo.resolve()
     if not (web_app.is_git_repository(root) or web_app.is_initialized(root)):
         raise ValueError(
@@ -779,7 +793,7 @@ def create_authenticated_app(
             cursor = starting_cursor
             state_cursor = starting_cursor
             last_emit = 0.0
-            while not await request.is_disconnected():
+            while not shutdown_event.is_set() and not await request.is_disconnected():
                 session_id = request.scope.get("coordinator.session_id")
                 if session_id and not await run_in_threadpool(
                     store.is_active, session_id
@@ -807,7 +821,12 @@ def create_authenticated_app(
                 elif current - last_emit >= STATE_HEARTBEAT_SECONDS:
                     yield ": keepalive\n\n"
                     last_emit = current
-                await asyncio.sleep(STATE_STREAM_SECONDS)
+                try:
+                    await asyncio.wait_for(
+                        shutdown_event.wait(), timeout=STATE_STREAM_SECONDS
+                    )
+                except TimeoutError:
+                    pass
 
         return StreamingResponse(
             events(),
@@ -2101,6 +2120,7 @@ def create_authenticated_app(
         try:
             yield
         finally:
+            shutdown_event.set()
             await run_in_threadpool(usage_service.shutdown)
             await run_in_threadpool(history_service.shutdown)
             await run_in_threadpool(context.shutdown)
@@ -2253,6 +2273,7 @@ def create_authenticated_app(
     app.state.usage_history = history_service
     app.state.executor_settings = executor_service
     app.state.settings = settings
+    app.state.shutdown_event = shutdown_event
     return app
 
 
@@ -2338,8 +2359,6 @@ def serve_authenticated(args: Any) -> int:
 def serve_application(args: Any) -> int:
     """Run the local or authenticated application under Uvicorn."""
 
-    import uvicorn
-
     # Authlib's debug logs may include transient PKCE material, and generic
     # access logs include the callback query string (authorization code/state).
     # The authenticated runtime uses the redacted SQLite audit trail instead.
@@ -2389,7 +2408,7 @@ def serve_application(args: Any) -> int:
         ),
         timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
     )
-    server = uvicorn.Server(config)
+    server = CoordinatorUvicornServer(config, app.state.shutdown_event)
     try:
         try:
             server.run(sockets=[listener] if listener is not None else None)

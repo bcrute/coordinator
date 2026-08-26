@@ -14,7 +14,7 @@ protocol cycle because it did not start with a fresh target and report contract.
 | 4 | Failed | setup | Reclaim the exact dead app-owned watcher lock after confirmed process exit | 0 |
 | 5 | Failed | planning | Project exact handoff ceilings and require atomic in-place coordination updates | 0 |
 | 6 | Failed | implementation | Cap bounded local-model responses and allow descendant TERM cleanup before escalation | 0 |
-| 7 | Passed | completion | Tighten bounded local responses to 3,072 tokens and require a tool call before narration | 1 |
+| 7 | Passed | completion | Tighten bounded local responses and wake SSE clients before graceful shutdown | 1 |
 
 ## Findings
 
@@ -29,6 +29,7 @@ protocol cycle because it did not start with a fresh target and report contract.
 | SOL-007 | 5 | coordination lifecycle | high | yes | The primary responded to a rejected combined replacement patch by deleting three live coordination files before a later recreation step. | Generated primary and coordination instructions now require atomic in-place updates and prohibit deleting a live file as an intermediate step. | `tests.test_workflow.WorkflowTests.test_init_preserves_existing_instructions_and_is_idempotent` | Verified during cycle 6 planning |
 | SOL-008 | 6 | executor efficiency | high | yes | A bounded Qwen response ran with `max_tokens=-1` and exceeded 17,000 decoded tokens without producing a tool action or product edit. | Cycle 7 verified the hard cap on the live llama slot; follow-up tuning lowers it from 4,096 to 3,072 tokens and explicitly requires a tool call before narration. | `tests.test_executor_adapters.MiniTrajectoryTests.test_command_uses_default_config_then_bounded_overrides` and `test_bounded_prompt_requires_a_tool_call_before_narration` | Verified during cycle 7; tighter follow-up tuning awaits the next local handoff |
 | SOL-009 | 6 | process lifecycle | high | yes | App shutdown killed the nested mini runner before its `finally` block could persist blocked state and remove its turn lock. | Process supervision now gives saved descendant groups a bounded TERM cleanup grace before SIGKILL escalation. | `tests.test_process_guard.ProcessGuardTests.test_session_escaping_descendant_gets_term_cleanup_grace` | Verified during cycle 7: timeout and step-limit exits persisted blocked state, removed turn locks, and allowed clean retries; final watcher exit left no lock or runner |
+| SOL-010 | 7 | web lifecycle | medium | no | Stopping Coordinator with a live state EventSource waited through the graceful deadline, force-cancelled the stream, and printed an ASGI `CancelledError` traceback. | The Coordinator Uvicorn server now signals application state streams before draining connections, so generators finish before the graceful deadline. | `tests.test_authenticated_web_app.SettingsValidationTests.test_server_wakes_state_streams_before_draining_connections` | Verified immediately against a real `/api/events` connection: Ctrl-C returned in under one second without an error or traceback |
 
 For each accepted finding, record its `SOL-NNN` identifier, cycle, category,
 severity, blocking status, short observation, disposition, regression-test

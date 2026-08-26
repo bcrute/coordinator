@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import stat
@@ -1447,6 +1448,8 @@ class SettingsValidationTests(unittest.TestCase):
             relay_log_lines=200,
             usage_refresh_seconds=3600,
         )
+        shutdown_event = asyncio.Event()
+        app = SimpleNamespace(state=SimpleNamespace(shutdown_event=shutdown_event))
         server = mock.Mock()
         with (
             mock.patch.object(authenticated_runtime, "from_namespace", return_value=object()),
@@ -1454,16 +1457,31 @@ class SettingsValidationTests(unittest.TestCase):
                 authenticated_runtime, "local_settings_from_args", return_value=settings
             ),
             mock.patch.object(
-                authenticated_runtime, "create_authenticated_app", return_value=object()
+                authenticated_runtime, "create_authenticated_app", return_value=app
             ),
             mock.patch("uvicorn.Config", return_value="config") as config,
-            mock.patch("uvicorn.Server", return_value=server),
+            mock.patch.object(
+                authenticated_runtime,
+                "CoordinatorUvicornServer",
+                return_value=server,
+            ) as server_type,
         ):
             result = authenticated_runtime.serve_application(args)
 
         self.assertEqual(result, 0)
         self.assertEqual(config.call_args.kwargs["timeout_graceful_shutdown"], 10)
+        server_type.assert_called_once_with("config", shutdown_event)
         server.run.assert_called_once_with(sockets=None)
+
+    def test_server_wakes_state_streams_before_draining_connections(self) -> None:
+        event = asyncio.Event()
+        server = authenticated_runtime.CoordinatorUvicornServer(mock.Mock(), event)
+        base_shutdown = mock.AsyncMock()
+        with mock.patch("uvicorn.Server.shutdown", base_shutdown):
+            asyncio.run(server.shutdown())
+
+        self.assertTrue(event.is_set())
+        base_shutdown.assert_awaited_once_with(sockets=None)
 
     def test_client_secret_is_redacted_from_settings_repr(self) -> None:
         settings = OIDCSettings(
