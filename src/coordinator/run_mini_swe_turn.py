@@ -24,7 +24,7 @@ from .process_guard import guarded_command
 
 
 ACTIVE_STATES = {"ready", "changes_requested"}
-BOUNDED_RESPONSE_TOKENS = 3072
+BOUNDED_RESPONSE_TOKENS = 4096
 TOKEN_FIELDS = (
     "input_tokens",
     "cache_read_input_tokens",

@@ -11,7 +11,9 @@ agent:
     Spend at most the first response inspecting targeted context. By the end of the
     second response, either make the first in-scope edit or run the exact required
     verification when the assignment is verification-only. Prefer one cohesive edit
-    over a sequence of temporary experiments. Run the narrow required evidence once,
+    over a sequence of temporary experiments, but limit each response to one
+    substantial file edit so its tool call fits the bounded response. Run the narrow
+    required evidence once,
     fix only observed failures, and stop when it passes.
 
     Put a bash tool call first in every response. Do not emit a long analysis before
