@@ -75,9 +75,17 @@ def _boolean(value: object, name: str) -> bool:
     return value
 
 
-def _effort(value: object, name: str, *, allow_ultra: bool = False) -> str:
+def _effort(
+    value: object,
+    name: str,
+    *,
+    allow_none: bool = False,
+    allow_ultra: bool = False,
+) -> str:
     effort = _text(value, name)
-    allowed = EFFORT_LEVELS | ({"none", "ultra"} if allow_ultra else set())
+    allowed = EFFORT_LEVELS | ({"none"} if allow_none else set()) | (
+        {"ultra"} if allow_ultra else set()
+    )
     if effort and effort not in allowed:
         raise ValueError(f"{name} must be one of {', '.join(sorted(allowed))} or blank")
     return effort
@@ -234,7 +242,9 @@ class ExecutorConfiguration:
             ),
             primary_local_model=primary_local_model,
             primary_local_effort=_effort(
-                merged["primary_local_effort"], "primary_local_effort"
+                merged["primary_local_effort"],
+                "primary_local_effort",
+                allow_none=True,
             ),
             primary_local_step_limit=_integer(
                 merged["primary_local_step_limit"], "primary_local_step_limit", 6, 200
@@ -266,7 +276,9 @@ class ExecutorConfiguration:
                 merged["claude_local_delegation"], "claude_local_delegation"
             ),
             mini_swe_model=model,
-            mini_swe_effort=_effort(merged["mini_swe_effort"], "mini_swe_effort"),
+            mini_swe_effort=_effort(
+                merged["mini_swe_effort"], "mini_swe_effort", allow_none=True
+            ),
             mini_swe_profile=profile,
             mini_swe_api_base=validate_api_base(merged["mini_swe_api_base"]),
             mini_swe_provider=provider,

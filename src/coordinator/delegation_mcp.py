@@ -55,7 +55,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--mini-command", default="mini")
     parser.add_argument("--model", default="")
     parser.add_argument(
-        "--effort", choices=("low", "medium", "high", "xhigh", "max"), default=""
+        "--effort",
+        choices=("none", "low", "medium", "high", "xhigh", "max"),
+        default="",
     )
     parser.add_argument("--config", type=Path)
     parser.add_argument("--api-base", default="")

@@ -423,6 +423,25 @@ class MiniTrajectoryTests(unittest.TestCase):
         command = build_command(args, "/usr/bin/mini", "task", Path("run.json"))
         self.assertIn("model.model_kwargs.reasoning_effort=high", command)
 
+    def test_none_effort_disables_compatible_endpoint_thinking(self) -> None:
+        args = Namespace(
+            model="openai/local",
+            effort="none",
+            config=None,
+            profile="bounded",
+            step_limit=8,
+            timeout_seconds=300,
+            cost_limit=0.0,
+            api_base="http://127.0.0.1:8000/v1",
+            provider="openai",
+        )
+        command = build_command(args, "/usr/bin/mini", "task", Path("run.json"))
+        self.assertIn(
+            "model.model_kwargs.extra_body.chat_template_kwargs.enable_thinking=false",
+            command,
+        )
+        self.assertNotIn("model.model_kwargs.reasoning_effort=none", command)
+
     def test_runner_cli_rejects_unsafe_or_unbounded_configuration(self) -> None:
         invalid = (
             (["--step-limit", "0"], "step-limit must be positive"),

@@ -356,7 +356,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--primary-local-model", default="", help="local/API primary model")
     parser.add_argument(
         "--primary-local-effort",
-        choices=("low", "medium", "high", "xhigh", "max"),
+        choices=("none", "low", "medium", "high", "xhigh", "max"),
         default="",
     )
     parser.add_argument("--primary-local-step-limit", type=int, default=24)

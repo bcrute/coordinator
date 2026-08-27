@@ -877,7 +877,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--delegate-model", default="")
     parser.add_argument(
         "--delegate-effort",
-        choices=("low", "medium", "high", "xhigh", "max"),
+        choices=("none", "low", "medium", "high", "xhigh", "max"),
         default="",
     )
     parser.add_argument("--delegate-config", type=Path)

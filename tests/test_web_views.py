@@ -293,6 +293,10 @@ class DelegationViewTests(unittest.TestCase):
         self.assertIn('Supervisor effort<select name="claude_effort"', self.html)
         self.assertIn('Native subagent effort<select name="claude_subagent_effort"', self.html)
         self.assertIn('Reasoning effort<select name="mini_swe_effort"', self.html)
+        self.assertGreaterEqual(
+            self.html.count('<option value="none">None (disable thinking)</option>'),
+            2,
+        )
         self.assertIn('Direct execution profile<select name="mini_swe_profile"', self.html)
         self.assertIn('value="bounded">Bounded assignment', self.html)
         self.assertIn('value="exploratory">Exploratory repository work', self.html)

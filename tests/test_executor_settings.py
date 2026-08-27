@@ -214,6 +214,18 @@ class ExecutorSettingsUnitTests(unittest.TestCase):
                 "http://127.0.0.1:8000/v1",
             )
 
+    def test_local_runtimes_accept_explicitly_disabled_thinking(self) -> None:
+        configuration = ExecutorConfiguration.from_mapping(
+            mini_payload(
+                mini_swe_effort="none",
+                primary_adapter="mini-swe-agent",
+                primary_local_model="Qwen/Qwen3.8-27B",
+                primary_local_effort="none",
+            )
+        )
+        self.assertEqual(configuration.mini_swe_effort, "none")
+        self.assertEqual(configuration.primary_local_effort, "none")
+
     def test_validation_rejects_unknown_fields_credentials_and_bad_limits(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown fields"):
             ExecutorConfiguration.from_mapping({"unexpected": True})

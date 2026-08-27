@@ -1,15 +1,15 @@
 # Current validation state
 
-- Protocol state: terminal pass
-- Active protocol cycle: none; cycle 7 completed successfully
+- Protocol state: fix verified; clean restart pending
+- Active protocol cycle: cycle 8 stopped with a terminal failed report
 - Disposable target: `solitaire-test` (logical name; its location is supplied
   to the cycle tool, not stored here)
-- Current phase: cycle 7 reached a schema-valid `passed` report after three
-  accepted product tasks and five correction rounds
-- Open Coordinator findings: none from the cycle-7 protocol set; local executor
-  response efficiency remains a tuning concern rather than a correctness blocker
-- Next action: use the cycle-7 evidence to verify the tighter 3,072-token,
-  tool-first bounded profile in the next real local-model handoff
+- Current phase: SOL-011 is fixed locally and verified through the real
+  mini-swe/LiteLLM/Qwen path; cycle 9 must start from a fresh target
+- Open Coordinator findings: SOL-011 awaits fresh-cycle verification
+- Next action: archive cycle 8, persist local-model effort `none`, and run cycle 9
+  end to end while comparing calls, token use, retries, and elapsed time with
+  cycles 7 and 8
 - Passing streak: 1
 
 The continuous-context model updates this file whenever it accepts a report,

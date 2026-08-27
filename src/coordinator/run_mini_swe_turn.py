@@ -181,7 +181,17 @@ def build_command(
     command.extend(("--config", f"agent.step_limit={args.step_limit}"))
     command.extend(("--config", f"agent.wall_time_limit_seconds={args.timeout_seconds}"))
     command.extend(("--config", "model.cost_tracking=ignore_errors"))
-    if effort := getattr(args, "effort", ""):
+    effort = getattr(args, "effort", "")
+    if effort == "none":
+        # OpenAI-compatible local servers commonly expose Qwen-style thinking
+        # control through chat-template kwargs rather than reasoning_effort.
+        command.extend(
+            (
+                "--config",
+                "model.model_kwargs.extra_body.chat_template_kwargs.enable_thinking=false",
+            )
+        )
+    elif effort:
         command.extend(("--config", f"model.model_kwargs.reasoning_effort={effort}"))
     command.extend(("--cost-limit", str(args.cost_limit)))
     if args.api_base:
@@ -583,9 +593,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--model", default="", help="mini-swe-agent/LiteLLM model name")
     parser.add_argument(
         "--effort",
-        choices=("low", "medium", "high", "xhigh", "max"),
+        choices=("none", "low", "medium", "high", "xhigh", "max"),
         default="",
-        help="LiteLLM reasoning effort for endpoints that support it",
+        help="LiteLLM reasoning effort; none disables thinking on compatible endpoints",
     )
     parser.add_argument("--config", type=Path, help="base mini-swe-agent YAML config")
     parser.add_argument(
