@@ -148,12 +148,20 @@ def validate_handoff_task(
 def policy_instruction(budget: HandoffBudget) -> str:
     """Return a concise prompt fragment describing the enforced budget."""
 
+    preference = (
+        " For this local executor, default to one or two tightly scoped work units; "
+        "use three or four only when they are inseparable and share one narrow "
+        "verification path. The maximum is a ceiling, not a target."
+        if budget.runtime == "mini-swe-agent" and budget.maximum_work_units > 2
+        else " The maximum is a ceiling, not a target."
+    )
     return (
         f"The selected executor has a hard limit of {budget.limit} {budget.limit_name}. "
         f"Reserve at least {budget.verification_reserve} for verification and recovery. "
         f"The next task may contain at most {budget.maximum_work_units} independently "
         "testable work units. Include a `## Work units` checklist with exactly one "
         "unchecked item per `## In scope` bullet; split larger work into later task IDs."
+        + preference
     )
 
 

@@ -89,6 +89,8 @@ class HandoffBudgetTests(unittest.TestCase):
         )
         self.assertIn("24 model steps", instruction)
         self.assertIn("40 model turns", instruction)
+        self.assertIn("default to one or two tightly scoped work units", instruction)
+        self.assertIn("ceiling, not a target", instruction)
         self.assertNotIn("Codex", instruction)
         self.assertNotIn("Claude", instruction)
 

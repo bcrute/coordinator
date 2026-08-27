@@ -151,22 +151,41 @@ def trajectory_commands(trajectory: dict[str, object], limit: int = 20) -> list[
     return commands
 
 
-def mini_prompt(task_id: str, review_round: str | None, task: str) -> str:
+def command_policy_violations(commands: list[str]) -> list[str]:
+    """Flag broad process-killing actions that can affect unrelated user work."""
+
+    broad_kill = re.compile(
+        r"(?:^|(?:&&|\|\||[;&|])\s*)(?:sudo\s+)?(?:\S*/)?(pkill|killall)\b"
+    )
+    violations: list[str] = []
+    for command in commands:
+        if match := broad_kill.search(command):
+            violations.append(
+                f"forbidden broad process command `{match.group(1)}`; "
+                "stop only the exact child started by verification"
+            )
+    return violations
+
+
+def mini_prompt(task_id: str, review_round: str | None, task: str, repo: Path) -> str:
     opening = (
         f"Implement exactly one bounded repository task: {task_id}, "
         f"review round {review_round}."
     )
     return f"""{opening}
 
-The active assignment is embedded below and is authoritative. Work only in the current
-repository. Inspect, edit, and test the product as needed. Coordinator-owned files under
+The active assignment is embedded below and is authoritative. Your shell starts in the
+exact repository `{repo}`. Stay there; do not guess or change to `/home/user`,
+`/home/user/project`, or another checkout. Inspect, edit, and test the product as needed.
+Coordinator-owned files under
 `.coordination/` and `.coordinator-validation/` are expected to be dirty before you
 start. Never edit, delete, restore, checkout, reset, clean, or otherwise change them,
 even to make Git status clean. Do not commit, push, deploy, install system software, or
-mutate external systems unless the assignment explicitly authorizes that action. Put a
-bash tool call first in every response; do not spend a response narrating analysis before
-acting. Keep any text before that call under 80 words. Stop after completing this one
-assignment.
+mutate external systems unless the assignment explicitly authorizes that action. Never
+use `pkill`, `killall`, or process-name matching. If verification starts a child process,
+capture its exact PID, stop only that child, and await its exit. Put a bash tool call first
+in every response; do not spend a response narrating analysis before acting. Keep any
+text before that call under 80 words. Stop after completing this one assignment.
 
 <active-assignment>
 {task.rstrip()}
@@ -303,15 +322,23 @@ def write_report(
     repository_status: str,
     timed_out: bool,
     coordination_changed: list[str],
+    policy_violations: list[str],
 ) -> tuple[str, str | None]:
     info = trajectory_info(trajectory)
     exit_status = str(info.get("exit_status") or "not recorded")
-    successful = returncode == 0 and exit_status.lower() == "submitted" and not coordination_changed
+    successful = (
+        returncode == 0
+        and exit_status.lower() == "submitted"
+        and not coordination_changed
+        and not policy_violations
+    )
     state = "review" if successful else "blocked"
     if timed_out:
         blocker = "Coordinator wall-time limit exceeded"
     elif coordination_changed:
         blocker = "executor modified Coordinator-owned coordination files"
+    elif policy_violations:
+        blocker = "executor used a forbidden broad process command"
     elif returncode != 0:
         blocker = f"mini-swe-agent exited with status {returncode}"
     elif exit_status.lower() != "submitted":
@@ -322,6 +349,7 @@ def write_report(
     command_rows = "\n\n".join(_indented(command, 500) for command in commands)
     command_rows = command_rows or "    None recorded."
     changed_rows = "\n".join(f"- `{name}`" for name in coordination_changed) or "- None detected."
+    violation_rows = "\n".join(f"- {item}" for item in policy_violations) or "- None detected."
     report = f"""# Coder latest report
 
 - Task ID: `{task_id}`
@@ -347,6 +375,10 @@ def write_report(
 ## Coordinator-owned files changed by executor
 
 {changed_rows}
+
+## Executor policy violations
+
+{violation_rows}
 
 ## Review note
 
@@ -456,7 +488,7 @@ def run(args: argparse.Namespace) -> int:
     runtime = repo / ".coordination" / "runtime"
     slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", task_id).strip("-") or "task"
     trajectory_path = runtime / "trajectories" / f"{slug}-r{review_round or '0'}.json"
-    prompt = mini_prompt(task_id, review_round, task)
+    prompt = mini_prompt(task_id, review_round, task, repo)
     command = build_command(args, executable or args.mini_command, prompt, trajectory_path)
     if args.dry_run:
         redacted = list(command)
@@ -465,8 +497,6 @@ def run(args: argparse.Namespace) -> int:
         print(" ".join(redacted))
         return 0
 
-    watched_paths = [repo / relative for relative in PROTECTED_COORDINATION_PATHS]
-    watched_before = {path: path.read_bytes() if path.is_file() else None for path in watched_paths}
     lock_path = repo / ".coordination" / ".mini-swe-agent-turn.lock"
     try:
         lock_fd = acquire_lock(
@@ -475,6 +505,11 @@ def run(args: argparse.Namespace) -> int:
     except FileExistsError:
         print(f"error: another mini-swe-agent turn may be active: {lock_path}", file=sys.stderr)
         return 2
+    watched_paths = [repo / relative for relative in PROTECTED_COORDINATION_PATHS]
+    watched_paths.append(lock_path)
+    watched_before = {
+        path: path.read_bytes() if path.is_file() else None for path in watched_paths
+    }
 
     started = time.time()
     timed_out = False
@@ -578,6 +613,7 @@ def run(args: argparse.Namespace) -> int:
             else:
                 atomic_bytes(path, before)
         completed = time.time()
+        policy_violations = command_policy_violations(trajectory_commands(trajectory))
         state, blocker = write_report(
             report_path,
             task_id=task_id,
@@ -588,6 +624,7 @@ def run(args: argparse.Namespace) -> int:
             repository_status=repository_status(repo),
             timed_out=timed_out,
             coordination_changed=changed,
+            policy_violations=policy_violations,
         )
         write_status(
             status_path,

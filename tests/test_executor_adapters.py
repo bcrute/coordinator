@@ -24,6 +24,7 @@ from coordinator.configuration import parse_args as parse_web_args
 from coordinator.processes import default_watcher_command
 from coordinator.run_mini_swe_turn import (
     build_command,
+    command_policy_violations,
     mini_prompt,
     parse_args as parse_mini_args,
     trajectory_usage,
@@ -314,17 +315,30 @@ class AdapterContractTests(unittest.TestCase):
 
 
 class MiniTrajectoryTests(unittest.TestCase):
+    def test_broad_process_kills_are_distinguished_from_text_searches(self) -> None:
+        self.assertEqual(
+            command_policy_violations(["npm test; pkill -f 'node server.mjs'"]),
+            [
+                "forbidden broad process command `pkill`; stop only the exact child "
+                "started by verification"
+            ],
+        )
+        self.assertEqual(command_policy_violations(["rg 'pkill -f' README.md"]), [])
+
     def test_bounded_prompt_requires_a_tool_call_before_narration(self) -> None:
         prompt = mini_prompt(
             "LOCAL-001",
             "2",
             "# Current task\n\n- Task ID: `LOCAL-001`\n- State: `ready`\n",
+            Path("/workspace/example"),
         )
         normalized = " ".join(prompt.split())
         self.assertIn("Put a bash tool call first in every response", normalized)
         self.assertIn("Keep any text before that call under 80 words", normalized)
         self.assertIn("expected to be dirty before you start", normalized)
         self.assertIn("Never edit, delete, restore, checkout, reset, clean", normalized)
+        self.assertIn("exact repository `/workspace/example`", normalized)
+        self.assertIn("Never use `pkill`, `killall`, or process-name matching", normalized)
 
     def test_litellm_usage_is_normalized_and_response_ids_are_deduplicated(self) -> None:
         response = {
@@ -395,6 +409,7 @@ class MiniTrajectoryTests(unittest.TestCase):
         self.assertIn("Do not inventory the repository", policy)
         self.assertIn("Put a bash tool call first in every response", policy)
         self.assertIn("limit each response to one\n    substantial file edit", policy)
+        self.assertIn("Never use pkill, killall, or process-name matching", policy)
 
     def test_exploratory_profile_deliberately_uses_stock_agent_prompt(self) -> None:
         args = Namespace(
@@ -783,8 +798,10 @@ class MiniRunnerTests(unittest.TestCase):
                 "output = Path(args[args.index('--output') + 1])\n"
                 "goal = Path('.coordination/planner/goal.md')\n"
                 "task = Path('.coordination/planner/current-task.md')\n"
+                "lock = Path('.coordination/.mini-swe-agent-turn.lock')\n"
                 "goal.write_text(goal.read_text() + '\\nexecutor edit\\n')\n"
                 "task.unlink()\n"
+                "lock.unlink()\n"
                 "output.parent.mkdir(parents=True, exist_ok=True)\n"
                 "output.write_text(json.dumps({'info': {"
                 "'exit_status': 'Submitted', 'submission': 'claimed success'}, "
@@ -805,9 +822,41 @@ class MiniRunnerTests(unittest.TestCase):
             self.assertIn("modified Coordinator-owned coordination files", status)
             self.assertIn(".coordination/planner/goal.md", report)
             self.assertIn(".coordination/planner/current-task.md", report)
+            self.assertIn(".coordination/.mini-swe-agent-turn.lock", report)
             self.assertEqual(progress["state"], "blocked")
             self.assertEqual(goal.read_bytes(), goal_before)
             self.assertEqual(task.read_bytes(), task_before)
+
+    def test_submitted_trajectory_with_broad_process_kill_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            prepared_repo(repo)
+            fake = executable(
+                repo / "fake-policy-violating-mini",
+                "import json, sys\n"
+                "from pathlib import Path\n"
+                "args = sys.argv[1:]\n"
+                "output = Path(args[args.index('--output') + 1])\n"
+                "output.parent.mkdir(parents=True, exist_ok=True)\n"
+                "output.write_text(json.dumps({\n"
+                "  'info': {'exit_status': 'Submitted', 'submission': 'done'},\n"
+                "  'messages': [{'extra': {'actions': [\n"
+                "    {'command': \"npm test; pkill -f 'node server.mjs'\"}\n"
+                "  ]}}]\n"
+                "}))\n",
+            )
+            completed = mini_turn(repo, str(fake))
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            status = (repo / ".coordination/coder/status.md").read_text(
+                encoding="utf-8"
+            )
+            report = (repo / ".coordination/coder/latest-report.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("- State: `blocked`", status)
+            self.assertIn("forbidden broad process command", status)
+            self.assertIn("## Executor policy violations", report)
+            self.assertIn("`pkill`", report)
 
     def test_nonzero_exit_without_trajectory_is_truthfully_blocked_and_cleans_lock(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
