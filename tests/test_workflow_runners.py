@@ -498,6 +498,8 @@ class ClaudeRunnerTests(CoordinationFixture):
 
     def test_planner_and_review_ownership_is_enforced_after_execution(self) -> None:
         self.prepare_handoff()
+        goal = self.repo / ".coordination/planner/goal.md"
+        goal_before = goal.read_bytes()
         fake = self.executable(
             "tampering-claude",
             "printf '\\nexecutor edit\\n' >> .coordination/planner/goal.md\n"
@@ -514,6 +516,8 @@ class ClaudeRunnerTests(CoordinationFixture):
         self.assertEqual(result, 3)
         self.assertIn("modified Coordinator-owned coordination files", error.getvalue())
         self.assertIn(".coordination/planner/goal.md", error.getvalue())
+        self.assertIn("protected state was restored", error.getvalue())
+        self.assertEqual(goal.read_bytes(), goal_before)
         self.assertFalse((self.repo / ".coordination/.claude-turn.lock").exists())
 
 

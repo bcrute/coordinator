@@ -30,6 +30,18 @@ TOKEN_FIELDS = (
     "cache_creation_input_tokens",
     "output_tokens",
 )
+PROTECTED_COORDINATION_PATHS = (
+    Path(".coordination/PROJECT.md"),
+    Path(".coordination/README.md"),
+    Path(".coordination/planner/goal.md"),
+    Path(".coordination/planner/current-task.md"),
+    Path(".coordination/reviews/latest.md"),
+    Path(".coordination/reviews/completion.md"),
+    Path(".coordinator-validation/report.json"),
+    Path(".coordinator-validation/report.schema.json"),
+    Path(".coordinator-validation/reporting.md"),
+    Path(".coordinator-validation/validation-brief.md"),
+)
 
 
 def field(text: str, name: str) -> str | None:
@@ -404,9 +416,11 @@ Before product edits, replace `.coordination/coder/status.md` with a concise sta
 for this task and state `implementing`; a one-sentence `## Current activity` is
 sufficient. At the end of this handoff, replace
 `.coordination/coder/latest-report.md` with a truthful report and set coder status to
-`review`, or `blocked` with the exact blocker. Do not edit planner or review files.
-Do not commit, push, deploy, or mutate external systems unless the assignment
-explicitly authorizes it.
+`review`, or `blocked` with the exact blocker. Other files under `.coordination/`
+and `.coordinator-validation/` are expected to be dirty before you start. Never
+edit, delete, restore, checkout, reset, clean, or otherwise change them, even to
+make Git status clean. Do not commit, push, deploy, or mutate external systems
+unless the assignment explicitly authorizes it.
 
 <active-assignment>
 {task.rstrip()}
@@ -599,11 +613,8 @@ def run(args: argparse.Namespace) -> int:
         print(" ".join(command[:-1] + ["<coordination prompt>"]))
         return 0
 
-    coordinator_owned_paths = (
-        goal_path,
-        task_path,
-        repo / ".coordination" / "reviews" / "latest.md",
-        repo / ".coordination" / "reviews" / "completion.md",
+    coordinator_owned_paths = tuple(
+        repo / relative for relative in PROTECTED_COORDINATION_PATHS
     )
     coordinator_owned_before = {
         path: path.read_bytes() if path.is_file() else None
@@ -807,17 +818,28 @@ def run(args: argparse.Namespace) -> int:
     finally:
         os.close(lock_fd)
         lock_path.unlink(missing_ok=True)
+    coordinator_owned_changed = [
+        str(path.relative_to(repo))
+        for path, before in coordinator_owned_before.items()
+        if (path.read_bytes() if path.is_file() else None) != before
+    ]
+    for path, before in coordinator_owned_before.items():
+        after = path.read_bytes() if path.is_file() else None
+        if after == before:
+            continue
+        if before is None:
+            if path.is_file() or path.is_symlink():
+                path.unlink()
+        else:
+            temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+            temporary.write_bytes(before)
+            temporary.replace(path)
     if returncode == 0:
-        coordinator_owned_changed = [
-            str(path.relative_to(repo))
-            for path, before in coordinator_owned_before.items()
-            if (path.read_bytes() if path.is_file() else None) != before
-        ]
         if coordinator_owned_changed:
             changed = ", ".join(coordinator_owned_changed)
             print(
                 "error: Claude modified Coordinator-owned coordination files: "
-                f"{changed}; inspect and restore planner/review state before retrying",
+                f"{changed}; protected state was restored before primary review",
                 file=sys.stderr,
             )
             return 3

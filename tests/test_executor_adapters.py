@@ -323,6 +323,8 @@ class MiniTrajectoryTests(unittest.TestCase):
         normalized = " ".join(prompt.split())
         self.assertIn("Put a bash tool call first in every response", normalized)
         self.assertIn("Keep any text before that call under 80 words", normalized)
+        self.assertIn("expected to be dirty before you start", normalized)
+        self.assertIn("Never edit, delete, restore, checkout, reset, clean", normalized)
 
     def test_litellm_usage_is_normalized_and_response_ids_are_deduplicated(self) -> None:
         response = {
@@ -768,6 +770,10 @@ class MiniRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
             prepared_repo(repo)
+            goal = repo / ".coordination/planner/goal.md"
+            task = repo / ".coordination/planner/current-task.md"
+            goal_before = goal.read_bytes()
+            task_before = task.read_bytes()
             fake = executable(
                 repo / "fake-tampering-mini",
                 "import json, sys\n"
@@ -775,7 +781,9 @@ class MiniRunnerTests(unittest.TestCase):
                 "args = sys.argv[1:]\n"
                 "output = Path(args[args.index('--output') + 1])\n"
                 "goal = Path('.coordination/planner/goal.md')\n"
+                "task = Path('.coordination/planner/current-task.md')\n"
                 "goal.write_text(goal.read_text() + '\\nexecutor edit\\n')\n"
+                "task.unlink()\n"
                 "output.parent.mkdir(parents=True, exist_ok=True)\n"
                 "output.write_text(json.dumps({'info': {"
                 "'exit_status': 'Submitted', 'submission': 'claimed success'}, "
@@ -795,7 +803,10 @@ class MiniRunnerTests(unittest.TestCase):
             self.assertIn("- State: `blocked`", status)
             self.assertIn("modified Coordinator-owned coordination files", status)
             self.assertIn(".coordination/planner/goal.md", report)
+            self.assertIn(".coordination/planner/current-task.md", report)
             self.assertEqual(progress["state"], "blocked")
+            self.assertEqual(goal.read_bytes(), goal_before)
+            self.assertEqual(task.read_bytes(), task_before)
 
     def test_nonzero_exit_without_trajectory_is_truthfully_blocked_and_cleans_lock(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

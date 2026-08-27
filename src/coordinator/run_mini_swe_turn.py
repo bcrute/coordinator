@@ -31,6 +31,18 @@ TOKEN_FIELDS = (
     "cache_creation_input_tokens",
     "output_tokens",
 )
+PROTECTED_COORDINATION_PATHS = (
+    Path(".coordination/PROJECT.md"),
+    Path(".coordination/README.md"),
+    Path(".coordination/planner/goal.md"),
+    Path(".coordination/planner/current-task.md"),
+    Path(".coordination/reviews/latest.md"),
+    Path(".coordination/reviews/completion.md"),
+    Path(".coordinator-validation/report.json"),
+    Path(".coordinator-validation/report.schema.json"),
+    Path(".coordinator-validation/reporting.md"),
+    Path(".coordinator-validation/validation-brief.md"),
+)
 
 
 def field(text: str, name: str) -> str | None:
@@ -42,6 +54,13 @@ def atomic_text(path: Path, value: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     temporary.write_text(value, encoding="utf-8")
+    temporary.replace(path)
+
+
+def atomic_bytes(path: Path, value: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_bytes(value)
     temporary.replace(path)
 
 
@@ -140,12 +159,14 @@ def mini_prompt(task_id: str, review_round: str | None, task: str) -> str:
     return f"""{opening}
 
 The active assignment is embedded below and is authoritative. Work only in the current
-repository. Inspect, edit, and test the product as needed. Do not edit any file under
-`.coordination/`; Coordinator owns those administrative records. Do not commit, push,
-deploy, install system software, or mutate external systems unless the assignment
-explicitly authorizes that action. Put a bash tool call first in every response; do not
-spend a response narrating analysis before acting. Keep any text before that call under
-80 words. Stop after completing this one assignment.
+repository. Inspect, edit, and test the product as needed. Coordinator-owned files under
+`.coordination/` and `.coordinator-validation/` are expected to be dirty before you
+start. Never edit, delete, restore, checkout, reset, clean, or otherwise change them,
+even to make Git status clean. Do not commit, push, deploy, install system software, or
+mutate external systems unless the assignment explicitly authorizes that action. Put a
+bash tool call first in every response; do not spend a response narrating analysis before
+acting. Keep any text before that call under 80 words. Stop after completing this one
+assignment.
 
 <active-assignment>
 {task.rstrip()}
@@ -444,7 +465,7 @@ def run(args: argparse.Namespace) -> int:
         print(" ".join(redacted))
         return 0
 
-    watched_paths = [goal_path, task_path, repo / ".coordination" / "reviews" / "latest.md"]
+    watched_paths = [repo / relative for relative in PROTECTED_COORDINATION_PATHS]
     watched_before = {path: path.read_bytes() if path.is_file() else None for path in watched_paths}
     lock_path = repo / ".coordination" / ".mini-swe-agent-turn.lock"
     try:
@@ -543,6 +564,19 @@ def run(args: argparse.Namespace) -> int:
             for path, before in watched_before.items()
             if (path.read_bytes() if path.is_file() else None) != before
         ]
+        # Preserve the primary's live administrative state even when an
+        # executor ignores the ownership boundary. The violation remains a
+        # blocked handoff and is reported below, but it cannot erase the goal
+        # and task needed for primary review and recovery.
+        for path, before in watched_before.items():
+            after = path.read_bytes() if path.is_file() else None
+            if after == before:
+                continue
+            if before is None:
+                if path.is_file() or path.is_symlink():
+                    path.unlink()
+            else:
+                atomic_bytes(path, before)
         completed = time.time()
         state, blocker = write_report(
             report_path,
